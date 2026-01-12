@@ -1,0 +1,162 @@
+[
+  {
+    "name": "Piano-C1",
+    "filename": "//CUSTOM/Piano-C1.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "Piano-C2",
+    "filename": "//CUSTOM/Piano-C2.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM03",
+    "filename": "//CUSTOM/CUSTOM03",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM04",
+    "filename": "//CUSTOM/CUSTOM04",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "Piano-C5",
+    "filename": "//CUSTOM/Piano-C5.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "Piano-C6",
+    "filename": "//CUSTOM/Piano-C6.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "Piano-C7",
+    "filename": "//CUSTOM/Piano-C7.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "Piano-C8",
+    "filename": "//CUSTOM/Piano-C8.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM09",
+    "filename": "/CUSTOM09",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "NM-BD-01",
+    "filename": "//CUSTOM/NM-MONTY/NM-BD-01.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "NM-HH-04",
+    "filename": "//CUSTOM/NM-MONTY/NM-HH-04.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "NM-SNARE-02",
+    "filename": "//CUSTOM/NM-MONTY/NM-SNARE-02.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "NM-CRASH-05",
+    "filename": "//CUSTOM/NM-MONTY/NM-CRASH-05.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "NM-TOM-03",
+    "filename": "//CUSTOM/NM-MONTY/NM-TOM-03.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM15",
+    "filename": "/CUSTOM15",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM16",
+    "filename": "/CUSTOM16",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM17",
+    "filename": "/CUSTOM17",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM18",
+    "filename": "/CUSTOM18",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM19",
+    "filename": "/CUSTOM19",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM20",
+    "filename": "/CUSTOM20",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  }
+]

@@ -1,0 +1,63 @@
+{
+  "number_of_events": 6,
+  "0": {
+    "source": 0,
+    "patternMs": 651,
+    "patternNumber": 0,
+    "track": 9,
+    "layer": 0,
+    "event": 176,
+    "note_in": 102,
+    "note_in_velocity": 2
+  },
+  "1": {
+    "source": 0,
+    "patternMs": 971,
+    "patternNumber": 0,
+    "track": 9,
+    "layer": 0,
+    "event": 176,
+    "note_in": 102,
+    "note_in_velocity": 3
+  },
+  "2": {
+    "source": 0,
+    "patternMs": 1464,
+    "patternNumber": 1,
+    "track": 2,
+    "layer": 0,
+    "event": 176,
+    "note_in": 103,
+    "note_in_velocity": 0
+  },
+  "3": {
+    "source": 0,
+    "patternMs": 1967,
+    "patternNumber": 2,
+    "track": 2,
+    "layer": 0,
+    "event": 176,
+    "note_in": 102,
+    "note_in_velocity": 0
+  },
+  "4": {
+    "source": 0,
+    "patternMs": 637,
+    "patternNumber": 3,
+    "track": 5,
+    "layer": 0,
+    "event": 176,
+    "note_in": 103,
+    "note_in_velocity": 0
+  },
+  "5": {
+    "source": 0,
+    "patternMs": 2272,
+    "patternNumber": 3,
+    "track": 5,
+    "layer": 0,
+    "event": 176,
+    "note_in": 102,
+    "note_in_velocity": 0
+  }
+}

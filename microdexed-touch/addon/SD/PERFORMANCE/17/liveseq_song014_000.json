@@ -1,0 +1,33 @@
+{
+  "number_of_events": 3,
+  "0": {
+    "source": 0,
+    "patternMs": 1586,
+    "patternNumber": 3,
+    "track": 1,
+    "layer": 0,
+    "event": 176,
+    "note_in": 102,
+    "note_in_velocity": 1
+  },
+  "1": {
+    "source": 0,
+    "patternMs": 1943,
+    "patternNumber": 3,
+    "track": 4,
+    "layer": 0,
+    "event": 176,
+    "note_in": 102,
+    "note_in_velocity": 1
+  },
+  "2": {
+    "source": 0,
+    "patternMs": 2373,
+    "patternNumber": 3,
+    "track": 1,
+    "layer": 0,
+    "event": 176,
+    "note_in": 103,
+    "note_in_velocity": 3
+  }
+}

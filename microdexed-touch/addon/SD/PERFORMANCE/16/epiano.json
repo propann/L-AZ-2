@@ -1,0 +1,21 @@
+{
+  "decay": 50,
+  "release": 50,
+  "hardness": 64,
+  "treble": 64,
+  "pan_tremolo": 55,
+  "pan_lfo": 63,
+  "velocity_sense": 64,
+  "stereo": 50,
+  "polyphony": 16,
+  "tune": 100,
+  "detune": 0,
+  "overdrive": 12,
+  "lowest_note": 21,
+  "highest_note": 108,
+  "transpose": 12,
+  "sound_intensity": 67,
+  "pan": 20,
+  "midi_channel": 2,
+  "sidechain_send": 0
+}

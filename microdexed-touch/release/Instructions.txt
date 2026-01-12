@@ -1,0 +1,36 @@
+Installation Instructions
+
+Several binary, HEX Files are provided in the /release folder. To get started, we suggest to flash:
+
+mdt_PROGMEM-CAPACITIVE_TOUCH_(latest version number you see).hex
+
+
+Upload HEX file to your Teensy 4.1:
+
+You just need the Teensy Loader application and your HEX file. 
+
+Get Teensy Loader
+https://www.pjrc.com/teensy/loader.html
+
+- [x] connect your teensy to your computer with a known working USB-Micro-B to USB-A data cable.
+
+- [x] launch teensy loader
+
+- [x] Drop the HEX file onto Teensy Loader
+
+- [x] Push the button on the Teensy and Teensy Loader should send the program to the Teensy.
+
+* Copy all Files/Directories from /addon/SD/ to the root of your SD Card (FAT32) and insert the card in SD Slot of the Teensy 4.1
+
+* Power on the Teensy and attach USB MIDI Keyboard (or use the virtual Touch Keyboard and the Encoders to navigate)
+
+
+Please check out the MDT manual for any question you might have:
+https://codeberg.org/positionhigh/MicroDexed-touch/raw/branch/main/doc/MicroDexed-touch-manual.pdf
+
+or join us in Discord Chat:
+https://discord.gg/XCYk5P8GzF
+
+
+
+

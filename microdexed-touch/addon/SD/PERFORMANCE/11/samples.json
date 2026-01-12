@@ -1,0 +1,162 @@
+[
+  {
+    "name": "voc_1",
+    "filename": "/CUSTOM/voc_1.wav",
+    "start": 5,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "voc_2",
+    "filename": "/CUSTOM/voc_2.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "voc_3",
+    "filename": "/CUSTOM/voc_3.wav",
+    "start": 10,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "voc_4",
+    "filename": "//CUSTOM/voc_4.wav",
+    "start": 5,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "voc_5",
+    "filename": "//CUSTOM/voc_5.wav",
+    "start": 20,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "voc_6",
+    "filename": "//CUSTOM/voc_6.wav",
+    "start": 15,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "voc_7",
+    "filename": "//CUSTOM/voc_7.wav",
+    "start": 20,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "voc_8",
+    "filename": "/CUSTOM/voc_8.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "voc_9",
+    "filename": "/CUSTOM/voc_9.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "voc_10",
+    "filename": "/CUSTOM/voc_10.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "voc_11",
+    "filename": "/CUSTOM/voc_11.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "shakuhachi",
+    "filename": "/CUSTOM/shakuhachi.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM13",
+    "filename": "/CUSTOM13",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM14",
+    "filename": "/CUSTOM14",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM15",
+    "filename": "/CUSTOM15",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM16",
+    "filename": "/CUSTOM16",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM17",
+    "filename": "/CUSTOM17",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM18",
+    "filename": "/CUSTOM18",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM19",
+    "filename": "/CUSTOM19",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM20",
+    "filename": "/CUSTOM20",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  }
+]

@@ -1,0 +1,20 @@
+{
+  "sample_note": 4,
+  "grain_size": 40,
+  "grain_position": 50,
+  "play_mode": 0,
+  "semitones": 50,
+  "volume": 95,
+  "density": 30,
+  "spread": 80,
+  "attack": 0,
+  "release": 0,
+  "filter_mode": 0,
+  "rev_send": 0,
+  "filter_freq": 0,
+  "filter_resonance": 0,
+  "delay_send_1": 0,
+  "delay_send_2": 0,
+  "pan": 0,
+  "midi_channel": 11
+}
