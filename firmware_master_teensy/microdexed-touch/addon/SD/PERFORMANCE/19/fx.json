@@ -1,0 +1,129 @@
+{
+  "filter_cutoff": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "filter_resonance": [
+    1,
+    0,
+    0,
+    0
+  ],
+  "chorus_frequency": [
+    0,
+    0,
+    0,
+    21
+  ],
+  "chorus_waveform": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "chorus_depth": [
+    0,
+    0,
+    0,
+    35
+  ],
+  "chorus_level": [
+    0,
+    0,
+    0,
+    20
+  ],
+  "delay_multiplier": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "delay_time": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "delay_feedback": [
+    50,
+    50,
+    0,
+    0
+  ],
+  "delay_level": [
+    12,
+    25,
+    25,
+    0
+  ],
+  "delay_level2": [
+    12,
+    25,
+    25,
+    0
+  ],
+  "delay_level_global": [
+    85,
+    85,
+    0,
+    0
+  ],
+  "delay_sync": [
+    5,
+    4,
+    0,
+    0
+  ],
+  "delay_pan": [
+    0,
+    40,
+    0,
+    0
+  ],
+  "reverb_send": [
+    38,
+    60,
+    50,
+    15
+  ],
+  "delay_to_reverb": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "delay_filter_mode": [
+    3,
+    3,
+    0,
+    0
+  ],
+  "delay_filter_freq": [
+    1550,
+    1500,
+    0,
+    0
+  ],
+  "delay1_to_delay2": 0,
+  "delay2_to_delay1": 0,
+  "reverb_roomsize": 42,
+  "reverb_damping": 0,
+  "reverb_lowpass": 61,
+  "reverb_lodamp": 27,
+  "reverb_hidamp": 92,
+  "reverb_diffusion": 100,
+  "reverb_level": 100,
+  "ep_chorus_frequency": 0,
+  "ep_chorus_waveform": 0,
+  "ep_chorus_depth": 0,
+  "ep_chorus_level": 0,
+  "ep_reverb_send": 30,
+  "ep_delay1": 15,
+  "ep_delay2": 15,
+  "delay1_sidechain_send": 0,
+  "delay2_sidechain_send": 0,
+  "reverb_sidechain_send": 0
+}

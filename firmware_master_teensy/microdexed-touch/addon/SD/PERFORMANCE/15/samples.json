@@ -1,0 +1,162 @@
+[
+  {
+    "name": "NM-BD-01",
+    "filename": "/CUSTOM/NM-MONTY/NM-BD-01.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "NM-SNARE-02",
+    "filename": "/CUSTOM/NM-MONTY/NM-SNARE-02.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "NM-TOM-03",
+    "filename": "/CUSTOM/NM-MONTY/NM-TOM-03.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "NM-HH-04",
+    "filename": "/CUSTOM/NM-MONTY/NM-HH-04.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "NM-CRASH-05",
+    "filename": "/CUSTOM/NM-MONTY/NM-CRASH-05.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "NM-RIDE-06",
+    "filename": "/CUSTOM/NM-MONTY/NM-RIDE-06.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "NM-COW-07",
+    "filename": "/CUSTOM/NM-MONTY/NM-COW-07.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "NM-CLAV-08",
+    "filename": "/CUSTOM/NM-MONTY/NM-CLAV-08.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "NM-ZAP-09",
+    "filename": "/CUSTOM/NM-MONTY/NM-ZAP-09.wav",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM10",
+    "filename": "/CUSTOM10",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM11",
+    "filename": "/CUSTOM11",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM12",
+    "filename": "/CUSTOM12",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM13",
+    "filename": "/CUSTOM13",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM14",
+    "filename": "/CUSTOM14",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM15",
+    "filename": "/CUSTOM15",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM16",
+    "filename": "/CUSTOM16",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM17",
+    "filename": "/CUSTOM17",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM18",
+    "filename": "/CUSTOM18",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM19",
+    "filename": "/CUSTOM19",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  },
+  {
+    "name": "CUSTOM20",
+    "filename": "/CUSTOM20",
+    "start": 0,
+    "end": 1000,
+    "loop": 0,
+    "class": 11
+  }
+]

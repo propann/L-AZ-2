@@ -1,0 +1,13 @@
+{
+  "number_of_events": 1,
+  "0": {
+    "source": 0,
+    "patternMs": 103,
+    "patternNumber": 0,
+    "track": 1,
+    "layer": 0,
+    "event": 128,
+    "note_in": 69,
+    "note_in_velocity": 0
+  }
+}

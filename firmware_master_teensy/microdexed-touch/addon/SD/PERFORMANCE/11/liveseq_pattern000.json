@@ -1,0 +1,123 @@
+{
+  "number_of_events": 12,
+  "0": {
+    "source": 1,
+    "patternMs": 2416,
+    "patternNumber": 0,
+    "track": 3,
+    "layer": 0,
+    "event": 144,
+    "note_in": 72,
+    "note_in_velocity": 72
+  },
+  "1": {
+    "source": 1,
+    "patternMs": 143,
+    "patternNumber": 1,
+    "track": 3,
+    "layer": 0,
+    "event": 128,
+    "note_in": 72,
+    "note_in_velocity": 0
+  },
+  "2": {
+    "source": 1,
+    "patternMs": 445,
+    "patternNumber": 1,
+    "track": 3,
+    "layer": 0,
+    "event": 144,
+    "note_in": 71,
+    "note_in_velocity": 84
+  },
+  "3": {
+    "source": 1,
+    "patternMs": 596,
+    "patternNumber": 1,
+    "track": 3,
+    "layer": 0,
+    "event": 128,
+    "note_in": 71,
+    "note_in_velocity": 0
+  },
+  "4": {
+    "source": 1,
+    "patternMs": 898,
+    "patternNumber": 1,
+    "track": 3,
+    "layer": 0,
+    "event": 144,
+    "note_in": 67,
+    "note_in_velocity": 92
+  },
+  "5": {
+    "source": 1,
+    "patternMs": 1049,
+    "patternNumber": 1,
+    "track": 3,
+    "layer": 0,
+    "event": 128,
+    "note_in": 67,
+    "note_in_velocity": 0
+  },
+  "6": {
+    "source": 1,
+    "patternMs": 1812,
+    "patternNumber": 2,
+    "track": 3,
+    "layer": 0,
+    "event": 144,
+    "note_in": 72,
+    "note_in_velocity": 101
+  },
+  "7": {
+    "source": 1,
+    "patternMs": 1979,
+    "patternNumber": 2,
+    "track": 3,
+    "layer": 0,
+    "event": 128,
+    "note_in": 72,
+    "note_in_velocity": 0
+  },
+  "8": {
+    "source": 1,
+    "patternMs": 2114,
+    "patternNumber": 2,
+    "track": 3,
+    "layer": 0,
+    "event": 144,
+    "note_in": 71,
+    "note_in_velocity": 95
+  },
+  "9": {
+    "source": 1,
+    "patternMs": 2264,
+    "patternNumber": 2,
+    "track": 3,
+    "layer": 0,
+    "event": 128,
+    "note_in": 71,
+    "note_in_velocity": 0
+  },
+  "10": {
+    "source": 1,
+    "patternMs": 0,
+    "patternNumber": 3,
+    "track": 3,
+    "layer": 0,
+    "event": 144,
+    "note_in": 67,
+    "note_in_velocity": 97
+  },
+  "11": {
+    "source": 1,
+    "patternMs": 121,
+    "patternNumber": 3,
+    "track": 3,
+    "layer": 0,
+    "event": 128,
+    "note_in": 67,
+    "note_in_velocity": 0
+  }
+}
