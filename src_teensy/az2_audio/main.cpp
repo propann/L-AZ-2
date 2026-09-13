@@ -15,6 +15,8 @@ AudioConnection patchCord3(masterAmp, 0, i2sOut, 1);
 String inputLine;
 uint32_t lastStatusMs = 0;
 bool playing = false;
+uint16_t currentBar = 1;
+uint8_t currentStep = 0;
 
 float padToFrequency(uint8_t pad) {
   constexpr float kBaseFrequency = 55.0f;
@@ -52,13 +54,13 @@ void handlePadCommand(const String &line) {
 void handleCommand(const String &line) {
   if (line == az2::kPlay) {
     setPlaying(true);
-    Serial.println("STATE:PLAYING");
+    az2::printStatus(Serial, "TEENSY_AUDIO", az2::kStatusPlaying);
     return;
   }
 
   if (line == az2::kStop) {
     setPlaying(false);
-    Serial.println("STATE:STOPPED");
+    az2::printStatus(Serial, "TEENSY_AUDIO", az2::kStatusStopped);
     return;
   }
 
@@ -102,8 +104,15 @@ void sendStatus() {
   }
 
   lastStatusMs = now;
-  Serial.print("STATUS:TEENSY_AUDIO:");
-  Serial.println(playing ? "PLAYING" : "READY");
+  az2::printStatus(Serial, "TEENSY_AUDIO", playing ? az2::kStatusPlaying : az2::kStatusReady);
+  az2::printClock(Serial, currentBar, currentStep);
+
+  if (playing) {
+    currentStep = (currentStep + 1) % az2::kPadCount;
+    if (currentStep == 0) {
+      ++currentBar;
+    }
+  }
 }
 
 } // namespace
