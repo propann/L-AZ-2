@@ -46,11 +46,11 @@ MicroDexed-touch utilise un `PCM5102A Audio Board` comme DAC audio avec la confi
 | Point | Direction AZ-2 |
 | --- | --- |
 | DAC principal | PCM5102A ou module I2S compatible |
-| Connexion | I2S depuis Teensy vers DAC |
+| Connexion | I2S depuis Teensy vers DAC: BCLK 21, LRCLK 20, DIN 7 |
 | Role | Conversion audio stereo principale, pas audio UI |
 | Mute | Utiliser `PCM5102_MUTE_PIN` si le pin XSMT est cable |
-| Sortie | Line out / casque via etage adapte |
-| A confirmer | Brochage exact du module, niveau de sortie, alim 3.3 V ou 5 V |
+| Sortie | Niveau ligne 2.1 VRMS, pas ampli casque direct |
+| Alimentation | 3.3 V, logique 3.3 V |
 
 MicroDexed-touch contient aussi un `MCP4728`, mais celui-ci sert au CV/controle analogique 4 canaux. Il est optionnel pour AZ-2 et ne remplace pas le DAC audio PCM5102A.
 
@@ -85,6 +85,8 @@ L'ecran carre donne une vraie logique: la grille 4x4 physique et l'interface 480
 ## Matrice SparkFun 4x4 + multiplexeurs
 
 La matrice SparkFun 4x4 est la surface de jeu principale. L'ESP32 doit scanner les boutons, piloter les LEDs, puis envoyer seulement les evenements musicaux utiles au Teensy.
+
+Le guide SparkFun precise que la carte est une matrice boutons + LEDs RGB: les LEDs partagent des cathodes communes par colonnes, avec trois matrices couleur superposees. Pour le premier prototype, on teste d'abord les boutons et une seule couleur LED avant de faire le RGB complet.
 
 | Fonction | Gere par | Direction |
 | --- | --- | --- |
