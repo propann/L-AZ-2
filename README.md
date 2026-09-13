@@ -1,10 +1,10 @@
 # AZ2 Project (PlatformIO Monorepo)
 
-AZ-2 est une base d'instrument hardware modulaire: Teensy 4.1 pour le moteur audio, ESP32-S3 pour l'ecran et l'interface, RP2040 Pico pour la facade physique.
+AZ-2 est une groovebox hardware modulaire: Teensy 4.1 pour le moteur audio, DAC I2S pour la sortie son, ESP32-S3 avec ecran 4 pouces pour l'interface, et clavier 4x4 multiplexe lu par l'ESP32.
 
 ## Documentation projet
 
-- [Lignes ecran et facade](docs/AZ2_ECRAN_FACADE.md): premiere direction pour l'ecran 4 pouces, la navigation, la facade et le contrat entre cartes.
+- [Lignes ecran, facade et groovebox](docs/AZ2_ECRAN_FACADE.md): direction pour l'ecran ESP32-4848S040C_I 480x480, la navigation, le clavier 4x4 et le contrat ESP32/Teensy.
 
 ## Structure
 
@@ -21,8 +21,8 @@ AZ2_PROJECT/
 ## Environments
 
 - `master_teensy`: Teensy 4.1 audio core (build sources from `src_teensy/`)
-- `ui_esp`: ESP32-S3 UI + games (build sources from `src_esp32/`)
-- `ctrl_pico`: RP2040 controller (build sources from `src_pico/`)
+- `ui_esp`: ESP32-S3 UI + ecran + clavier 4x4 (build sources from `src_esp32/`)
+- `ctrl_pico`: RP2040 controller optionnel pour extension facade (build sources from `src_pico/`)
 
 Shared headers go in `lib/` (example: `AZ2_Protocol.h`).
 
