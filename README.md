@@ -1,11 +1,18 @@
 # AZ2 Project (PlatformIO Monorepo)
 
+AZ-2 est une base d'instrument hardware modulaire: Teensy 4.1 pour le moteur audio, ESP32-S3 pour l'ecran et l'interface, RP2040 Pico pour la facade physique.
+
+## Documentation projet
+
+- [Lignes ecran et facade](docs/AZ2_ECRAN_FACADE.md): premiere direction pour l'ecran 4 pouces, la navigation, la facade et le contrat entre cartes.
+
 ## Structure
 
 ```
 AZ2_PROJECT/
 ├── platformio.ini
 ├── lib/
+├── docs/
 ├── src_teensy/
 ├── src_esp32/
 └── src_pico/
