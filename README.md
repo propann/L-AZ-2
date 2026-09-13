@@ -9,6 +9,8 @@ AZ-2 est une groovebox hardware modulaire: Teensy 4.1 pour le moteur audio adapt
 - [Base de cablage](docs/AZ2_CABLAGE_BASE.md): premiere base PlatformIO pour les deux firmwares, le PCM5102A, la matrice et les multiplexeurs.
 - [DAC PCM5102A](docs/AZ2_DAC_PCM5102A.md): specifications utiles, cablage Teensy 4.1 et tests audio.
 - [ESP32 controle, Wi-Fi, SD et mode retro](docs/AZ2_ESP32_CONTROLE_WIFI_SD_RETRO.md): usage de la carte SD, du Wi-Fi et piste Game Boy/Retro-Go.
+- [Benchmark concurrence](docs/AZ2_BENCHMARK_CONCURRENCE.md): analyse des grooveboxes et projets ouverts a battre/integrer intelligemment.
+- [Architecture firmware double cerveau](docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md): repartition claire ESP32/Teensy, protocole, cadences et responsabilites.
 - [Feuille de route](docs/AZ2_FEUILLE_DE_ROUTE.md): ordre de construction, criteres de sortie et prochains lots.
 
 ## Structure
