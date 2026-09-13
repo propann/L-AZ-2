@@ -14,6 +14,9 @@ constexpr const char *kHelloAudio = "HELLO:TEENSY_AUDIO";
 constexpr const char *kPlay = "PLAY";
 constexpr const char *kStop = "STOP";
 constexpr const char *kRecToggle = "REC:TOGGLE";
+constexpr const char *kStatusReady = "READY";
+constexpr const char *kStatusPlaying = "PLAYING";
+constexpr const char *kStatusStopped = "STOPPED";
 
 inline uint8_t padId(uint8_t row, uint8_t col) {
   return (row * kPadCols) + col;
@@ -52,6 +55,33 @@ inline void printLedEvent(Print &out, uint8_t pad, const char *state) {
   out.print(pad);
   out.print(':');
   out.println(state);
+}
+
+inline void printStatus(Print &out, const char *role, const char *state) {
+  out.print("STATUS:");
+  out.print(role);
+  out.print(':');
+  out.println(state);
+}
+
+inline void printBpm(Print &out, float bpm) {
+  out.print("BPM:");
+  out.println(bpm, 2);
+}
+
+inline void printPattern(Print &out, uint8_t pattern) {
+  out.print("PATTERN:");
+  if (pattern < 10) {
+    out.print('0');
+  }
+  out.println(pattern);
+}
+
+inline void printClock(Print &out, uint16_t bar, uint8_t step) {
+  out.print("CLOCK:bar=");
+  out.print(bar);
+  out.print(":step=");
+  out.println(step);
 }
 
 } // namespace az2
