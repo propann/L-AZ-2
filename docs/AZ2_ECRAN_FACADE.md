@@ -1,13 +1,15 @@
 # AZ-2 - Lignes ecran, facade et groovebox
 
-Objectif: figer une premiere direction claire pour AZ-2: une groovebox hardware basee sur Teensy pour l'audio, un ecran ESP32-S3 pour l'interface, et une matrice SparkFun 4x4 bouton + LED lue/pilotee par l'ESP32 avec multiplexeurs.
+Objectif: figer une premiere direction claire pour AZ-2: une groovebox hardware basee sur Teensy pour l'audio adapte de MicroDexed-touch, un ecran ESP32-S3 pour l'interface, et une matrice SparkFun 4x4 bouton + LED lue/pilotee par l'ESP32 avec multiplexeurs.
+
+Voir aussi: [Strategie de portage MicroDexed-touch](AZ2_PORTAGE_MICRODEXED_TOUCH.md).
 
 ## Vision produit
 
 AZ-2 doit se comporter comme un instrument autonome:
 
-- Teensy = moteur musical temps reel.
-- DAC audio = sortie propre, separee de l'interface.
+- Teensy = moteur musical temps reel derive de MicroDexed-touch.
+- PCM5102A = DAC audio stereo I2S principal.
 - ESP32-S3 + ecran = cockpit visuel, menus, sequenceur, mixer, outils.
 - Matrice SparkFun 4x4 bouton + LED = pads, steps, scenes, mutes, navigation performative.
 - Multiplexeurs = lecture/pilotage propre de la matrice sans gaspiller les GPIO.
@@ -39,14 +41,18 @@ Regle electrique: alimenter le module comme prevu en 5 V, mais ne jamais envoyer
 
 ## DAC audio
 
-Le DAC note comme "5010" doit etre identifie avant schema final. Pistes probables: PCM5102, PCM5100A ou module I2S voisin.
+MicroDexed-touch utilise un `PCM5102A Audio Board` comme DAC audio avec la configuration `I2S_AUDIO_ONLY`.
 
-| Point | Direction |
+| Point | Direction AZ-2 |
 | --- | --- |
+| DAC principal | PCM5102A ou module I2S compatible |
 | Connexion | I2S depuis Teensy vers DAC |
-| Role | Conversion audio principale, pas audio UI |
+| Role | Conversion audio stereo principale, pas audio UI |
+| Mute | Utiliser `PCM5102_MUTE_PIN` si le pin XSMT est cable |
 | Sortie | Line out / casque via etage adapte |
-| A confirmer | Reference exacte, brochage, niveau de sortie, alim 3.3 V ou 5 V |
+| A confirmer | Brochage exact du module, niveau de sortie, alim 3.3 V ou 5 V |
+
+MicroDexed-touch contient aussi un `MCP4728`, mais celui-ci sert au CV/controle analogique 4 canaux. Il est optionnel pour AZ-2 et ne remplace pas le DAC audio PCM5102A.
 
 ## Architecture fonctionnelle
 
@@ -55,8 +61,8 @@ flowchart TD
     PAD[Matrice SparkFun 4x4\nboutons + LEDs] --> MUX[Multiplexeurs\nscan + pilotage]
     MUX --> UI[ESP32-S3\necran + LVGL + facade]
     UI --> BUS[Bus musical\nUART ou USB MIDI]
-    BUS --> AUDIO[Teensy 4.1\nson + sequencer]
-    AUDIO --> DAC[DAC I2S\nmodule 5010 a confirmer]
+    BUS --> AUDIO[Teensy 4.1\nMicroDexed adapte]
+    AUDIO --> DAC[PCM5102A\nDAC audio I2S]
     DAC --> OUT[Sorties audio]
 ```
 
@@ -171,10 +177,10 @@ L'ESP32 transforme les gestes UI en messages musicaux. Le Teensy repond avec son
 
 ## Prochaine passe technique
 
-1. Identifier exactement le DAC "5010" et noter son brochage.
+1. Valider le module PCM5102A: brochage, alim, pin XSMT/mute si disponible.
 2. Identifier les multiplexeurs disponibles: reference, nombre de voies, usage bouton ou LED.
 3. Choisir le bus ESP32 -> Teensy: UART serie simple au debut, USB MIDI plus tard si besoin.
 4. Definir le cablage de la matrice SparkFun 4x4: lignes, colonnes, LEDs, anti-rebond.
 5. Creer `lib/AZ2_Protocol.h` pour les messages ESP32/Teensy.
 6. Faire un prototype ESP32: LVGL 480x480 + scan 4x4 + test LEDs + page test hardware.
-7. Faire un prototype Teensy: reception messages + bip/test synth + sortie DAC I2S.
+7. Faire un prototype Teensy: MicroDexed adapte + reception messages + sortie PCM5102A I2S.
