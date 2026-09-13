@@ -1,10 +1,11 @@
 # AZ2 Project (PlatformIO Monorepo)
 
-AZ-2 est une groovebox hardware modulaire: Teensy 4.1 pour le moteur audio, DAC I2S pour la sortie son, ESP32-S3 avec ecran 4 pouces pour l'interface, et matrice SparkFun 4x4 bouton + LED pilotee par l'ESP32 via multiplexeurs.
+AZ-2 est une groovebox hardware modulaire: Teensy 4.1 pour le moteur audio adapte de MicroDexed-touch, DAC PCM5102A/I2S pour la sortie son, ESP32-S3 avec ecran 4 pouces pour l'interface, et matrice SparkFun 4x4 bouton + LED pilotee par l'ESP32 via multiplexeurs.
 
 ## Documentation projet
 
 - [Lignes ecran, facade et groovebox](docs/AZ2_ECRAN_FACADE.md): direction pour l'ecran ESP32-4848S040C_I 480x480, la navigation, la matrice SparkFun 4x4, les multiplexeurs et le contrat ESP32/Teensy.
+- [Strategie de portage MicroDexed-touch](docs/AZ2_PORTAGE_MICRODEXED_TOUCH.md): quoi reprendre du firmware MicroDexed-touch, quoi remplacer, et comment isoler le moteur audio Teensy.
 
 ## Structure
 
