@@ -16,6 +16,23 @@ Statut: en cours.
 | Sortir le Pico de la ligne principale | Fait | `platformio.ini` |
 | Documenter Wi-Fi / SD / Retro-Go | Base faite | `docs/AZ2_ESP32_CONTROLE_WIFI_SD_RETRO.md` |
 | Documenter cablage complet v0 | Base faite | `docs/AZ2_CABLAGE_BASE.md` |
+| Benchmark concurrence | Base faite | `docs/AZ2_BENCHMARK_CONCURRENCE.md` |
+| Architecture double firmware | Base faite | `docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md` |
+
+## Phase 0.5 - Strategie produit et firmware
+
+Objectif: transformer les recherches concurrentes en decisions techniques.
+
+| Priorite | Tache |
+| ---: | --- |
+| 1 | Figer la promesse AZ-2: rapide, lisible, ouvert, reparable |
+| 2 | Garder ESP32 pour humain/ecran/SD/Wi-Fi/pads |
+| 3 | Garder Teensy pour audio/clock/sequenceur critique |
+| 4 | Mesurer la latence pad -> son sur table |
+| 5 | Ajouter heartbeat et etats d'erreur dans le protocole |
+| 6 | Prevoir protocole binaire v1 seulement apres v0 jouable |
+
+Critere de sortie: une pression pad declenche un son, une LED, et un retour etat ecran sans ambiguite.
 
 ## Phase 1 - Cablage minimal qui fait du son
 
