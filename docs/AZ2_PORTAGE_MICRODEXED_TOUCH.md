@@ -11,7 +11,7 @@ AZ-2 reprend MicroDexed-touch comme moteur musical Teensy, mais remplace sa logi
 | Bloc | MicroDexed-touch original | AZ-2 |
 | --- | --- | --- |
 | Audio temps reel | Teensy 4.1 | Teensy 4.1 |
-| DAC audio | PCM5102A Audio Board en I2S | PCM5102A ou compatible I2S |
+| DAC audio | PCM5102A Audio Board en I2S | PCM5102A I2S 3.3 V |
 | Ecran original | ILI9341 320x240 SPI tactile | ESP32-4848S040C_I 480x480 ST7701 |
 | UI | Dans le firmware Teensy | Dans le firmware ESP32-S3 |
 | Pads/controle | Encodeurs/touch/UI MicroDexed | Matrice SparkFun 4x4 bouton + LED via ESP32 |
@@ -38,7 +38,7 @@ Dans `MicroDexed-touch.ino`, cette option cree une sortie audio I2S simple:
 AudioOutputI2S i2s1;
 ```
 
-Donc pour AZ-2, le DAC audio principal est un module `PCM5102A` ou un DAC I2S compatible.
+Donc pour AZ-2, le DAC audio principal est le module `PCM5102A` en I2S. Il est alimente en 3.3 V, sort en niveau ligne 2.1 VRMS, et n'a pas besoin de MCLK.
 
 ## Attention: MCP4728 != DAC audio principal
 
