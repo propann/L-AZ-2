@@ -32,6 +32,7 @@ bool lastRawPadState[az2::kPadCount] = {};
 uint32_t lastDebounceMs[az2::kPadCount] = {};
 uint32_t lastHeartbeatMs = 0;
 bool sdMounted = false;
+String teensyLine;
 
 bool validPin(int pin) {
   return pin >= 0;
@@ -173,7 +174,38 @@ void heartbeat() {
   }
 
   lastHeartbeatMs = now;
-  Serial.println("STATUS:ESP32_CONTROL:READY");
+  az2::printStatus(Serial, "ESP32_CONTROL", az2::kStatusReady);
+}
+
+void handleTeensyLine(const String &line) {
+  Serial.print("TEENSY:");
+  Serial.println(line);
+}
+
+void readTeensyStatus() {
+  if (!uartToTeensyConfigured()) {
+    return;
+  }
+
+  while (Serial1.available() > 0) {
+    const char c = static_cast<char>(Serial1.read());
+    if (c == '\r') {
+      continue;
+    }
+
+    if (c == '\n') {
+      teensyLine.trim();
+      if (teensyLine.length() > 0) {
+        handleTeensyLine(teensyLine);
+      }
+      teensyLine = "";
+      continue;
+    }
+
+    if (teensyLine.length() < 96) {
+      teensyLine += c;
+    }
+  }
 }
 
 } // namespace
@@ -196,5 +228,6 @@ void setup() {
 
 void loop() {
   scanPads();
+  readTeensyStatus();
   heartbeat();
 }
