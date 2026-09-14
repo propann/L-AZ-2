@@ -110,10 +110,19 @@ abrupt, coherent avec son usage typique.
    AZ2_PORTAGE_MICRODEXED_TOUCH.md) -- PSRAM deja confirmee (16 Mo,
    lecture/ecriture OK, teste le 2026-09-13), donc le stockage temporaire
    de samples est pret techniquement des que des fichiers audio existent.
-7. SD sur l'ESP32 (ecran) : ROMs de jeux + integration Retro-Go (deja
-   vendored dans `src_esp32/retro-go-master`).
-8. Double demarrage ESP32 : logo Azoth puis choix "SON" (groovebox) ou
-   "JEUX/HACK" (Retro-Go). Nouvel etat/ecran a ajouter au menu existant.
+7. Mode JEUX -- **decision revue le 2026-09-14** (voir
+   [AZ2_EMULATION_JEUX.md](AZ2_EMULATION_JEUX.md)) : Retro-Go (vendored
+   dans `src_esp32/retro-go-master`) etudie et ECARTE pour la v0, car
+   ESP-IDF natif + ecrans SPI seulement -- incompatible avec notre
+   ecran RGB parallele sans double demarrage OTA + pilote ecran a
+   ecrire. Retenu a la place : porter Anemoia-ESP32 (NES, Arduino-natif,
+   ~400 lignes de coeur, acces framebuffer brut via
+   `connectFramebuffer()`) comme une PAGE de plus dans `az2_screen`, pas
+   un double demarrage. Necessite une carte SD ESP32 pour charger de
+   vraies ROMs (voir etape suivante) ou une petite ROM homebrew embarquee
+   pour tester sans SD.
+8. SD sur l'ESP32 (ecran) : ROMs de jeux (format a definir), utile pour
+   le mode JEUX (etape 7) une fois la carte presente.
 9. Pico transforme en joystick/manette pour le mode jeux (voir
    [AZ2_TODO_PICO.md](AZ2_TODO_PICO.md) -- pas cable actuellement, notes
    accumulees en attendant).

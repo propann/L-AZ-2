@@ -228,6 +228,101 @@ void scanMatrix() {
   }
 }
 
+// ---------------------------------------------------------------------
+// Mode diagnostic LEDTEST (demande le 2026-09-14, "etudier pourquoi on a
+// pas les led") : suspend le scan normal et maintient UN SEUL canal du
+// mux allume en continu (pas en pulse POV de 150us -- trop bref pour
+// verifier au multimetre ou meme a l'oeil de facon fiable), colonne par
+// colonne, canal par canal, avec le detail imprime en clair. Se pilote
+// depuis le moniteur serie USB du Pico (pas besoin du Teensy) :
+//   LEDTEST        -- demarre le defilement automatique (~0,7s/canal)
+//   LEDTEST:STOP   -- arrete, revient au scan normal
+// ---------------------------------------------------------------------
+bool ledTestActive = false;
+uint8_t ledTestColumn = 0;
+uint8_t ledTestChannel = 0;
+uint32_t ledTestLastChangeMs = 0;
+constexpr uint32_t kLedTestHoldMs = 700;
+
+void ledTestEnter() {
+  ledTestActive = true;
+  ledTestColumn = 0;
+  ledTestChannel = 0;
+  ledTestLastChangeMs = 0;  // force l'affichage immediat du premier canal
+  releaseAllColumns();
+  digitalWrite(kLedMuxSignal, LOW);
+  Serial.println("LEDTEST:START -- une LED doit rester allumee en continu a chaque etape");
+}
+
+void ledTestExit() {
+  ledTestActive = false;
+  digitalWrite(kLedMuxSignal, LOW);
+  releaseAllColumns();
+  Serial.println("LEDTEST:STOP");
+}
+
+void ledTestStep() {
+  const uint32_t now = millis();
+  if (now - ledTestLastChangeMs < kLedTestHoldMs) {
+    return;
+  }
+  ledTestLastChangeMs = now;
+
+  digitalWrite(kLedMuxSignal, LOW);
+  releaseAllColumns();
+
+  const uint8_t color = static_cast<uint8_t>(ledTestChannel / 4);
+  const uint8_t row = static_cast<uint8_t>(ledTestChannel % 4);
+  const uint8_t pad = az2::padId(row, ledTestColumn);
+  static const char *const kColorNames[3] = {"ROUGE", "VERT", "BLEU"};
+
+  Serial.print("LEDTEST:pad=");
+  if (pad < 10) {
+    Serial.print('0');
+  }
+  Serial.print(pad);
+  Serial.print(":col=");
+  Serial.print(ledTestColumn);
+  Serial.print(":ligne=");
+  Serial.print(row);
+  Serial.print(":couleur=");
+  Serial.println(kColorNames[color]);
+
+  pinMode(kColPins[ledTestColumn], OUTPUT);
+  digitalWrite(kColPins[ledTestColumn], LOW);
+  writeLedMuxChannel(ledTestChannel);
+  digitalWrite(kLedMuxSignal, HIGH);
+
+  ++ledTestChannel;
+  if (ledTestChannel >= 12) {  // canaux 12-15 du mux inutilises (voir doc)
+    ledTestChannel = 0;
+    ledTestColumn = static_cast<uint8_t>((ledTestColumn + 1) % 4);
+  }
+}
+
+void readUsbCommands() {
+  static String line;
+  while (Serial.available() > 0) {
+    const char c = static_cast<char>(Serial.read());
+    if (c == '\r') {
+      continue;
+    }
+    if (c == '\n') {
+      line.trim();
+      if (line == "LEDTEST") {
+        ledTestEnter();
+      } else if (line == "LEDTEST:STOP") {
+        ledTestExit();
+      }
+      line = "";
+      continue;
+    }
+    if (line.length() < 32) {
+      line += c;
+    }
+  }
+}
+
 // A appeler quand le Teensy confirme l'etat d'un pad (message LED:NN:ON/OFF)
 // pour que le clavier reflete l'etat musical, pas seulement l'appui brut.
 // Le protocole AZ2 actuel ne transporte pas encore de couleur (juste
@@ -381,8 +476,13 @@ void setup() {
 }
 
 void loop() {
-  scanMatrix();
-  scanEncoders();
+  readUsbCommands();
+  if (ledTestActive) {
+    ledTestStep();
+  } else {
+    scanMatrix();
+    scanEncoders();
+  }
   readTeensyStatus();
   heartbeat();
 }

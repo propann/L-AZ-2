@@ -180,7 +180,7 @@ bool inBox(int16_t x, int16_t y, int16_t bx, int16_t by, int16_t bw, int16_t bh)
 // ---------------------------------------------------------------------
 // Etat partage entre les pages / le lien Teensy
 // ---------------------------------------------------------------------
-enum class Screen : uint8_t { Menu, PadsLeds, Encoders, Audio, Sequencer, Engines, Links, About };
+enum class Screen : uint8_t { Menu, PadsLeds, Encoders, Audio, Sequencer, Engines, Retro, Links, About };
 Screen currentScreen = Screen::Menu;
 
 bool ledState[az2::kPadCount] = {};
@@ -251,6 +251,7 @@ constexpr MenuItem kMenuItems[] = {
     {"PADS & LEDS", "verifier la matrice + Pico", Screen::PadsLeds},
     {"ENCODEURS", "verifier les 4 rotatifs", Screen::Encoders},
     {"AUDIO", "jouer le Teensy depuis l'ecran", Screen::Audio},
+    {"JEUX", "NES (en construction, voir doc)", Screen::Retro},
     {"LIENS SERIE", "journal ESP32 / Teensy", Screen::Links},
     {"A PROPOS", "version, roles, build", Screen::About},
 };
@@ -258,9 +259,9 @@ constexpr uint8_t kMenuItemCount = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
 
 constexpr int16_t kMenuLeft = 48;
 constexpr int16_t kMenuTop = 130;
-// 42 (au lieu de 56) depuis l'ajout de MOTEURS -- 7 entrees doivent tenir
+// 39 (au lieu de 42) depuis l'ajout de JEUX -- 8 entrees doivent tenir
 // avant la barre d'etat en bas d'ecran (kStatusY).
-constexpr int16_t kMenuRowH = 42;
+constexpr int16_t kMenuRowH = 39;
 constexpr int16_t kMenuWidth = kScreenSize - 2 * kMenuLeft;
 
 void drawMenuRow(uint8_t index) {
@@ -269,11 +270,11 @@ void drawMenuRow(uint8_t index) {
   gfx->drawRect(kMenuLeft, y, kMenuWidth, kMenuRowH - 8, accent);
   gfx->setTextColor(RGB565_WHITE);
   gfx->setTextSize(2);
-  gfx->setCursor(kMenuLeft + 14, y + 4);
+  gfx->setCursor(kMenuLeft + 14, y + 3);
   gfx->print(kMenuItems[index].label);
   gfx->setTextSize(1);
   gfx->setTextColor(kDim);
-  gfx->setCursor(kMenuLeft + 14, y + 24);
+  gfx->setCursor(kMenuLeft + 14, y + 22);
   gfx->print(kMenuItems[index].hint);
 }
 
@@ -704,6 +705,40 @@ void drawLinksPage() {
 }
 
 // ---------------------------------------------------------------------
+// Page JEUX -- mode emulation NES, demande le 2026-09-14. PAS ENCORE
+// FONCTIONNELLE : simple page d'attente honnete tant que le portage n'est
+// pas fait (voir docs/AZ2_EMULATION_JEUX.md pour la decision technique
+// complete -- Retro-Go ecarte car ESP-IDF + ecrans SPI seulement,
+// incompatible avec notre ecran RGB parallele sans double demarrage ;
+// Anemoia-ESP32 retenu a la place, portable en simple page ici via son
+// acces framebuffer brut, mais pas encore vendore/adapte -- il manque
+// aussi une ROM legale et une carte SD pour la charger).
+// ---------------------------------------------------------------------
+void drawRetroPage() {
+  drawSubHeader("JEUX", kPalette[2]);
+  const char *lines[] = {
+      "Emulateur NES en preparation.",
+      "",
+      "Moteur retenu : Anemoia-ESP32",
+      "(Arduino natif, framebuffer brut,",
+      " pas de double demarrage requis).",
+      "",
+      "Reste a faire : vendorer le coeur,",
+      "adapter l'affichage a Arduino_GFX,",
+      "mapper les entrees, charger une ROM",
+      "(carte SD requise).",
+      "",
+      "Detail : docs/AZ2_EMULATION_JEUX.md",
+  };
+  gfx->setTextSize(1);
+  gfx->setTextColor(RGB565_WHITE);
+  for (uint8_t i = 0; i < sizeof(lines) / sizeof(lines[0]); ++i) {
+    gfx->setCursor(kMargin, static_cast<int16_t>(90 + i * 20));
+    gfx->print(lines[i]);
+  }
+}
+
+// ---------------------------------------------------------------------
 // Page A PROPOS
 // ---------------------------------------------------------------------
 void drawAboutPage() {
@@ -732,6 +767,7 @@ void drawScreen(Screen s) {
     case Screen::Audio: drawAudioPage(); return;
     case Screen::Sequencer: drawSequencerPage(); return;
     case Screen::Engines: drawEnginesPage(); return;
+    case Screen::Retro: drawRetroPage(); return;
     case Screen::Links: drawLinksPage(); return;
     case Screen::About: drawAboutPage(); return;
   }

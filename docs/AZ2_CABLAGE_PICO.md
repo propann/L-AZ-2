@@ -74,6 +74,16 @@ lignes de selection + 1 signal, au lieu de 12 fils directs.
 | Mux LED S3 | GPIO13 | Sortie |
 | Mux LED signal (entree commune) | GPIO14 | Sortie (avec resistance serie) |
 
+**Broche EN (enable) du mux -- PAS reliee a une GPIO, mais indispensable** :
+le CD74HC4067 a une broche EN active a l'etat BAS. Si elle est laissee en
+l'air (non connectee), le mux entier reste desactive en permanence -- AUCUN
+canal ne passe jamais, quel que soit ce que S0-S3/SIG font. Symptome
+observe reellement (2026-09-14) : zero LED sur les 48 combinaisons
+colonne x canal testees en mode `LEDTEST`, alors que boutons et
+alimentation du mux (3V, dans la plage 2-6V du CD74HC4067) etaient
+corrects. **La broche EN doit etre reliee au GND commun** (celui du Pico
+et de la matrice LED), pas a une sortie du Pico.
+
 **Cablage cote mux -> LED** : canal = `couleur*4 + ligne`, couleur 0=rouge,
 1=vert, 2=bleu (a confirmer sur ta carte : la notice SparkFun signale une
 erreur de reperage Vert/Bleu inversee sur certains lots — si les couleurs
@@ -185,8 +195,15 @@ libres (21, 22 pour un futur encodeur 3, plus 23/24 non recommandes).
    confirme** (plusieurs pads testes en direct).
 4. Cabler le mux LED (section 2), verifier qu'une LED blanche s'allume au
    bon endroit des qu'on presse son bouton (mode test local, pas besoin du
-   Teensy). Si une couleur manque ou est echangee avec une autre, verifier
-   l'errata Vert/Bleu de la notice SparkFun (section 2).
+   Teensy) -- ou, plus fiable, utiliser la commande serie `LEDTEST` (voir
+   `src_pico/main.cpp`) qui maintient un seul canal allume ~0,7s a la fois
+   au lieu du POV rapide normal. Si une couleur manque ou est echangee
+   avec une autre, verifier l'errata Vert/Bleu de la notice SparkFun
+   (section 2). **Diagnostique le 2026-09-14** : zero LED sur les 48
+   combinaisons testees (mode `LEDTEST`) malgre boutons et alimentation
+   mux corrects (3V, dans la plage 2-6V) -- cause identifiee : broche EN
+   du mux laissee en l'air (voir section 2). Correction (EN -> GND
+   commun) en cours de cablage, pas encore reverifiee.
 5. Cabler un encodeur a la fois (section 3), verifier `MACRO:n:+1`/`-1` par
    cran et `ENC:n:BTN:DOWN`/`UP` au clic. **Fait et confirme** pour les
    encodeurs 1, 2 et 4.
