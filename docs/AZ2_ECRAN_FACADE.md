@@ -18,26 +18,46 @@ Decision de base: l'ecran, le clavier 4x4 et les LEDs de la matrice sont geres p
 
 ## Ecran retenu
 
-Documents fournis: `ESP32-4848S040 Specifications-EN.pdf` et `Getting started 4.0 Inch.pdf`.
+Documents fournis au depart: `ESP32-4848S040 Specifications-EN.pdf` et
+`Getting started 4.0 Inch.pdf`. **Identite reelle confirmee le 2026-09-13**
+en lisant l'etiquette sur le flex de l'ecran physique: c'est un
+**VIEWE UEDX48480040E-WB-V1.3**, pas le "ESP32-4848S040C_I / ST7701"
+generique suppose au depart — meme forme/resolution, mais driver LCD et
+brochage differents. Depot officiel du fabricant (source de verite pour le
+cablage) :
+https://github.com/VIEWESMART/UEDX48480040ESP32-4inch-Touch-Display
 
-| Point | Valeur documentee | Note projet |
+| Point | Valeur confirmee | Note projet |
 | --- | --- | --- |
-| Module | ESP32-4848S040C_I | Module ecran ESP32-S3 integre |
-| MCU | ESP32-S3-WROOM-1 | Wi-Fi, Bluetooth, double coeur |
-| Frequence | 240 MHz | Suffisant pour LVGL + scan facade |
+| Module | VIEWE UEDX48480040E-WB-V1.3 | Module ecran ESP32-S3 integre |
+| MCU | ESP32-S3 | Wi-Fi, Bluetooth, double coeur |
 | PSRAM | 8 MB | Important pour UI et buffers graphiques |
 | Flash | 16 MB | Correct pour firmware UI + assets raisonnables |
 | Taille ecran | 4.0 pouces | Format carre, bon pour groovebox compacte |
 | Resolution | 480 x 480 px | UI carree, grille 4x4 naturelle |
-| Driver LCD | ST7701 | A configurer dans Arduino_GFX/LVGL |
-| Couleurs | RGB 65K, 16 bit | Palette sobre, lisible sur scene |
-| Tactile | Capacitif | Peut servir aux menus, pas aux actions critiques |
-| Stockage | TF card | Presets, assets UI, sauvegardes possibles |
-| Alimentation | 5 V, environ 260 mA | Prevoir marge pour retroeclairage |
-| Zone active | 71.8 x 70.2 mm | Verifier avec la facade physique |
-| Taille module | 86.5 x 86.5 x 37.8 mm | Profondeur importante pour le boitier |
+| Driver LCD | **GC9503V** (pas ST7701) | `gc9503v_type1_init_operations` dans Arduino_GFX |
+| Tactile | I2C, SDA=IO40, SCL=IO41 | Pas encore cable/teste |
+| Stockage | TF card (SPI: CS=47, CLK=45, MOSI=42, MISO=46 - a reverifier) | Presets, assets UI, sauvegardes possibles |
 
 Regle electrique: alimenter le module comme prevu en 5 V, mais ne jamais envoyer de 5 V sur les GPIO. Les signaux logiques doivent rester en 3.3 V.
+
+### Pinout RGB confirme (README officiel VIEWE, "PinOverview")
+
+| Signal | GPIO | Signal | GPIO | Signal | GPIO |
+| --- | --- | --- | --- | --- | --- |
+| DE | 18 | G0 | 10 | B0 | 15 |
+| VSYNC | 17 | G1 | 9 | B1 | 14 |
+| HSYNC | 16 | G2 | 8 | B2 | 13 |
+| PCLK | 21 | G3 | 7 | B3 | 12 |
+| R0 | 4 | G4 | 6 | B4 | 11 |
+| R1 | 3 | G5 | 5 | Backlight | 38 |
+| R2 | 2 | | | SPI CS/SCK/SDA | 39/48/47 |
+| R3 | 1 | | | | |
+| R4 | 0 | | | | |
+
+Firmware de test valide (2026-09-13): `src_esp32/az2_screen/main.cpp`,
+environnement PlatformIO `screen_esp`. Ecran allume, "AZ-2" affiche, carre
+de couleur qui tourne — confirme par test reel sur la carte.
 
 ## DAC audio
 

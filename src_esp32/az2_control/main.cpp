@@ -6,33 +6,84 @@
 
 namespace {
 
-// TODO: replace -1 values when the exact multiplexers and GPIO map are fixed.
-constexpr int kTeensyRxPin = -1;
-constexpr int kTeensyTxPin = -1;
+// Cablage v0 pour un ESP32-S3-DevKitC-1 nu (bring-up avant integration sur le
+// module ecran ESP32-4848S040C_I : ce module-la n'a quasiment plus de GPIO
+// libre une fois l'ecran/tactile/SD branches, a reverifier au moment venu).
+// Voir docs/AZ2_CABLAGE_BASE.md.
+constexpr int kTeensyTxPin = 17;  // ESP32 TX -> Teensy RX1 (pin 0)
+constexpr int kTeensyRxPin = 18;  // ESP32 RX <- Teensy TX1 (pin 1)
 
-constexpr int kButtonMuxS0 = -1;
-constexpr int kButtonMuxS1 = -1;
-constexpr int kButtonMuxS2 = -1;
-constexpr int kButtonMuxS3 = -1;
-constexpr int kButtonMuxSignal = -1;
+// Mux boutons et mux LED : deux CD74HC4067 (16 voies) dont les 4 lignes
+// d'adresse S0-S3 sont cablees en parallele (memes GPIO) puisque bouton et
+// LED d'un meme pad_id sont toujours adresses ensemble dans scanPads().
+// Seuls les signaux SIG different (un en entree, un en sortie).
+constexpr int kButtonMuxS0 = 4;
+constexpr int kButtonMuxS1 = 5;
+constexpr int kButtonMuxS2 = 6;
+constexpr int kButtonMuxS3 = 7;
+constexpr int kButtonMuxSignal = 8;  // SIG du mux boutons -> entree ESP32
 
-constexpr int kLedMuxS0 = -1;
-constexpr int kLedMuxS1 = -1;
-constexpr int kLedMuxS2 = -1;
-constexpr int kLedMuxS3 = -1;
-constexpr int kLedMuxSignal = -1;
+constexpr int kLedMuxS0 = kButtonMuxS0;
+constexpr int kLedMuxS1 = kButtonMuxS1;
+constexpr int kLedMuxS2 = kButtonMuxS2;
+constexpr int kLedMuxS3 = kButtonMuxS3;
+constexpr int kLedMuxSignal = 9;  // ESP32 -> SIG du mux LED (une LED a la fois, v0 mono)
 
 constexpr int kSdSckPin = -1;
 constexpr int kSdMisoPin = -1;
 constexpr int kSdMosiPin = -1;
 constexpr int kSdCsPin = -1;
 
+// Encodeurs rotatifs 1-4 (sous l'ecran, voir AZ2_ECRAN_FACADE.md). EC11
+// classiques: 2 voies quadrature A/B + bouton poussoir integre, tout en
+// INPUT_PULLUP (commun cote GND). Cablage v0 sur ESP32-S3-DevKitC-1 nu.
+constexpr int kEnc1APin = 10, kEnc1BPin = 11, kEnc1BtnPin = 38;
+constexpr int kEnc2APin = 12, kEnc2BPin = 13, kEnc2BtnPin = 39;
+constexpr int kEnc3APin = 14, kEnc3BPin = 15, kEnc3BtnPin = 40;
+constexpr int kEnc4APin = 16, kEnc4BPin = 21, kEnc4BtnPin = 41;
+
 bool padState[az2::kPadCount] = {};
 bool lastRawPadState[az2::kPadCount] = {};
 uint32_t lastDebounceMs[az2::kPadCount] = {};
+uint32_t padDownSinceMs[az2::kPadCount] = {};
+bool padHoldSent[az2::kPadCount] = {};
 uint32_t lastHeartbeatMs = 0;
 bool sdMounted = false;
 String teensyLine;
+
+constexpr uint32_t kPadHoldMs = 600;
+constexpr uint32_t kButtonDebounceMs = 15;
+
+// Table de transition quadrature (methode "full step" tolerante aux
+// rebonds/sauts) : indexee par (etat precedent << 2 | etat courant) sur 2
+// bits (A,B). Renvoie -1, 0 ou +1. Technique standard domaine public pour
+// decoder un encodeur EC11 par polling.
+constexpr int8_t kQuadratureTable[16] = {
+    0, -1, 1,  0,
+    1, 0,  0,  -1,
+    -1, 0, 0,  1,
+    0, 1,  -1, 0,
+};
+
+struct QuadEncoder {
+  QuadEncoder(int a, int b, int btn) : pinA(a), pinB(b), pinBtn(btn) {}
+
+  int pinA;
+  int pinB;
+  int pinBtn;
+  uint8_t state = 0;
+  int32_t accum = 0;
+  bool btnState = false;
+  bool btnLastRaw = false;
+  uint32_t btnLastChangeMs = 0;
+};
+
+QuadEncoder encoders[4] = {
+    {kEnc1APin, kEnc1BPin, kEnc1BtnPin},
+    {kEnc2APin, kEnc2BPin, kEnc2BtnPin},
+    {kEnc3APin, kEnc3BPin, kEnc3BtnPin},
+    {kEnc4APin, kEnc4BPin, kEnc4BtnPin},
+};
 
 bool validPin(int pin) {
   return pin >= 0;
@@ -96,6 +147,63 @@ void setPadLed(uint8_t pad, bool enabled) {
   digitalWrite(kLedMuxSignal, enabled ? HIGH : LOW);
 }
 
+void setupEncoderPins() {
+  for (const QuadEncoder &enc : encoders) {
+    pinMode(enc.pinA, INPUT_PULLUP);
+    pinMode(enc.pinB, INPUT_PULLUP);
+    pinMode(enc.pinBtn, INPUT_PULLUP);
+  }
+}
+
+void sendMacro(uint8_t index, int32_t delta) {
+  az2::printMacro(Serial, index, delta);
+  if (uartToTeensyConfigured()) {
+    az2::printMacro(Serial1, index, delta);
+  }
+}
+
+void updateEncoder(QuadEncoder &enc, uint8_t index, uint32_t now) {
+  const uint8_t a = digitalRead(enc.pinA);
+  const uint8_t b = digitalRead(enc.pinB);
+  const uint8_t current = static_cast<uint8_t>((a << 1) | b);
+  enc.state = static_cast<uint8_t>(((enc.state << 2) | current) & 0x0F);
+  enc.accum += kQuadratureTable[enc.state];
+
+  constexpr int32_t kStepsPerDetent = 4;  // EC11 typique : 4 transitions / cran
+  while (enc.accum >= kStepsPerDetent) {
+    enc.accum -= kStepsPerDetent;
+    sendMacro(index, 1);
+  }
+  while (enc.accum <= -kStepsPerDetent) {
+    enc.accum += kStepsPerDetent;
+    sendMacro(index, -1);
+  }
+
+  const bool rawBtn = digitalRead(enc.pinBtn) == LOW;
+  if (rawBtn != enc.btnLastRaw) {
+    enc.btnLastRaw = rawBtn;
+    enc.btnLastChangeMs = now;
+  }
+
+  if ((now - enc.btnLastChangeMs) < kButtonDebounceMs) {
+    return;
+  }
+
+  if (rawBtn != enc.btnState) {
+    enc.btnState = rawBtn;
+    Serial.print("ENC:");
+    Serial.print(index);
+    Serial.println(enc.btnState ? ":BTN:DOWN" : ":BTN:UP");
+  }
+}
+
+void scanEncoders() {
+  const uint32_t now = millis();
+  for (uint8_t i = 0; i < 4; ++i) {
+    updateEncoder(encoders[i], static_cast<uint8_t>(i + 1), now);
+  }
+}
+
 void setupMuxPins() {
   if (buttonMuxConfigured()) {
     pinMode(kButtonMuxS0, OUTPUT);
@@ -138,6 +246,7 @@ void printBootInfo() {
   Serial.println("AZ2:ROLE:ESP32_CONTROL");
   Serial.println("AZ2:FEATURE:UI_480X480_ST7701");
   Serial.println("AZ2:FEATURE:SPARKFUN_4X4_MATRIX");
+  Serial.println("AZ2:FEATURE:ENCODERS_4X");
   Serial.println("AZ2:FEATURE:WIFI_READY_WHEN_CONFIGURED");
   Serial.println("AZ2:FEATURE:SD_READY_WHEN_PINS_SET");
   Serial.println("AZ2:FEATURE:RETRO_GO_RESEARCH_MODE");
@@ -163,6 +272,18 @@ void scanPads() {
       padState[pad] = raw;
       setPadLed(pad, raw);
       sendPadToTeensy(pad, raw);
+      if (raw) {
+        padDownSinceMs[pad] = now;
+        padHoldSent[pad] = false;
+      }
+    }
+
+    if (padState[pad] && !padHoldSent[pad] && (now - padDownSinceMs[pad]) >= kPadHoldMs) {
+      padHoldSent[pad] = true;
+      az2::printPadHold(Serial, pad);
+      if (uartToTeensyConfigured()) {
+        az2::printPadHold(Serial1, pad);
+      }
     }
   }
 }
@@ -223,11 +344,13 @@ void setup() {
   }
 
   setupMuxPins();
+  setupEncoderPins();
   sendToTeensy(az2::kHelloControl);
 }
 
 void loop() {
   scanPads();
+  scanEncoders();
   readTeensyStatus();
   heartbeat();
 }

@@ -11,6 +11,7 @@ constexpr uint8_t kPadCols = 4;
 
 constexpr const char *kHelloControl = "HELLO:ESP32_CONTROL";
 constexpr const char *kHelloAudio = "HELLO:TEENSY_AUDIO";
+constexpr const char *kHelloKeypad = "HELLO:PICO_KEYPAD";
 constexpr const char *kPlay = "PLAY";
 constexpr const char *kStop = "STOP";
 constexpr const char *kRecToggle = "REC:TOGGLE";
@@ -41,6 +42,29 @@ inline void printPadEvent(Print &out, uint8_t pad, bool pressed, uint8_t velocit
     out.print(velocity);
   }
   out.println();
+}
+
+inline void printPadHold(Print &out, uint8_t pad) {
+  if (!validPad(pad)) {
+    return;
+  }
+
+  out.print("PAD:");
+  if (pad < 10) {
+    out.print('0');
+  }
+  out.print(pad);
+  out.println(":HOLD");
+}
+
+inline void printMacro(Print &out, uint8_t index, int32_t delta) {
+  out.print("MACRO:");
+  out.print(index);
+  out.print(':');
+  if (delta >= 0) {
+    out.print('+');
+  }
+  out.println(delta);
 }
 
 inline void printLedEvent(Print &out, uint8_t pad, const char *state) {
@@ -82,6 +106,116 @@ inline void printClock(Print &out, uint16_t bar, uint8_t step) {
   out.print(bar);
   out.print(":step=");
   out.println(step);
+}
+
+// ---------------------------------------------------------------------
+// Division du sequenceur (voir AZ2_FEUILLE_DE_ROUTE_MOTEUR.md, "vrai
+// sequenceur") : le pas dure 1/stepsPerBeat de noire. 4 = croche pointee.. .
+// non -- 4 = double-croche (1/16, comportement d'origine), etc. Table
+// partagee ESP32/Teensy/Pico pour que le cycle de choix cote ecran tombe
+// toujours sur une valeur que le Teensy sait jouer.
+// ---------------------------------------------------------------------
+struct DivisionOption {
+  uint8_t stepsPerBeat;
+  const char *label;
+};
+
+constexpr DivisionOption kDivisionOptions[] = {
+    {1, "1/4"},
+    {2, "1/8"},
+    {3, "1/8 T"},
+    {4, "1/16"},
+    {6, "1/16 T"},
+    {8, "1/32"},
+};
+constexpr uint8_t kDivisionOptionCount = sizeof(kDivisionOptions) / sizeof(kDivisionOptions[0]);
+
+inline const char *divisionLabel(uint8_t stepsPerBeat) {
+  for (uint8_t i = 0; i < kDivisionOptionCount; ++i) {
+    if (kDivisionOptions[i].stepsPerBeat == stepsPerBeat) {
+      return kDivisionOptions[i].label;
+    }
+  }
+  return "?";
+}
+
+inline void printDivision(Print &out, uint8_t stepsPerBeat) {
+  out.print("DIV:");
+  out.println(stepsPerBeat);
+}
+
+// ---------------------------------------------------------------------
+// Moteurs et patchs par piste (voir AZ2_FEUILLE_DE_ROUTE_MOTEUR.md, etape
+// 5 avancee suite a la demande explicite du 2026-09-14 : "les moteurs
+// audio ne sont pas selectionnables ni reglables ... faut faire un truc
+// propre"). Les NOMS sont ici (partages ESP32/Teensy/Pico pour l'affichage
+// et le cycle de choix) ; les VRAIES donnees de patch (voix Dexed, index
+// de forme Braids...) restent cote Teensy dans src_teensy/az2_audio/
+// main.cpp, dans le MEME ORDRE que ces tables -- a garder synchronise a
+// la main si on ajoute/retire un patch.
+// ---------------------------------------------------------------------
+constexpr uint8_t kEngineDexed = 0;
+constexpr uint8_t kEngineEPiano = 1;
+constexpr uint8_t kEngineBraids = 2;
+constexpr uint8_t kEngineCount = 3;
+
+constexpr const char *kEngineNames[kEngineCount] = {"DEXED", "EPIANO", "BRAIDS"};
+
+constexpr uint8_t kDexedPatchCount = 8;
+constexpr const char *kDexedPatchNames[kDexedPatchCount] = {
+    "FM-Rhodes", "Steinway", "Korg CX3", "Leadharp",
+    "FatSynth A", "Jupiter 8", "Mini-Moog", "Moog Strings",
+};
+
+constexpr uint8_t kEPianoPatchCount = 5;
+constexpr const char *kEPianoPatchNames[kEPianoPatchCount] = {
+    "Default", "Bright", "Mellow", "Autopan", "Tremolo",
+};
+
+constexpr uint8_t kBraidsPatchCount = 8;
+constexpr const char *kBraidsPatchNames[kBraidsPatchCount] = {
+    "CSAW", "Saw/Square", "Triple Saw", "Toy",
+    "Vosim", "FM", "Plucked", "Saw Swarm",
+};
+
+inline uint8_t enginePatchCount(uint8_t engine) {
+  switch (engine) {
+    case kEngineDexed: return kDexedPatchCount;
+    case kEngineEPiano: return kEPianoPatchCount;
+    case kEngineBraids: return kBraidsPatchCount;
+    default: return 1;
+  }
+}
+
+inline const char *enginePatchName(uint8_t engine, uint8_t patch) {
+  switch (engine) {
+    case kEngineDexed: return patch < kDexedPatchCount ? kDexedPatchNames[patch] : "?";
+    case kEngineEPiano: return patch < kEPianoPatchCount ? kEPianoPatchNames[patch] : "?";
+    case kEngineBraids: return patch < kBraidsPatchCount ? kBraidsPatchNames[patch] : "?";
+    default: return "?";
+  }
+}
+
+inline const char *engineName(uint8_t engine) {
+  return engine < kEngineCount ? kEngineNames[engine] : "?";
+}
+
+// ESP32/Pico -> Teensy: choix direct (pas de +1/-1, l'ecran calcule le
+// prochain index avec enginePatchCount()/kEngineCount et l'envoie tel
+// quel ; le Teensy renvoie confirmation sur les 3 liens, voir relayLine
+// cote az2_audio).
+inline void printEngineSelect(Print &out, uint8_t track, uint8_t engine) {
+  out.print("ENGINE:");
+  out.print(track);
+  out.print(':');
+  out.println(engine);
+}
+
+inline void printPatchSelect(Print &out, uint8_t track, uint8_t patch) {
+  out.print("PATCH:");
+  out.print(track);
+  out.print(':');
+  out.println(patch);
 }
 
 } // namespace az2

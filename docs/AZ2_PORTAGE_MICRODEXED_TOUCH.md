@@ -98,27 +98,70 @@ flowchart TD
 ## Protocole minimal de portage
 
 Le Teensy doit recevoir des commandes simples, stables et testables.
+Format reellement implemente (colonnes ` : `, pas de virgules) :
 
 | Commande | Sens | Exemple |
 | --- | --- | --- |
-| Pad press | ESP32 -> Teensy | `PAD:07:DOWN:vel=110` |
-| Pad release | ESP32 -> Teensy | `PAD:07:UP` |
-| Step toggle | ESP32 -> Teensy | `STEP:track=2,step=11,on=1` |
-| Transport | ESP32 -> Teensy | `PLAY`, `STOP`, `REC:TOGGLE` |
-| Patch | ESP32 -> Teensy | `PATCH:bank=2,slot=14` |
-| Macro | ESP32 -> Teensy | `MACRO:1:+3` |
-| Etat audio | Teensy -> ESP32 | `BPM:128`, `CPU:42`, `CLIP:0` |
-| Etat LED | Teensy -> ESP32 | `LED:11:ON`, `LED:02:BLINK` |
+| Pad press | ESP32/Pico -> Teensy | `PAD:07:DOWN:vel=110` |
+| Pad release | ESP32/Pico -> Teensy | `PAD:07:UP` |
+| Step toggle | ESP32 -> Teensy | `STEP:2:11:1` (piste 2, pas 11, on) |
+| Tempo | ESP32 -> Teensy | `BPM:140` |
+| Transport | ESP32 -> Teensy | `PLAY`, `STOP` |
+| Macro (encodeur) | Pico -> Teensy | `MACRO:1:+3` |
+| Etat audio | Teensy -> ESP32/Pico | `STATUS:TEENSY_AUDIO:PLAYING` |
+| Horloge sequenceur | Teensy -> ESP32/Pico | `CLOCK:bar=3:step=11` |
+| Etat LED | Teensy -> ESP32/Pico | `LED:11:ON`, `LED:11:OFF` |
+
+`PATCH:bank=x,slot=y` et `REC:TOGGLE` pas encore implementes (futur, quand
+la gestion SD de patchs sera portee).
+
+## Architecture moteur v1 (2026-09-13, confirmee par test reel)
+
+Reprend `NUM_DEXED` de MicroDexed-touch (4 instances Dexed), adapte a
+l'echelle AZ-2 :
+
+| Voix | Role | Polyphonie |
+| --- | --- | --- |
+| Piste 0-3 (`track0`-`track3`) | Une instance `AudioSynthDexed` par piste du sequenceur | 2 notes/piste |
+| `liveVoice` | Jeu au clavier (pads/page AUDIO ecran), separee des pistes | 4 notes |
+
+Sequenceur : 16 pas x 4 pistes (`kStepCount`/`kTrackCount` dans
+`src_teensy/az2_audio/main.cpp`), une note fixe par piste pour l'instant
+(edition de note par pas = prochaine etape). Toutes les voix passent par
+`AudioMixer4 mixTracks` (les 4 pistes) puis `AudioMixer4 mixFinal` (pistes +
+voix live) avant `AudioOutputI2S`.
+
+Teste reellement (2026-09-13) : pas programmes sur 2 pistes via `STEP:`,
+lecture a 140 BPM, horloge (`CLOCK:`) qui avance et boucle correctement,
+`STOP` qui coupe tout proprement.
+
+### Architecture moteur v1.1 (2026-09-14 -- moteur/patch dynamiques + horloge reelle)
+
+Suite a la demande explicite ("pas assez precis ... faut les divisions
+le tempo" + "les moteurs audio ne sont pas selectionnables ni reglables
+... faut faire un truc propre"), 2 changements structurels par rapport
+au v1 ci-dessus (detail complet dans
+[AZ2_FEUILLE_DE_ROUTE_MOTEUR.md](AZ2_FEUILLE_DE_ROUTE_MOTEUR.md), etapes
+2bis/2ter) :
+
+- Chaque piste n'a plus un seul moteur fixe : elle a ses 3 instances
+  (Dexed/EPiano/Braids) et une seule est branchee au mixeur a la fois
+  (`ENGINE:`/`PATCH:`, rebranchage a la volee via
+  `AudioConnection::connect()`/`disconnect()`).
+- L'horloge du sequenceur tourne sur `IntervalTimer` (interruption
+  materielle), pas sur un `millis()` scrute dans `loop()` -- precision
+  verifiee reellement (180 BPM -> 83,3ms/pas mesures a +/-0,5ms pres).
+- Division du pas reglable (`DIV:`), plus fixee a 1/16.
 
 ## Plan de portage
 
-1. Compiler MicroDexed-touch en mode `I2S_AUDIO_ONLY` avec `PCM5102A`.
-2. Isoler le moteur audio dans une cible Teensy AZ-2 sans UI ILI9341.
-3. Ajouter une entree serie simple pour recevoir `PLAY`, `STOP`, `PAD`.
-4. Faire jouer un son test depuis la matrice SparkFun via ESP32.
-5. Ajouter le sequenceur 16 steps, puis les patterns.
-6. Refaire l'UI en LVGL 480x480 cote ESP32.
-7. Rebrancher progressivement banques, presets, samples, mixer et effets.
+1. Compiler MicroDexed-touch en mode `I2S_AUDIO_ONLY` avec `PCM5102A`. **Fait** (config de reference identifiee, pas compile tel quel -- moteur reecrit directement avec Synth_Dexed).
+2. Isoler le moteur audio dans une cible Teensy AZ-2 sans UI ILI9341. **Fait.**
+3. Ajouter une entree serie simple pour recevoir `PLAY`, `STOP`, `PAD`. **Fait et teste** (son confirme).
+4. Faire jouer un son test depuis la matrice SparkFun via ESP32. **Fait** (Pico + page AUDIO ecran, testes separement).
+5. Ajouter le sequenceur 16 steps, puis les patterns. **Sequenceur 16 pas x 4 pistes fait et teste.** Patterns (plusieurs sequences memorisees/enchainees) : pas encore fait.
+6. Refaire l'UI en LVGL 480x480 cote ESP32. **En cours** : menu de test + pages PADS/ENCODEURS/AUDIO/LIENS SERIE faites (sans LVGL, Arduino_GFX direct) ; grille de sequenceur tactile = prochaine etape.
+7. Rebrancher progressivement banques, presets, samples, mixer et effets. Pas commence.
 
 ## Regle de securite sonore
 

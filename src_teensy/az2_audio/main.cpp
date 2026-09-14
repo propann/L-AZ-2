@@ -1,33 +1,644 @@
+// AZ-2 - Moteur audio Teensy v1 : multi-voix + sequenceur 16 pas.
+//
+// Architecture reprise de MicroDexed-touch (voir
+// src_teensy/microdexed-touch/MicroDexed-touch/config.h: NUM_DEXED=4,
+// sequenceur multi-pistes), adaptee a l'echelle AZ-2 v0 -- voir
+// docs/AZ2_PORTAGE_MICRODEXED_TOUCH.md, "Plan de portage" etape 5:
+//   - 4 voix "pistes" (une instance Dexed chacune) pour le sequenceur.
+//   - 1 voix "live" dediee au jeu au clavier (pads/page AUDIO ecran),
+//     separee du sequenceur pour ne pas se marcher dessus.
+//   - sequenceur 16 pas x 4 pistes, une note fixe par piste pour l'instant
+//     (edition de note par pas = futur, cf doc de portage).
+//
+// Lib Synth_Dexed deja vendored dans le repo:
+// src_teensy/microdexed-touch/third-party/Synth_Dexed (voir
+// platformio.ini: lib_extra_dirs pour master_teensy).
+
 #include <Arduino.h>
 #include <Audio.h>
-#include <math.h>
 #include <AZ2_Protocol.h>
+#include <synth_dexed.h>
+#include <synth_mda_epiano.h>
+#include <synth_braids.h>
+
+// Rempli par le coeur Teensyduino au boot (startup.c) en sommant les 2
+// puces PSRAM soudees au dos du Teensy 4.1 : 0 si aucune detectee, sinon
+// leur taille totale en Mo (ex: 16 pour 2x8MB). Sert de base au sampleur
+// (voir docs/AZ2_SAMPLEUR.md).
+extern "C" uint8_t external_psram_size;
+
+// Zone reservee en PSRAM pour de futurs samples -- pour l'instant juste un
+// test de detection/continuite, pas encore utilisee par un lecteur audio.
+EXTMEM uint8_t psramTestBuffer[1024];
 
 namespace {
 
-AudioSynthWaveformSine sineVoice;
-AudioAmplifier masterAmp;
-AudioOutputI2S i2sOut;
-AudioConnection patchCord1(sineVoice, 0, masterAmp, 0);
-AudioConnection patchCord2(masterAmp, 0, i2sOut, 0);
-AudioConnection patchCord3(masterAmp, 0, i2sOut, 1);
+void checkPsram();  // definie plus bas, utilisee par handleCommand ("PSRAM?")
 
-String inputLine;
+// 8 (au lieu de 4) depuis la demande du 2026-09-14 ("on peut augmenter
+// les pistes monter a 8") -- performance mesuree reelle avant/apres ce
+// changement, voir AZ2_FEUILLE_DE_ROUTE_MOTEUR.md.
+constexpr uint8_t kTrackCount = 8;
+constexpr uint8_t kStepCount = 16;
+constexpr uint8_t kNotesPerTrack = 2;  // polyphonie legere par piste (accords)
+constexpr uint8_t kLiveNotes = 4;      // polyphonie de la voix "jeu au clavier"
+
+// --- Voix moteur : chaque piste a SES 3 instances de moteur (Dexed,
+// EPiano, Braids) toujours creees, mais UNE SEULE connectee au mixeur a
+// la fois (voir setTrackEngine()) -- selection dynamique demandee le
+// 2026-09-14 ("les moteurs audio ne sont pas selectionnables ni
+// reglables ... faut faire un truc propre"), voir
+// AZ2_FEUILLE_DE_ROUTE_MOTEUR.md etape 5. Choix technique : rebrancher le
+// graphe audio a l'usage (AudioConnection::connect()/disconnect(), API
+// officielle de la lib Audio pour du patch runtime) plutot que de garder
+// les 3 moteurs branches en permanence avec un gain a 0 -- la lib Audio
+// ne fait tourner update() QUE sur les objets "actifs" (au moins une
+// connexion), donc un moteur non selectionne ne consomme AUCUN CPU (voir
+// AudioStream.cpp: software_isr() -> "if (p->active) p->update();").
+AudioSynthDexed trackDexedEngine[kTrackCount] = {
+    AudioSynthDexed(kNotesPerTrack, SAMPLE_RATE), AudioSynthDexed(kNotesPerTrack, SAMPLE_RATE),
+    AudioSynthDexed(kNotesPerTrack, SAMPLE_RATE), AudioSynthDexed(kNotesPerTrack, SAMPLE_RATE),
+    AudioSynthDexed(kNotesPerTrack, SAMPLE_RATE), AudioSynthDexed(kNotesPerTrack, SAMPLE_RATE),
+    AudioSynthDexed(kNotesPerTrack, SAMPLE_RATE), AudioSynthDexed(kNotesPerTrack, SAMPLE_RATE),
+};
+AudioSynthEPiano trackEPianoEngine[kTrackCount] = {
+    AudioSynthEPiano(kNotesPerTrack), AudioSynthEPiano(kNotesPerTrack),
+    AudioSynthEPiano(kNotesPerTrack), AudioSynthEPiano(kNotesPerTrack),
+    AudioSynthEPiano(kNotesPerTrack), AudioSynthEPiano(kNotesPerTrack),
+    AudioSynthEPiano(kNotesPerTrack), AudioSynthEPiano(kNotesPerTrack),
+};
+AudioSynthBraids trackBraidsEngine[kTrackCount];  // pas de parametre de constructeur
+AudioSynthDexed liveVoice(kLiveNotes, SAMPLE_RATE);   // voix live (pads/ecran), pas concernee par le choix de moteur
+
+constexpr float kBraidsActiveGain = 0.5f;  // meme niveau que les autres pistes
+
+// AudioMixer4 n'a que 4 entrees : avec 8 pistes il en faut 2 (groupe A =
+// pistes 0-3, groupe B = pistes 4-7), combinees dans mixFinal avec la
+// voix live -- voir trackGroupMixer()/trackGroupChannel() plus bas.
+AudioMixer4 mixTracksA;  // pistes 0-3
+AudioMixer4 mixTracksB;  // pistes 4-7
+AudioMixer4 mixFinal;    // groupe A + groupe B + voix live (entree 3 libre)
+
+// Bus d'effets maitre (demande du 2026-09-14 : "un mixeur general et des
+// effets sur le son") -- en aval de mixFinal, pas par piste (un
+// AudioEffectDelay pleine echelle coute ~350 Ko de RAM ; un seul sur le
+// bus master est largement suffisant et abordable, un par piste ne le
+// serait pas). mixMaster combine signal sec (0), reverb (1) et delay (2)
+// -- l'entree 3 reste libre pour un futur effet.
+AudioEffectFreeverb reverbUnit;
+AudioEffectDelay delayUnit;
+AudioMixer4 mixMaster;
+AudioOutputI2S i2sOut;
+
+// Une connexion "prise" par piste, rebranchee vers le moteur actif de
+// cette piste (voir setTrackEngine()) -- pas connectee au demarrage,
+// setup() choisit le moteur par defaut de chaque piste comme n'importe
+// quel autre changement.
+AudioConnection patchTrackIn[kTrackCount];
+AudioConnection patchGroupA(mixTracksA, 0, mixFinal, 0);
+AudioConnection patchGroupB(mixTracksB, 0, mixFinal, 1);
+AudioConnection patchLiveIn(liveVoice, 0, mixFinal, 2);
+AudioConnection patchFinalToMaster(mixFinal, 0, mixMaster, 0);  // signal sec
+AudioConnection patchFinalToReverb(mixFinal, 0, reverbUnit, 0);
+AudioConnection patchReverbToMaster(reverbUnit, 0, mixMaster, 1);
+AudioConnection patchFinalToDelay(mixFinal, 0, delayUnit, 0);
+AudioConnection patchDelayToMaster(delayUnit, 0, mixMaster, 2);
+AudioConnection patchOutL(mixMaster, 0, i2sOut, 0);
+AudioConnection patchOutR(mixMaster, 0, i2sOut, 1);
+
+// Piste -> quel AudioMixer4 de groupe, et quel canal (0-3) dedans.
+AudioMixer4 &trackGroupMixer(uint8_t track) {
+  return track < 4 ? mixTracksA : mixTracksB;
+}
+uint8_t trackGroupChannel(uint8_t track) {
+  return static_cast<uint8_t>(track % 4);
+}
+
+// Moteur et patch actuellement actifs par piste (voir
+// AZ2_Protocol.h: kEngine*/kEngineCount, enginePatchCount()).
+uint8_t trackEngine[kTrackCount] = {
+    az2::kEngineDexed, az2::kEngineDexed, az2::kEngineEPiano, az2::kEngineBraids,
+    az2::kEngineDexed, az2::kEngineDexed, az2::kEngineEPiano, az2::kEngineBraids,
+};
+uint8_t trackPatch[kTrackCount] = {0, 0, 0, 0, 0, 0, 0, 0};
+
+// 8 voix DX7 choisies a la main dans la banque vendored (voir
+// src_teensy/microdexed-touch/third-party/Synth_Dexed/examples/Banks/
+// banks.h, "RitCh1.syx") pour leur diversite timbrale -- format "voice
+// sysex" empaquete (128 octets), a decoder avec Dexed::decodeVoice()
+// avant Dexed::loadVoiceParameters() (meme sequence que dexed_sd.cpp:244
+// dans MicroDexed-touch). GARDER LE MEME ORDRE que
+// az2::kDexedPatchNames (AZ2_Protocol.h) -- l'index doit correspondre.
+const uint8_t kDexedPatchBank[8][128] PROGMEM = {
+    { // FM-Rhodes
+      96, 29, 20, 50, 99, 95, 0, 0, 46, 53, 57, 2, 75, 28, 95, 2,
+      0, 96, 20, 20, 50, 99, 95, 0, 0, 46, 0, 0, 8, 83, 12, 98,
+      2, 0, 96, 29, 20, 50, 99, 95, 0, 0, 46, 53, 57, 2, 35, 24,
+      96, 2, 0, 96, 20, 20, 50, 99, 95, 0, 0, 46, 0, 0, 12, 35,
+      8, 98, 2, 0, 95, 50, 35, 78, 99, 72, 0, 0, 39, 99, 0, 2,
+      59, 28, 70, 28, 0, 96, 25, 25, 67, 99, 74, 0, 0, 0, 0, 0,
+      0, 59, 12, 99, 2, 0, 99, 99, 99, 99, 50, 50, 50, 50, 4, 0,
+      32, 32, 0, 0, 56, 12, 70, 77, 45, 82, 104, 111, 100, 101, 115, 32,
+    },
+    { // Steinway
+      99, 29, 22, 4, 99, 95, 0, 0, 22, 4, 12, 7, 60, 12, 88, 6,
+      0, 99, 53, 19, 35, 99, 94, 0, 0, 0, 0, 6, 0, 89, 31, 76,
+      2, 0, 99, 51, 18, 51, 99, 94, 0, 0, 0, 0, 0, 0, 67, 4,
+      99, 2, 0, 99, 24, 22, 4, 99, 91, 0, 0, 22, 3, 32, 3, 27,
+      12, 88, 10, 0, 99, 38, 17, 35, 99, 95, 0, 0, 0, 0, 3, 12,
+      65, 8, 80, 2, 0, 99, 32, 18, 51, 99, 96, 0, 0, 0, 0, 0,
+      0, 11, 8, 99, 2, 0, 99, 99, 99, 99, 50, 50, 50, 50, 2, 12,
+      35, 0, 0, 0, 1, 24, 83, 116, 101, 105, 110, 119, 97, 121, 32, 32,
+    },
+    { // Korg CX3
+      99, 99, 99, 99, 99, 99, 99, 0, 63, 20, 0, 0, 56, 0, 88, 57,
+      30, 99, 99, 99, 99, 99, 99, 99, 0, 63, 0, 30, 0, 72, 0, 99,
+      6, 0, 99, 99, 99, 99, 99, 99, 99, 0, 63, 0, 30, 0, 56, 0,
+      99, 4, 0, 99, 99, 60, 99, 99, 99, 80, 0, 63, 0, 30, 0, 57,
+      0, 99, 12, 0, 99, 99, 99, 99, 99, 99, 99, 0, 63, 0, 30, 0,
+      40, 0, 99, 6, 0, 99, 99, 99, 99, 99, 99, 99, 0, 63, 0, 30,
+      0, 56, 0, 99, 2, 0, 99, 99, 99, 99, 50, 50, 50, 50, 23, 8,
+      35, 0, 0, 0, 49, 24, 75, 111, 114, 103, 32, 67, 88, 51, 32, 32,
+    },
+    { // Leadharp
+      95, 42, 28, 14, 99, 79, 79, 0, 0, 0, 0, 0, 117, 8, 90, 6,
+      0, 95, 28, 99, 39, 99, 70, 70, 0, 52, 0, 35, 3, 115, 8, 67,
+      6, 0, 95, 99, 99, 96, 99, 99, 99, 0, 0, 0, 0, 0, 112, 12,
+      99, 2, 0, 95, 42, 28, 14, 99, 79, 79, 0, 0, 0, 0, 0, 13,
+      8, 90, 6, 0, 95, 28, 99, 39, 99, 70, 70, 0, 52, 0, 35, 3,
+      43, 8, 67, 6, 0, 95, 99, 99, 96, 99, 99, 99, 0, 0, 0, 0,
+      0, 16, 12, 99, 2, 0, 94, 67, 95, 60, 50, 50, 50, 50, 3, 8,
+      41, 33, 0, 0, 41, 24, 76, 101, 97, 100, 104, 97, 114, 112, 32, 32,
+    },
+    { // FatSynth A
+      56, 13, 3, 33, 99, 96, 94, 0, 54, 0, 0, 0, 72, 0, 64, 8,
+      0, 56, 13, 4, 33, 99, 96, 94, 0, 54, 0, 0, 0, 56, 0, 77,
+      2, 0, 56, 13, 5, 35, 99, 96, 94, 0, 34, 0, 20, 0, 40, 0,
+      82, 2, 0, 71, 41, 54, 61, 99, 95, 99, 0, 0, 0, 0, 0, 112,
+      0, 99, 1, 8, 59, 46, 5, 38, 98, 95, 95, 0, 15, 0, 2, 0,
+      0, 0, 86, 2, 0, 71, 41, 54, 61, 99, 95, 99, 0, 0, 0, 0,
+      0, 0, 0, 99, 1, 0, 94, 67, 95, 60, 50, 50, 50, 50, 1, 15,
+      38, 33, 32, 0, 24, 12, 70, 65, 84, 83, 89, 78, 84, 72, 32, 65,
+    },
+    { // Jupiter 8
+      64, 27, 16, 31, 90, 99, 94, 0, 0, 0, 17, 0, 0, 0, 99, 4,
+      0, 64, 27, 16, 43, 90, 99, 95, 0, 0, 0, 0, 0, 112, 0, 65,
+      0, 0, 64, 27, 16, 39, 90, 99, 94, 0, 0, 0, 0, 0, 8, 0,
+      82, 0, 0, 64, 40, 23, 46, 99, 97, 94, 0, 0, 0, 0, 0, 80,
+      0, 99, 0, 0, 50, 26, 9, 36, 94, 99, 94, 0, 24, 0, 5, 0,
+      112, 4, 83, 0, 0, 65, 99, 99, 44, 99, 99, 99, 0, 0, 0, 0,
+      0, 104, 0, 99, 0, 0, 99, 99, 99, 99, 50, 50, 50, 50, 8, 15,
+      23, 0, 11, 0, 33, 24, 74, 85, 80, 73, 84, 69, 82, 32, 56, 32,
+    },
+    { // Mini-Moog
+      99, 99, 99, 70, 99, 99, 99, 0, 39, 0, 0, 0, 40, 0, 70, 2,
+      0, 67, 44, 30, 70, 99, 97, 94, 0, 39, 0, 0, 0, 32, 0, 78,
+      2, 0, 81, 99, 99, 70, 99, 99, 99, 0, 39, 0, 0, 0, 40, 0,
+      94, 2, 0, 69, 99, 99, 70, 99, 99, 99, 0, 39, 0, 0, 0, 80,
+      16, 89, 2, 0, 65, 99, 99, 70, 99, 99, 99, 0, 39, 0, 0, 0,
+      56, 0, 75, 1, 0, 85, 99, 99, 70, 99, 99, 99, 0, 39, 0, 0,
+      0, 72, 0, 95, 2, 0, 99, 99, 99, 99, 50, 50, 50, 50, 3, 4,
+      40, 0, 5, 0, 64, 24, 77, 105, 110, 105, 45, 77, 111, 111, 103, 32,
+    },
+    { // Moog Strings
+      72, 76, 10, 25, 99, 92, 0, 0, 0, 0, 0, 0, 88, 0, 71, 16,
+      0, 76, 73, 10, 20, 99, 92, 0, 0, 0, 0, 0, 4, 32, 0, 66,
+      4, 0, 49, 74, 10, 28, 98, 98, 36, 0, 34, 0, 0, 0, 88, 0,
+      76, 4, 0, 51, 15, 10, 44, 99, 92, 0, 0, 0, 0, 0, 0, 104,
+      0, 92, 4, 0, 81, 13, 7, 23, 99, 92, 28, 0, 0, 0, 0, 0,
+      8, 0, 75, 4, 0, 48, 56, 10, 44, 98, 98, 36, 0, 97, 0, 0,
+      0, 8, 0, 92, 4, 0, 94, 67, 95, 60, 50, 50, 50, 50, 1, 7,
+      28, 22, 18, 0, 40, 12, 77, 111, 111, 103, 32, 83, 116, 114, 110, 103,
+    },
+};
+
+// Formes Braids choisies (voir settings.h: MacroOscillatorShape) --
+// GARDER LE MEME ORDRE que az2::kBraidsPatchNames.
+const int16_t kBraidsShapeValues[8] = {0, 2, 9, 16, 21, 25, 28, 14};
+
+// Charge le patch courant (trackPatch[track]) dans le moteur actuellement
+// actif de la piste (trackEngine[track]). Partagee avec liveVoice (voir
+// setup()) qui n'a pas de "piste" mais profite des memes patchs nommes.
+void loadDexedPatch(AudioSynthDexed &engine, uint8_t patch) {
+  uint8_t packed[128];
+  memcpy_P(packed, kDexedPatchBank[patch % az2::kDexedPatchCount], sizeof(packed));
+  uint8_t unpacked[156];
+  engine.decodeVoice(unpacked, packed);
+  engine.loadVoiceParameters(unpacked);
+}
+
+void applyTrackPatch(uint8_t track) {
+  const uint8_t patch = trackPatch[track];
+  switch (trackEngine[track]) {
+    case az2::kEngineDexed:
+      loadDexedPatch(trackDexedEngine[track], patch);
+      break;
+    case az2::kEngineEPiano:
+      trackEPianoEngine[track].setProgram(patch % az2::kEPianoPatchCount);
+      break;
+    case az2::kEngineBraids:
+      trackBraidsEngine[track].set_braids_shape(kBraidsShapeValues[patch % az2::kBraidsPatchCount]);
+      break;
+  }
+}
+
+// Change le moteur actif d'une piste : coupe proprement la note en cours,
+// rebranche le graphe audio (disconnect/connect -- API officielle de
+// patch runtime de la lib Audio, sans danger appelee depuis loop(), voir
+// AudioStream.cpp), recharge le patch 0 du nouveau moteur, et remet le
+// gain mixeur de la piste a son niveau normal (Braids gere le sien tout
+// seul note par note, voir trackNoteOn/trackNoteOff).
+void allTrackNotesOff();  // definie plus bas, utilisee ici
+
+void setTrackEngine(uint8_t track, uint8_t engine) {
+  if (track >= kTrackCount || engine >= az2::kEngineCount) {
+    return;
+  }
+
+  allTrackNotesOff();
+
+  trackEngine[track] = engine;
+  trackPatch[track] = 0;
+
+  AudioMixer4 &group = trackGroupMixer(track);
+  const uint8_t channel = trackGroupChannel(track);
+
+  patchTrackIn[track].disconnect();
+  switch (engine) {
+    case az2::kEngineDexed:
+      patchTrackIn[track].connect(trackDexedEngine[track], 0, group, channel);
+      break;
+    case az2::kEngineEPiano:
+      patchTrackIn[track].connect(trackEPianoEngine[track], 0, group, channel);
+      break;
+    case az2::kEngineBraids:
+      patchTrackIn[track].connect(trackBraidsEngine[track], 0, group, channel);
+      break;
+  }
+
+  applyTrackPatch(track);
+  group.gain(channel, engine == az2::kEngineBraids ? 0.0f : 0.5f);
+}
+
+// Trois entrees possibles pour le protocole AZ2 (architecture a 3 cerveaux,
+// voir AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md) :
+// - Serial  (USB)     : moniteur serie humain, pratique pour tester le
+//   Teensy seul (AZ2_CABLAGE_BASE.md, "Tests de cablage v0", etape 2).
+// - Serial1 (pins 0/1)  : lien UART vers l'ESP32_CONTROL (menu/commandes UI).
+// - Serial3 (pins 14/15): lien UART vers le Pico_KEYPAD (pads, encodeurs) —
+//   le module ecran n'ayant presque plus de GPIO libre, le clavier physique
+//   est scanne par un Pico dedie qui parle directement au Teensy.
+// Les trois sont lues et les reponses sont recopiees sur les trois, pour ne
+// pas casser le test manuel USB quand les UART sont branchees.
+String usbLine;
+String espLine;
+String picoLine;
 uint32_t lastStatusMs = 0;
 bool playing = false;
-uint16_t currentBar = 1;
-uint8_t currentStep = 0;
 
-float padToFrequency(uint8_t pad) {
-  constexpr float kBaseFrequency = 55.0f;
-  return kBaseFrequency * powf(2.0f, static_cast<float>(pad) / 12.0f);
+// Gamme chromatique sur les 16 pads (voix live): pad 0 = kPadBaseNote
+// (MIDI), pad 15 = kPadBaseNote+15. 48 = C3. Transpose ajustable par
+// l'encodeur 1 (Pico).
+constexpr uint8_t kPadBaseNote = 48;
+int8_t transposeSemitones = 0;
+
+uint8_t padToMidiNote(uint8_t pad) {
+  return static_cast<uint8_t>(kPadBaseNote + pad + transposeSemitones);
 }
 
-void setPlaying(bool enabled) {
-  playing = enabled;
-  masterAmp.gain(enabled ? 0.18f : 0.0f);
+void announceLed(uint8_t pad, const char *state) {
+  az2::printLedEvent(Serial, pad, state);
+  az2::printLedEvent(Serial1, pad, state);
+  az2::printLedEvent(Serial3, pad, state);
 }
 
+void announceStatus(const char *state) {
+  az2::printStatus(Serial, "TEENSY_AUDIO", state);
+  az2::printStatus(Serial1, "TEENSY_AUDIO", state);
+  az2::printStatus(Serial3, "TEENSY_AUDIO", state);
+}
+
+void announceHello();  // definie plus bas (a besoin de bpm/stepsPerBeat/trackEngine)
+
+void relayLine(const String &line) {
+  Serial.println(line);
+  Serial1.println(line);
+  Serial3.println(line);
+}
+
+// ---------------------------------------------------------------------
+// Sequenceur : 16 pas x 4 pistes, une note fixe par piste pour l'instant.
+// ---------------------------------------------------------------------
+struct SequencerTrack {
+  bool stepOn[kStepCount] = {};
+  uint8_t note = 60;
+  bool stepPlaying = false;
+};
+SequencerTrack seqTracks[kTrackCount];
+
+// Horloge du sequenceur : sur IntervalTimer (interruption materielle),
+// comme MicroDexed-touch (voir src_teensy/microdexed-touch/MicroDexed-touch/
+// MicroDexed-touch.ino, "PeriodicTimer sequencer_timer" + dexed_sd.cpp:4823
+// "sequencer_timer.begin(sequencer, seq.tempo_ms/(seq.ticks_max+1))") --
+// c'est ce qui manquait cote AZ-2 : avant, le pas etait avance depuis
+// loop() via un simple test millis(), donc soumis a la duree de tout ce
+// que loop() fait dans le meme tour (lecture des 3 UART, etc.) -- source
+// du "temps mort" ressenti. Avec IntervalTimer, l'avancement du pas (et le
+// declenchement des notes) se fait dans une vraie interruption, a l'heure
+// pile, quoi qu'il arrive par ailleurs dans loop().
+IntervalTimer sequencerTimer;
+float bpm = 120.0f;
+// Division du pas (voir AZ2_Protocol.h: kDivisionOptions) -- 4 = double-
+// croche (comportement d'origine, 1/16), reglable par DIV: depuis l'ecran.
+uint8_t stepsPerBeat = 4;
+volatile uint8_t currentStep = 0;
+volatile uint16_t currentBar = 1;
+// L'ISR ne fait AUCUN Serial.print (trop lent/imprevisible en interruption) :
+// elle se contente de positionner ce drapeau, et announceClock() reste
+// appele depuis loop() (voir updateSequencer()).
+volatile bool clockPending = false;
+
+void seedDefaultNotes() {
+  // Accord de depart different par piste, juste pour avoir quelque chose
+  // d'audible des le premier test (a remplacer par une vraie edition de
+  // note par pas plus tard).
+  // C3,G3,C4,E4 puis la meme chose une octave au-dessus pour les pistes 4-7.
+  static const uint8_t kDefaultNotes[kTrackCount] = {48, 55, 60, 64, 60, 67, 72, 76};
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    seqTracks[t].note = kDefaultNotes[t];
+  }
+}
+
+float stepIntervalUs() {
+  // stepsPerBeat pas par temps (4 = double-croche/1/16 par defaut) ;
+  // bpm = noires/minute. En microsecondes pour IntervalTimer.
+  return 60000000.0f / bpm / static_cast<float>(stepsPerBeat);
+}
+
+void announceClock() {
+  az2::printClock(Serial, currentBar, currentStep);
+  az2::printClock(Serial1, currentBar, currentStep);
+  az2::printClock(Serial3, currentBar, currentStep);
+}
+
+// Definie ici (et non avec les autres announce*) car elle a besoin de
+// bpm/stepsPerBeat/trackEngine/trackPatch, declares plus haut dans ce
+// fichier mais apres l'ancien emplacement de cette fonction.
+void announceHello() {
+  Serial.println(az2::kHelloAudio);
+  Serial1.println(az2::kHelloAudio);
+  Serial3.println(az2::kHelloAudio);
+
+  // Reenvoie l'etat courant a la connexion/reconnexion d'un ESP32 ou Pico
+  // -- sans ca, l'ecran redemarre sur des valeurs par defaut fausses
+  // alors que le Teensy, lui, garde son etat (tempo, division, moteur+
+  // patch par piste) tant qu'il n'est pas lui-meme redemarre.
+  az2::printBpm(Serial, bpm);
+  az2::printBpm(Serial1, bpm);
+  az2::printBpm(Serial3, bpm);
+  az2::printDivision(Serial, stepsPerBeat);
+  az2::printDivision(Serial1, stepsPerBeat);
+  az2::printDivision(Serial3, stepsPerBeat);
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    az2::printEngineSelect(Serial, t, trackEngine[t]);
+    az2::printEngineSelect(Serial1, t, trackEngine[t]);
+    az2::printEngineSelect(Serial3, t, trackEngine[t]);
+    az2::printPatchSelect(Serial, t, trackPatch[t]);
+    az2::printPatchSelect(Serial1, t, trackPatch[t]);
+    az2::printPatchSelect(Serial3, t, trackPatch[t]);
+  }
+}
+
+// Un moteur different par piste (voir AZ2_FEUILLE_DE_ROUTE_MOTEUR.md) :
+// Dexed et EPiano ont un vrai "note on/off", Braids est un oscillateur
+// continu qu'on "frappe" (Strike interne a set_braids_pitch) -- on simule
+// son extinction en coupant son canal du mixeur plutot qu'un vrai
+// relachement de note. Le moteur utilise depend de trackEngine[track],
+// choisi dynamiquement (voir setTrackEngine()) -- plus fixe par numero
+// de piste.
+void trackNoteOn(uint8_t track, uint8_t note, uint8_t velocity) {
+  switch (trackEngine[track]) {
+    case az2::kEngineDexed: trackDexedEngine[track].keydown(note, velocity); break;
+    case az2::kEngineEPiano: trackEPianoEngine[track].noteOn(note, velocity); break;
+    case az2::kEngineBraids:
+      trackBraidsEngine[track].set_braids_pitch(static_cast<int16_t>(note) << 7);
+      trackGroupMixer(track).gain(trackGroupChannel(track), kBraidsActiveGain);
+      break;
+  }
+}
+
+void trackNoteOff(uint8_t track, uint8_t note) {
+  switch (trackEngine[track]) {
+    case az2::kEngineDexed: trackDexedEngine[track].keyup(note); break;
+    case az2::kEngineEPiano: trackEPianoEngine[track].noteOff(note); break;
+    case az2::kEngineBraids: trackGroupMixer(track).gain(trackGroupChannel(track), 0.0f); break;
+  }
+}
+
+void allTrackNotesOff() {
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    if (seqTracks[t].stepPlaying) {
+      trackNoteOff(t, seqTracks[t].note);
+      seqTracks[t].stepPlaying = false;
+    }
+  }
+}
+
+// Appelee directement par sequencerTimer (interruption materielle) --
+// donc a l'heure pile, pas de jitter du a loop(). Reste volontairement
+// minimale : que du declenchement de notes, aucun Serial.print ici (voir
+// clockPending / updateSequencer()).
+void advanceSequencer() {
+  allTrackNotesOff();
+
+  currentStep = static_cast<uint8_t>((currentStep + 1) % kStepCount);
+  if (currentStep == 0) {
+    ++currentBar;
+  }
+
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    if (seqTracks[t].stepOn[currentStep]) {
+      trackNoteOn(t, seqTracks[t].note, 100);
+      seqTracks[t].stepPlaying = true;
+    }
+  }
+
+  clockPending = true;
+}
+
+// Appelee depuis loop() : se contente d'imprimer le CLOCK: en attente
+// (le pas lui-meme a deja ete avance par l'ISR sequencerTimer, voir
+// advanceSequencer()). Le Serial.print couteux reste hors de l'ISR.
+void updateSequencer() {
+  if (clockPending) {
+    clockPending = false;
+    announceClock();
+  }
+}
+
+void startSequencer() {
+  playing = true;
+  currentStep = kStepCount - 1;  // le prochain advanceSequencer() ira au pas 0
+  sequencerTimer.begin(advanceSequencer, stepIntervalUs());
+}
+
+void stopSequencer() {
+  playing = false;
+  sequencerTimer.end();
+  allTrackNotesOff();
+}
+
+// STEP:<piste 0-3>:<pas 0-15>:<0 ou 1>
+void handleStepCommand(const String &line) {
+  const int idx1 = line.indexOf(':');
+  const int idx2 = line.indexOf(':', idx1 + 1);
+  const int idx3 = line.indexOf(':', idx2 + 1);
+  if (idx1 < 0 || idx2 < 0 || idx3 < 0) {
+    return;
+  }
+
+  const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+  const uint8_t step = static_cast<uint8_t>(line.substring(idx2 + 1, idx3).toInt());
+  const bool on = line.substring(idx3 + 1).toInt() != 0;
+
+  if (track >= kTrackCount || step >= kStepCount) {
+    return;
+  }
+
+  seqTracks[track].stepOn[step] = on;
+  relayLine(line);  // confirme tel quel, utile pour que l'UI ESP32 se resynchronise
+}
+
+// BPM:<valeur, 30-300>
+void handleBpmCommand(const String &line) {
+  const int idx = line.indexOf(':');
+  if (idx < 0) {
+    return;
+  }
+  const float value = line.substring(idx + 1).toFloat();
+  if (value >= 30.0f && value <= 300.0f) {
+    bpm = value;
+    if (playing) {
+      // Reajuste la periode de l'ISR tout de suite, sans couper/reprendre
+      // la lecture (IntervalTimer::update() change juste l'intervalle).
+      sequencerTimer.update(stepIntervalUs());
+    }
+    relayLine(line);  // confirme tel quel, l'UI ESP32/Pico affiche le tempo reel
+  }
+}
+
+// DIV:<pas par temps -- doit etre une des valeurs de az2::kDivisionOptions>
+void handleDivCommand(const String &line) {
+  const int idx = line.indexOf(':');
+  if (idx < 0) {
+    return;
+  }
+  const uint8_t value = static_cast<uint8_t>(line.substring(idx + 1).toInt());
+
+  bool valid = false;
+  for (uint8_t i = 0; i < az2::kDivisionOptionCount; ++i) {
+    if (az2::kDivisionOptions[i].stepsPerBeat == value) {
+      valid = true;
+      break;
+    }
+  }
+  if (!valid) {
+    return;
+  }
+
+  stepsPerBeat = value;
+  if (playing) {
+    sequencerTimer.update(stepIntervalUs());
+  }
+  relayLine(line);
+}
+
+// ENGINE:<piste 0-3>:<moteur, voir az2::kEngine*>
+void handleEngineCommand(const String &line) {
+  const int idx1 = line.indexOf(':');
+  const int idx2 = line.indexOf(':', idx1 + 1);
+  if (idx1 < 0 || idx2 < 0) {
+    return;
+  }
+  const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+  const uint8_t engine = static_cast<uint8_t>(line.substring(idx2 + 1).toInt());
+  if (track >= kTrackCount || engine >= az2::kEngineCount) {
+    return;
+  }
+
+  setTrackEngine(track, engine);
+  relayLine(line);
+  // setTrackEngine() remet toujours le patch a 0 -- previens l'UI tout de
+  // suite, sinon elle resterait affichee sur l'ancien patch jusqu'au
+  // prochain changement.
+  az2::printPatchSelect(Serial, track, 0);
+  az2::printPatchSelect(Serial1, track, 0);
+  az2::printPatchSelect(Serial3, track, 0);
+}
+
+// PATCH:<piste 0-3>:<index de patch, voir az2::enginePatchCount(moteur actif)>
+void handlePatchCommand(const String &line) {
+  const int idx1 = line.indexOf(':');
+  const int idx2 = line.indexOf(':', idx1 + 1);
+  if (idx1 < 0 || idx2 < 0) {
+    return;
+  }
+  const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+  const uint8_t patch = static_cast<uint8_t>(line.substring(idx2 + 1).toInt());
+  if (track >= kTrackCount || patch >= az2::enginePatchCount(trackEngine[track])) {
+    return;
+  }
+
+  trackPatch[track] = patch;
+  applyTrackPatch(track);
+  relayLine(line);
+}
+
+// FX:reverb:<0-100> ou FX:delay:<0-100> -- bus d'effets maitre (voir
+// mixMaster/reverbUnit/delayUnit plus haut), pas encore de reglage par
+// piste (cf feuille de route etape 4, "mixeur vrai").
+void handleFxCommand(const String &line) {
+  const int idx1 = line.indexOf(':');
+  const int idx2 = line.indexOf(':', idx1 + 1);
+  if (idx1 < 0 || idx2 < 0) {
+    return;
+  }
+  const String param = line.substring(idx1 + 1, idx2);
+  const int amount = constrain(line.substring(idx2 + 1).toInt(), 0, 100);
+  const float wet = static_cast<float>(amount) / 100.0f;
+
+  if (param == "reverb") {
+    mixMaster.gain(1, wet);
+  } else if (param == "delay") {
+    mixMaster.gain(2, wet);
+  } else {
+    return;
+  }
+  relayLine(line);
+}
+
+// CPU? -- charge processeur et memoire audio reelles, demande le
+// 2026-09-14 ("cote performance on est comment") avant d'augmenter
+// pistes/moteurs. AudioProcessorUsage() = charge instantanee (%),
+// ...Max() = pic depuis le dernier reset ; idem pour la memoire (en
+// blocs, sur les 200 alloues par AudioMemory(), voir setup()).
+void reportCpuUsage() {
+  Serial.print("AZ2:CPU:usage=");
+  Serial.print(AudioProcessorUsage(), 1);
+  Serial.print("%:max=");
+  Serial.print(AudioProcessorUsageMax(), 1);
+  Serial.println('%');
+  Serial.print("AZ2:MEM:blocks=");
+  Serial.print(AudioMemoryUsage());
+  Serial.print(":max=");
+  Serial.print(AudioMemoryUsageMax());
+  Serial.println("/200");
+}
+
+// ---------------------------------------------------------------------
+// Voix live (jeu au clavier depuis les pads / la page AUDIO de l'ecran) --
+// separee des pistes du sequenceur.
+// ---------------------------------------------------------------------
 void handlePadCommand(const String &line) {
   const int firstColon = line.indexOf(':');
   const int secondColon = line.indexOf(':', firstColon + 1);
@@ -40,27 +651,50 @@ void handlePadCommand(const String &line) {
     return;
   }
 
+  const uint8_t note = padToMidiNote(pad);
   const bool pressed = line.indexOf(":DOWN") > 0;
+
   if (pressed) {
-    sineVoice.frequency(padToFrequency(pad));
-    setPlaying(true);
-    az2::printLedEvent(Serial, pad, "ON");
+    uint8_t velocity = 100;
+    const int velIdx = line.indexOf("vel=");
+    if (velIdx >= 0) {
+      velocity = static_cast<uint8_t>(line.substring(velIdx + 4).toInt());
+    }
+    liveVoice.keydown(note, velocity);
+    announceLed(pad, "ON");
   } else {
-    setPlaying(false);
-    az2::printLedEvent(Serial, pad, "OFF");
+    liveVoice.keyup(note);
+    announceLed(pad, "OFF");
+  }
+}
+
+void handleMacroCommand(const String &line) {
+  const int firstColon = line.indexOf(':');
+  const int secondColon = line.indexOf(':', firstColon + 1);
+  if (firstColon < 0 || secondColon < 0) {
+    return;
+  }
+
+  const uint8_t index = static_cast<uint8_t>(line.substring(firstColon + 1, secondColon).toInt());
+  const int32_t delta = line.substring(secondColon + 1).toInt();
+
+  if (index == 1) {
+    const int32_t updated = constrain(static_cast<int32_t>(transposeSemitones) + delta, -24, 24);
+    transposeSemitones = static_cast<int8_t>(updated);
   }
 }
 
 void handleCommand(const String &line) {
   if (line == az2::kPlay) {
-    setPlaying(true);
-    az2::printStatus(Serial, "TEENSY_AUDIO", az2::kStatusPlaying);
+    startSequencer();
+    announceStatus(az2::kStatusPlaying);
     return;
   }
 
   if (line == az2::kStop) {
-    setPlaying(false);
-    az2::printStatus(Serial, "TEENSY_AUDIO", az2::kStatusStopped);
+    stopSequencer();
+    liveVoice.notesOff();
+    announceStatus(az2::kStatusStopped);
     return;
   }
 
@@ -69,32 +703,114 @@ void handleCommand(const String &line) {
     return;
   }
 
-  if (line == az2::kHelloControl) {
-    Serial.println(az2::kHelloAudio);
+  if (line == az2::kHelloControl || line == az2::kHelloKeypad) {
+    announceHello();
+    return;
+  }
+
+  if (line.startsWith("MACRO:")) {
+    handleMacroCommand(line);
+    relayLine(line);
+    return;
+  }
+
+  if (line.startsWith("ENC:")) {
+    relayLine(line);
+    return;
+  }
+
+  if (line.startsWith("STEP:")) {
+    handleStepCommand(line);
+    return;
+  }
+
+  if (line.startsWith("BPM:")) {
+    handleBpmCommand(line);
+    return;
+  }
+
+  if (line.startsWith("DIV:")) {
+    handleDivCommand(line);
+    return;
+  }
+
+  if (line.startsWith("ENGINE:")) {
+    handleEngineCommand(line);
+    return;
+  }
+
+  if (line.startsWith("PATCH:")) {
+    handlePatchCommand(line);
+    return;
+  }
+
+  if (line == "PSRAM?") {
+    checkPsram();
+    return;
+  }
+
+  if (line.startsWith("FX:")) {
+    handleFxCommand(line);
+    return;
+  }
+
+  if (line == "CPU?") {
+    reportCpuUsage();
     return;
   }
 }
 
-void readSerialCommands() {
-  while (Serial.available() > 0) {
-    const char c = static_cast<char>(Serial.read());
+void readStream(Stream &in, String &lineBuffer) {
+  while (in.available() > 0) {
+    const char c = static_cast<char>(in.read());
     if (c == '\r') {
       continue;
     }
 
     if (c == '\n') {
-      inputLine.trim();
-      if (inputLine.length() > 0) {
-        handleCommand(inputLine);
+      lineBuffer.trim();
+      if (lineBuffer.length() > 0) {
+        handleCommand(lineBuffer);
       }
-      inputLine = "";
+      lineBuffer = "";
       continue;
     }
 
-    if (inputLine.length() < 96) {
-      inputLine += c;
+    if (lineBuffer.length() < 96) {
+      lineBuffer += c;
     }
   }
+}
+
+void readSerialCommands() {
+  readStream(Serial, usbLine);
+  readStream(Serial1, espLine);
+  readStream(Serial3, picoLine);
+}
+
+// Verifie que la/les puce(s) PSRAM soudees sont bien detectees et
+// utilisables (ecriture/lecture reelle, pas juste la taille annoncee au
+// boot). Imprime le resultat sur les 3 flux -- voir docs/AZ2_SAMPLEUR.md.
+void checkPsram() {
+  Serial.print("AZ2:PSRAM:detected_mb=");
+  Serial.println(external_psram_size);
+
+  if (external_psram_size == 0) {
+    Serial.println("AZ2:PSRAM:ERROR_NOT_DETECTED");
+    return;
+  }
+
+  for (size_t i = 0; i < sizeof(psramTestBuffer); ++i) {
+    psramTestBuffer[i] = static_cast<uint8_t>(i & 0xFF);
+  }
+  bool ok = true;
+  for (size_t i = 0; i < sizeof(psramTestBuffer); ++i) {
+    if (psramTestBuffer[i] != static_cast<uint8_t>(i & 0xFF)) {
+      ok = false;
+      break;
+    }
+  }
+  Serial.println(ok ? "AZ2:PSRAM:READ_WRITE_OK" : "AZ2:PSRAM:READ_WRITE_FAILED");
 }
 
 void sendStatus() {
@@ -104,31 +820,67 @@ void sendStatus() {
   }
 
   lastStatusMs = now;
-  az2::printStatus(Serial, "TEENSY_AUDIO", playing ? az2::kStatusPlaying : az2::kStatusReady);
-  az2::printClock(Serial, currentBar, currentStep);
-
-  if (playing) {
-    currentStep = (currentStep + 1) % az2::kPadCount;
-    if (currentStep == 0) {
-      ++currentBar;
-    }
-  }
+  announceStatus(playing ? az2::kStatusPlaying : az2::kStatusReady);
 }
 
 } // namespace
 
 void setup() {
   Serial.begin(az2::kControlBaud);
-  AudioMemory(12);
+  Serial1.begin(az2::kControlBaud);
+  Serial3.begin(az2::kControlBaud);
+  // 200 (au lieu de 48) depuis le passage a 8 pistes + le bus d'effets
+  // maitre : AudioEffectDelay retient ses blocs dans ce pool partage,
+  // proportionnellement au temps de delay configure (350ms ~= 121 blocs a
+  // 44.1kHz/128) -- PAS dans une memoire dediee. Marge mesuree via CPU?
+  // (voir AZ2_FEUILLE_DE_ROUTE_MOTEUR.md, "performance reelle").
+  AudioMemory(200);
 
-  sineVoice.begin(0.8f, 110.0f, WAVEFORM_SINE);
-  setPlaying(false);
+  // init_braids() = init materielle obligatoire de la lib (osc.Init()),
+  // sur LES 4 instances par piste (pas seulement celle active au boot) --
+  // sinon une piste basculee sur Braids plus tard partirait non initialisee.
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    trackBraidsEngine[t].init_braids();
+  }
+  loadDexedPatch(liveVoice, 0);  // "FM-Rhodes" plutot qu'un init_voice vide
+
+  // Branche chaque piste sur son moteur/patch par defaut (voir
+  // trackEngine[]/trackPatch[] plus haut : 0=Dexed,1=Dexed,2=EPiano,
+  // 3=Braids, comme la v0 fixe -- mais tout ceci est maintenant
+  // changeable en direct via ENGINE:/PATCH:, voir handleEngineCommand()).
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    setTrackEngine(t, trackEngine[t]);
+  }
+
+  seedDefaultNotes();
+
+  mixFinal.gain(0, 0.8f);  // groupe pistes 0-3 (deja attenuees par groupMixer, voir setTrackEngine())
+  mixFinal.gain(1, 0.8f);  // groupe pistes 4-7
+  mixFinal.gain(2, 0.5f);  // voix live
+
+  // Bus d'effets maitre : sec a fond, reverb/delay a 0 par defaut (actives
+  // via FX:reverb:/FX:delay:, voir handleFxCommand()) -- pour ne pas
+  // surprendre au premier boot avec un effet impose.
+  reverbUnit.roomsize(0.6f);
+  reverbUnit.damping(0.4f);
+  delayUnit.delay(0, 350.0f);  // temps fixe en v1, cf feuille de route pour le rendre reglable
+  mixMaster.gain(0, 1.0f);
+  mixMaster.gain(1, 0.0f);
+  mixMaster.gain(2, 0.0f);
+
+  checkPsram();
 
   delay(300);
-  Serial.println(az2::kHelloAudio);
+  Serial.println("AZ2:ENGINE:SYNTH_DEXED_MULTIVOICE");
+  Serial.print("AZ2:SEQUENCER:tracks=");
+  Serial.print(kTrackCount);
+  Serial.print(":steps=");
+  Serial.println(kStepCount);
+  announceHello();
 }
 
 void loop() {
   readSerialCommands();
+  updateSequencer();
   sendStatus();
 }
