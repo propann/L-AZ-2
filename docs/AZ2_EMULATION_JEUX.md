@@ -29,66 +29,110 @@ directement. Ce n'est **pas** aussi simple :
   parallele pour Retro-Go (faisable techniquement -- ESP-IDF a
   `esp_lcd_rgb_panel` -- mais un vrai chantier, pas fait ici).
 
-## Alternative etudiee : Anemoia-ESP32
+## Alternative etudiee (1er passage) : Anemoia-ESP32 (NES)
 
 https://github.com/Shim06/Anemoia-ESP32 -- emulateur NES, licence GPLv3.
+Arduino natif, ~400 lignes de coeur, acces framebuffer brut via
+`nes.connectFramebuffer(cv_framebuffer)` (a cote du chemin
+`nes.connectScreen(&screen)` couple a TFT_eSPI) -- integrable comme une
+page dans notre firmware sans double demarrage. Retenu dans un premier
+temps, **puis reoriente** suite a la precision du 2026-09-14 : "l'idee
+c'est plutot GB/GBA/GBC, ca suffira" -- la NES n'est plus la priorite.
 
-| Critere | Retro-Go | Anemoia-ESP32 |
-| --- | --- | --- |
-| Framework | ESP-IDF (CMake) | **Arduino** (sketch .ino) -- meme framework que nous |
-| Consoles | NES/SNES/GB/GBC/Megadrive/PCEngine/Lynx/DOOM... | NES seulement |
-| Ecran attendu | SPI (ILI9341 family) | SPI (ST7789/ILI9341) via TFT_eSPI |
-| PSRAM requise | Selon coeur | **Non requise** (confirme par le depot) |
-| Taille du coeur | Gros projet complet | ~400 lignes pour le fichier principal -- tres compact |
-| Acces framebuffer brut | Pas verifie | **Oui** : `nes.connectFramebuffer(cv_framebuffer)` existe (chemin video composite), a cote du chemin `nes.connectScreen(&screen)` couple a TFT_eSPI |
-| Integrable sans double demarrage | Non (ESP-IDF) | **Oui, potentiellement** -- en utilisant `connectFramebuffer()` a la place de `connectScreen()`, on recupere une image brute a blitter nous-memes via Arduino_GFX (notre pilote deja fonctionnel), sans jamais toucher a TFT_eSPI |
+## Recherche 2 (2026-09-14, suite a la demande GB/GBA/GBC) : coeur retenu
 
-**Conclusion** : aucun des deux ne tourne "out of the box" sur notre
-ecran RGB parallele -- mais Anemoia-ESP32 a un point d'accroche
-(`connectFramebuffer()`) qui permet de rester dans NOTRE firmware Arduino
-existant, sans double demarrage ni deuxieme toolchain. Retro-Go reste le
-plus complet (8+ consoles) mais coute un vrai chantier (OTA + pilote
-ecran ESP-IDF) largement plus lourd.
+### GB + GBC : Peanut-GB / Walnut-CGB -- tres bon choix
 
-## Decision
+- **Peanut-GB** (https://github.com/deltabeard/Peanut-GB) : emulateur
+  Game Boy (DMG) en **un seul header C99**, licence **MIT**. Assez rapide
+  pour tourner a pleine vitesse sur un Raspberry Pi Pico (bien plus
+  faible que notre ESP32-S3 a 240MHz) -- passe la suite de tests CPU de
+  Blargg (bonne precision). Architecture 100% a base de callbacks
+  fournis par l'hote : `gb_rom_read()` (lecture ROM -- flash, PSRAM ou SD,
+  au choix), `gb_cart_ram_read/write()` (sauvegardes), et surtout
+  `lcd_draw_line()` qui recoit une LIGNE de pixels a la fois (donnees
+  indexees/palette) -- **aucun code d'affichage propre au projet**, donc
+  aucun TFT_eSPI a arracher : on branche directement notre pilote
+  Arduino_GFX existant dans le callback. C'est exactement le type
+  d'architecture qu'on cherchait.
+- **Walnut-CGB** (https://github.com/Mr-PauI/Walnut-CGB) : "remplacement
+  quasi direct" de Peanut-GB (meme style de callbacks, quelques
+  differences d'API a la migration), licence **MIT**, ajoute le **vrai
+  support Game Boy Color** (palettes BG/OBJ0/OBJ1, 3 couches x 4 teintes).
+  **Support ESP32-S3 explicite**, demos qui tournent sur M5Stack
+  Cardputer (meme famille de puce que la notre) avec des jeux jouables
+  (Mario, Zelda cites). Note utile : "le stockage flash interne
+  ESP32/ESP32-S3 est utilisable [pour les ROM] tant que les regles
+  d'alignement sont respectees" -- donc testable SANS carte SD au debut
+  (petite ROM embarquee dans la flash), contrairement a ce qu'on pensait
+  pour Anemoia/NES.
+- **Licence MIT** (Peanut-GB et Walnut-CGB) au lieu de GPLv3
+  (Anemoia/44gba) -- bien plus simple pour un projet perso, aucune
+  obligation de copyleft a gerer.
 
-- **v0 du mode JEUX** : porter Anemoia-ESP32 (NES seul) comme une PAGE de
-  plus dans `src_esp32/az2_screen` (menu -> "JEUX"), pas un double
-  demarrage. On recupere son coeur CPU/PPU/APU, on jette sa partie
-  TFT_eSPI/UI, on branche `connectFramebuffer()` sur un buffer qu'on
-  blitte via `gfx->draw16bitRGBBitmap()` (ou equivalent Arduino_GFX)
-  chaque frame. Pas de deuxieme partition, pas de reboot -- juste un
-  ecran de plus, coherent avec l'architecture actuelle.
-- **Retro-Go** reste une option pour PLUS TARD (vrai double demarrage
-  OTA + pilote RGB parallele ecrit a la main) si on veut plus que la NES
-  un jour -- pas prioritaire tant que le coeur groovebox (moteurs,
-  sequenceur, Pico) n'est pas solide. Le dossier vendored reste dans le
-  depot pour reference mais n'est PAS ce qu'on va porter en premier.
+### GBA : possible mais faible sur ESP32 -- pas prioritaire
+
+- `44670/44gba` et `44670/44vba` (GPL-3.0) : **~20 fps avec frameskip=1**
+  sur ESP32-S3-WROOM-1-N8R8 d'apres les chiffres trouves. La GBA (CPU
+  ARM7TDMI, PPU bien plus complexe que GB/GBC) reste dure pour ce genre
+  de microcontroleur -- "ca demarre et ca joue a peu pres", pas une
+  experience fluide comme GB/GBC.
+- **Recommandation** : ne PAS viser la GBA pour le v0 du mode JEUX.
+  GB + GBC (Peanut-GB/Walnut-CGB) couvrent deja une tres large
+  ludotheque avec une bien meilleure experience sur notre materiel. La
+  GBA reste une option "bonus" a tenter plus tard si vraiment voulue,
+  sans promettre une bonne fluidite.
+
+## Decision (mise a jour)
+
+- **v0 du mode JEUX** : porter **Walnut-CGB** (GB + GBC, superset de
+  Peanut-GB) comme une page de plus dans `src_esp32/az2_screen` (menu ->
+  "JEUX"), pas de double demarrage -- meme logique que decidee pour la
+  NES, mais avec un coeur mieux adapte (callbacks purs, MIT, deja
+  demontre sur ESP32-S3). Le `lcd_draw_line()` alimente directement notre
+  `Arduino_GFX` existant, ligne par ligne ou via un framebuffer complet
+  qu'on blitte d'un coup.
+- **GBA** : pas dans le v0, chiffres de performance trop faibles sur
+  cette puce -- a reconsiderer plus tard seulement si demande.
+- **NES (Anemoia)** et **Retro-Go** (multi-console, ESP-IDF + double
+  demarrage) restent des options pour APRES, si on veut elargir une fois
+  GB/GBC solides -- rien a jeter, juste pas la priorite.
 
 ## Ce qu'il reste a faire (rien fait ci-dessous, hardware debranche)
 
-1. Choisir/obtenir une ROM NES **legale** pour les tests (homebrew ou
+1. Choisir/obtenir une ROM GB/GBC **legale** pour les tests (homebrew ou
    domaine public -- pas de ROM commerciale dans le depot/le firmware).
-2. Vendorer le coeur Anemoia-ESP32 (extraire CPU/PPU/APU, retirer
-   TFT_eSPI/SdFat/UI), l'adapter en bibliotheque utilisable depuis
-   `az2_screen` (namespace/fichiers propres, pas un .ino monolithique).
-3. Ecrire l'adaptateur framebuffer -> `Arduino_GFX` (probablement
-   `draw16bitRGBBitmap()`, a verifier le format de pixel expose par
-   `connectFramebuffer()` -- RGB565 direct ou palette a convertir).
+   Walnut-CGB permet un stockage flash interne (pas besoin de carte SD
+   pour un premier test avec une petite ROM).
+2. Vendorer Walnut-CGB (header(s) C99, licence MIT a conserver/citer)
+   dans le depot, verifier sa compatibilite avec notre toolchain
+   PlatformIO/Arduino-ESP32 core 3.x (pioarduino).
+3. Ecrire l'implementation des callbacks hote : `gb_rom_read`,
+   `gb_cart_ram_read/write` (lecture flash/PSRAM), et surtout
+   `lcd_draw_line` -> conversion palette/couleur -> `Arduino_GFX`
+   (par ligne, ou accumulation dans un framebuffer puis
+   `draw16bitRGBBitmap()` d'un coup -- a comparer en vrai pour la
+   fluidite une fois flashable).
 4. Mapper les entrees : pads Pico (matrice 4x4) ou tactile ecran vers les
-   boutons NES (croix directionnelle + A/B/Start/Select = 6 boutons,
-   tient sur les 16 pads avec de la marge).
-5. Chargement ROM : depend de la carte SD ESP32 (pas encore presente,
-   voir AZ2_FEUILLE_DE_ROUTE_MOTEUR.md etape 7) -- sans SD, on ne peut
-   tester qu'avec une ROM embarquee en PROGMEM (petite, homebrew).
+   8 boutons Game Boy (croix directionnelle + A/B/Start/Select).
+5. Sauvegardes (cart RAM) : voir ou stocker (flash interne au debut,
+   carte SD plus tard, voir AZ2_FEUILLE_DE_ROUTE_MOTEUR.md etape 8).
 6. Nouvelle entree menu "JEUX" dans `kMenuItems[]`, page dediee
-   (`Screen::Retro` ou similaire).
+   (`Screen::Retro`, deja ajoutee le 2026-09-14 comme page d'attente --
+   a remplacer par la vraie emulation une fois les points 1-4 faits).
 7. Tester en reel une fois le hardware rebranche -- rien ci-dessus n'est
    flashe/verifie, uniquement de la recherche/architecture.
 
 ## Sources consultees
 
 - Retro-Go: https://github.com/ducalex/retro-go
-- Retro-Go supported devices / CYD: recherche web (pas de source unique
-  autoritative trouvee au-dela du README du depot)
 - Anemoia-ESP32: https://github.com/Shim06/Anemoia-ESP32
+- Peanut-GB: https://github.com/deltabeard/Peanut-GB (README:
+  https://raw.githubusercontent.com/deltabeard/Peanut-GB/master/README.md)
+- Walnut-CGB: https://github.com/Mr-PauI/Walnut-CGB
+- 44gba / 44vba (GBA, chiffres de perf): https://github.com/44670/44gba,
+  https://github.com/44670/44vba
+- Autres projets GB/GBC ESP32 releves en recherche (non retenus, moins
+  bien adaptes) : GBCCAT (gnuboy, ESP32 WROVER, ST7789) --
+  https://github.com/Djamal-UK/GBCCAT ; lualiliu/esp32-gameboy --
+  https://github.com/lualiliu/esp32-gameboy

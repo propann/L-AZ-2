@@ -50,7 +50,7 @@ Sources principales consultees:
 | Zynthian | Plateforme open synth Linux, multi-engine, web config, audio/MIDI | Bonne reference pour config web et philosophie ouverte |
 | Monome Norns | Petit ordinateur musical open, scripts, communaute forte | La communaute aime les machines ouvertes si elles sont poetiques et jouables |
 | LMN-3 | DAW-in-a-box open source sur Raspberry Pi | Reference pour workflow DAW autonome, mais AZ-2 reste microcontroleurs en v0 |
-| Retro-Go | Emulation portable ESP32, SD, Wi-Fi file manager | Bonus fun separe: utile pour apprendre l'ESP32, jamais prioritaire sur l'instrument. **Etudie et ecarte pour le mode JEUX v0 (2026-09-14)** : ESP-IDF natif (pas Arduino) + ecrans SPI ILI9341-only officiellement supportes, incompatible avec notre ecran RGB parallele sans un vrai chantier (double demarrage OTA + pilote ecran a ecrire) -- voir [AZ2_EMULATION_JEUX.md](AZ2_EMULATION_JEUX.md) pour l'alternative retenue (Anemoia-ESP32, Arduino-natif) |
+| Retro-Go | Emulation portable ESP32, SD, Wi-Fi file manager | Bonus fun separe: utile pour apprendre l'ESP32, jamais prioritaire sur l'instrument. **Etudie et ecarte pour le mode JEUX v0 (2026-09-14)** : ESP-IDF natif (pas Arduino) + ecrans SPI ILI9341-only officiellement supportes, incompatible avec notre ecran RGB parallele sans un vrai chantier (double demarrage OTA + pilote ecran a ecrire) -- voir [AZ2_EMULATION_JEUX.md](AZ2_EMULATION_JEUX.md) pour l'alternative retenue (Walnut-CGB, GB/GBC, Arduino-natif, licence MIT) |
 
 Sources principales consultees:
 

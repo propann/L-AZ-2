@@ -717,16 +717,20 @@ void drawLinksPage() {
 void drawRetroPage() {
   drawSubHeader("JEUX", kPalette[2]);
   const char *lines[] = {
-      "Emulateur NES en preparation.",
+      "Emulateur Game Boy / GBC en preparation.",
       "",
-      "Moteur retenu : Anemoia-ESP32",
-      "(Arduino natif, framebuffer brut,",
-      " pas de double demarrage requis).",
+      "Moteur retenu : Walnut-CGB",
+      "(callbacks purs, licence MIT, deja",
+      " demontre sur ESP32-S3 -- pas de",
+      " double demarrage requis).",
+      "",
+      "GBA ecarte du v0 : ~20fps mesures",
+      "sur ESP32-S3, pas fluide.",
       "",
       "Reste a faire : vendorer le coeur,",
-      "adapter l'affichage a Arduino_GFX,",
-      "mapper les entrees, charger une ROM",
-      "(carte SD requise).",
+      "brancher lcd_draw_line() sur",
+      "Arduino_GFX, mapper les entrees,",
+      "trouver une ROM legale.",
       "",
       "Detail : docs/AZ2_EMULATION_JEUX.md",
   };

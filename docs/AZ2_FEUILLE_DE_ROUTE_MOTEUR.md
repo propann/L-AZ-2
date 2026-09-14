@@ -115,12 +115,15 @@ abrupt, coherent avec son usage typique.
    dans `src_esp32/retro-go-master`) etudie et ECARTE pour la v0, car
    ESP-IDF natif + ecrans SPI seulement -- incompatible avec notre
    ecran RGB parallele sans double demarrage OTA + pilote ecran a
-   ecrire. Retenu a la place : porter Anemoia-ESP32 (NES, Arduino-natif,
-   ~400 lignes de coeur, acces framebuffer brut via
-   `connectFramebuffer()`) comme une PAGE de plus dans `az2_screen`, pas
-   un double demarrage. Necessite une carte SD ESP32 pour charger de
-   vraies ROMs (voir etape suivante) ou une petite ROM homebrew embarquee
-   pour tester sans SD.
+   ecrire. Cible precisee dans la foulee ("GB/GBA/GBC, ca suffira") :
+   moteur retenu **Walnut-CGB** (GB + GBC, callbacks purs style
+   Peanut-GB, licence MIT, deja demontre sur ESP32-S3) comme une PAGE de
+   plus dans `az2_screen`, pas un double demarrage -- `lcd_draw_line()`
+   branche directement sur notre Arduino_GFX. GBA ecarte du v0 (~20fps
+   mesures sur ESP32-S3, pas fluide). ROM testable depuis la flash
+   interne au debut (pas besoin de carte SD pour un premier essai), la
+   carte SD reste utile ensuite pour une vraie ludotheque (etape
+   suivante).
 8. SD sur l'ESP32 (ecran) : ROMs de jeux (format a definir), utile pour
    le mode JEUX (etape 7) une fois la carte presente.
 9. Pico transforme en joystick/manette pour le mode jeux (voir
