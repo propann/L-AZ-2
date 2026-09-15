@@ -21,6 +21,19 @@ constexpr uint32_t kControlBaud = 230400;
 // mele au reste du trafic de controle.
 constexpr uint8_t kGbAudioPacketMagic = 0x01;
 constexpr uint32_t kGbAudioSampleRate = 8000;
+
+// Oscilloscope, Teensy -> ESP32 cette fois (demande 2026-09-15, "une
+// fenetre ou on voit l'onde du son jouer evoluer en modifiant le
+// patch"). Meme principe de paquet binaire que le son GB (magique +
+// longueur + octets), octet magique different (0x02, jamais 0x01) pour
+// rester distinguable si jamais les deux sens se retrouvaient un jour
+// sur le meme flux logique -- ici c'est surtout par clarte, chaque
+// direction du lien Serial1 (TX Teensy / TX ESP32) est deja separee
+// physiquement. Paquet = 32 octets de PCM mono 8 bits (decime x4 depuis
+// les blocs 128 echantillons/44.1kHz de la lib Audio Teensy -- largement
+// suffisant pour un tracer visuel, pas de la haute-fidelite).
+constexpr uint8_t kScopePacketMagic = 0x02;
+constexpr uint8_t kScopeSamplesPerPacket = 32;
 constexpr uint8_t kPadCount = 16;
 constexpr uint8_t kPadRows = 4;
 constexpr uint8_t kPadCols = 4;

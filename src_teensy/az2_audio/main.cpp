@@ -121,6 +121,19 @@ AudioOutputI2S i2sOut;
 // tournes).
 AudioPlayQueue gbAudioQueue;
 
+// Oscilloscope (Teensy -> ESP32, voir AZ2_Protocol.h "kScopePacketMagic"
+// et updateScope() plus bas) -- demande 2026-09-15 ("une fenetre ou on
+// voit l'onde du son jouer evoluer en modifiant le patch"). AudioRecordQueue
+// = tampon logiciel qui capture les blocs bruts (128 echantillons int16 a
+// 44.1kHz) du point du graphe ou on la branche -- PAS connectee en
+// permanence : patchScopeTap est rebranchee dynamiquement vers la sortie
+// du filtre de la piste actuellement "observee" (voir handleScopeCommand()),
+// desactivee (scopeQueue.end()) quand personne ne regarde -- cout CPU nul
+// hors edition de patch.
+AudioRecordQueue scopeQueue;
+AudioConnection patchScopeTap;  // reconnectee dynamiquement, voir handleScopeCommand()
+int8_t scopeTrack = -1;         // -1 = desactive
+
 // Filtre PAR PISTE (demande 2026-09-15, "on fait un max de code ...
 // tracker" -- filtre resonant classique de synthe/tracker). Un
 // AudioFilterStateVariable par piste (Chamberlin SVF entier, tres bon
@@ -967,6 +980,86 @@ void handleEnvCommand(const String &line) {
   relayLine(line);
 }
 
+// SCOPE:<piste 0-7> pour observer cette piste (sortie post-filtre, voir
+// trackFilter[]), SCOPE:OFF pour arreter -- voir updateScope() plus bas
+// pour l'envoi effectif des paquets. Rebranche patchScopeTap a chaque
+// appel (disconnect() d'abord, comme patchTrackIn[]).
+void handleScopeCommand(const String &line) {
+  const int idx = line.indexOf(':');
+  if (idx < 0) {
+    return;
+  }
+  const String param = line.substring(idx + 1);
+
+  patchScopeTap.disconnect();
+  scopeQueue.end();
+  scopeQueue.clear();
+
+  if (param == "OFF") {
+    scopeTrack = -1;
+  } else {
+    const int track = param.toInt();
+    if (track < 0 || track >= kTrackCount) {
+      return;
+    }
+    scopeTrack = static_cast<int8_t>(track);
+    patchScopeTap.connect(trackFilter[track], 0, scopeQueue, 0);
+    scopeQueue.begin();
+  }
+  relayLine(line);
+}
+
+// Appelee depuis loop() -- draine scopeQueue et envoie un paquet toutes
+// les kScopeSendIntervalMs (~50 images/s, largement suffisant pour
+// l'oeil ; les blocs arrivent bien plus vite, ~2.9ms/bloc a 44.1kHz,
+// donc on jette les blocs intermediaires pour ne garder que le plus
+// recent -- pas de latence qui s'accumule).
+uint32_t lastScopeSendMs = 0;
+constexpr uint32_t kScopeSendIntervalMs = 20;
+constexpr uint8_t kScopeDecimate = 128 / az2::kScopeSamplesPerPacket;
+
+void updateScope() {
+  if (scopeTrack < 0) {
+    return;
+  }
+  // BUG REEL trouve et corrige le 2026-09-15 : freeBuffer() ne libere
+  // QUE le dernier bloc obtenu via readBuffer() (voir userblock dans
+  // record_queue.cpp) -- l'appeler seul, sans readBuffer() d'abord, est
+  // un NO-OP (userblock reste NULL). L'ancienne version de cette boucle
+  // ("while (available()>1) freeBuffer();") ne faisait donc RIEN,
+  // available() ne redescendait jamais, et la boucle tournait a
+  // l'infini des que de l'audio arrivait reellement (PLAY + SCOPE actif
+  // en meme temps) -- gele tout loop() (plus de serie, plus de
+  // sequenceur, rien). Reproduit et isole en plusieurs etapes (connect
+  // seul OK, begin() seul OK, les deux ensemble + PLAY = gel garanti).
+  // Fix : readBuffer() PUIS freeBuffer() pour vraiment avancer et jeter
+  // les blocs intermediaires.
+  while (scopeQueue.available() > 1) {
+    scopeQueue.readBuffer();
+    scopeQueue.freeBuffer();
+  }
+  if (scopeQueue.available() < 1) {
+    return;
+  }
+  const uint32_t now = millis();
+  if (now - lastScopeSendMs < kScopeSendIntervalMs) {
+    return;  // le bloc reste dans la queue, sera toujours "le plus recent" au prochain tour
+  }
+  lastScopeSendMs = now;
+
+  int16_t *block = scopeQueue.readBuffer();
+  static uint8_t scopeBuf[az2::kScopeSamplesPerPacket];
+  for (uint8_t i = 0; i < az2::kScopeSamplesPerPacket; ++i) {
+    const int16_t sample = block[i * kScopeDecimate];
+    scopeBuf[i] = static_cast<uint8_t>((sample >> 8) + 128);  // 16 bits signe -> 8 bits non signe
+  }
+  scopeQueue.freeBuffer();
+
+  Serial1.write(az2::kScopePacketMagic);
+  Serial1.write(az2::kScopeSamplesPerPacket);
+  Serial1.write(scopeBuf, az2::kScopeSamplesPerPacket);
+}
+
 // CPU? -- charge processeur et memoire audio reelles, demande le
 // 2026-09-14 ("cote performance on est comment") avant d'augmenter
 // pistes/moteurs. AudioProcessorUsage() = charge instantanee (%),
@@ -1331,6 +1424,11 @@ void handleCommand(const String &line) {
     return;
   }
 
+  if (line.startsWith("SCOPE:")) {
+    handleScopeCommand(line);
+    return;
+  }
+
   if (line == "CPU?") {
     reportCpuUsage();
     return;
@@ -1603,6 +1701,7 @@ void setup() {
 void loop() {
   readSerialCommands();
   feedGbAudioQueue();
+  updateScope();
   updateSequencer();
   updateLocalControls();
   sendStatus();
