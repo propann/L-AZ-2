@@ -280,25 +280,25 @@ void setTrackEngine(uint8_t track, uint8_t engine) {
   group.gain(channel, engine == az2::kEngineBraids ? 0.0f : 0.5f);
 }
 
-// Trois entrees possibles pour le protocole AZ2 (architecture a 3 cerveaux,
-// voir AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md) :
+// Deux entrees possibles pour le protocole AZ2 (architecture a 2 cerveaux
+// depuis l'abandon du Pico le 2026-09-14 -- voir
+// AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md, a corriger) :
 // - Serial  (USB)     : moniteur serie humain, pratique pour tester le
 //   Teensy seul (AZ2_CABLAGE_BASE.md, "Tests de cablage v0", etape 2).
 // - Serial1 (pins 0/1)  : lien UART vers l'ESP32_CONTROL (menu/commandes UI).
-// - Serial3 (pins 14/15): lien UART vers le Pico_KEYPAD (pads, encodeurs) —
-//   le module ecran n'ayant presque plus de GPIO libre, le clavier physique
-//   est scanne par un Pico dedie qui parle directement au Teensy.
-// Les trois sont lues et les reponses sont recopiees sur les trois, pour ne
-// pas casser le test manuel USB quand les UART sont branchees.
+// Les deux sont lues et les reponses sont recopiees sur les deux, pour ne
+// pas casser le test manuel USB quand l'UART est branchee.
+// Pins 14/15 (ex-Serial3, ex-lien Pico) sont maintenant reutilisees en
+// entrees analogiques pour les potentiometres, voir updateLocalControls().
 String usbLine;
 String espLine;
-String picoLine;
 uint32_t lastStatusMs = 0;
 bool playing = false;
 
 // Gamme chromatique sur les 16 pads (voix live): pad 0 = kPadBaseNote
 // (MIDI), pad 15 = kPadBaseNote+15. 48 = C3. Transpose ajustable par
-// l'encodeur 1 (Pico).
+// MACRO:1 (venait de l'encodeur 1 du Pico ; source actuelle a redefinir
+// maintenant que le Pico est abandonne -- voir AZ2_TODO_PICO.md).
 constexpr uint8_t kPadBaseNote = 48;
 int8_t transposeSemitones = 0;
 
@@ -309,13 +309,11 @@ uint8_t padToMidiNote(uint8_t pad) {
 void announceLed(uint8_t pad, const char *state) {
   az2::printLedEvent(Serial, pad, state);
   az2::printLedEvent(Serial1, pad, state);
-  az2::printLedEvent(Serial3, pad, state);
 }
 
 void announceStatus(const char *state) {
   az2::printStatus(Serial, "TEENSY_AUDIO", state);
   az2::printStatus(Serial1, "TEENSY_AUDIO", state);
-  az2::printStatus(Serial3, "TEENSY_AUDIO", state);
 }
 
 void announceHello();  // definie plus bas (a besoin de bpm/stepsPerBeat/trackEngine)
@@ -323,7 +321,6 @@ void announceHello();  // definie plus bas (a besoin de bpm/stepsPerBeat/trackEn
 void relayLine(const String &line) {
   Serial.println(line);
   Serial1.println(line);
-  Serial3.println(line);
 }
 
 // ---------------------------------------------------------------------
@@ -378,7 +375,6 @@ float stepIntervalUs() {
 void announceClock() {
   az2::printClock(Serial, currentBar, currentStep);
   az2::printClock(Serial1, currentBar, currentStep);
-  az2::printClock(Serial3, currentBar, currentStep);
 }
 
 // Definie ici (et non avec les autres announce*) car elle a besoin de
@@ -387,25 +383,20 @@ void announceClock() {
 void announceHello() {
   Serial.println(az2::kHelloAudio);
   Serial1.println(az2::kHelloAudio);
-  Serial3.println(az2::kHelloAudio);
 
-  // Reenvoie l'etat courant a la connexion/reconnexion d'un ESP32 ou Pico
-  // -- sans ca, l'ecran redemarre sur des valeurs par defaut fausses
-  // alors que le Teensy, lui, garde son etat (tempo, division, moteur+
-  // patch par piste) tant qu'il n'est pas lui-meme redemarre.
+  // Reenvoie l'etat courant a la connexion/reconnexion de l'ESP32 -- sans
+  // ca, l'ecran redemarre sur des valeurs par defaut fausses alors que le
+  // Teensy, lui, garde son etat (tempo, division, moteur+patch par
+  // piste) tant qu'il n'est pas lui-meme redemarre.
   az2::printBpm(Serial, bpm);
   az2::printBpm(Serial1, bpm);
-  az2::printBpm(Serial3, bpm);
   az2::printDivision(Serial, stepsPerBeat);
   az2::printDivision(Serial1, stepsPerBeat);
-  az2::printDivision(Serial3, stepsPerBeat);
   for (uint8_t t = 0; t < kTrackCount; ++t) {
     az2::printEngineSelect(Serial, t, trackEngine[t]);
     az2::printEngineSelect(Serial1, t, trackEngine[t]);
-    az2::printEngineSelect(Serial3, t, trackEngine[t]);
     az2::printPatchSelect(Serial, t, trackPatch[t]);
     az2::printPatchSelect(Serial1, t, trackPatch[t]);
-    az2::printPatchSelect(Serial3, t, trackPatch[t]);
   }
 }
 
@@ -573,7 +564,6 @@ void handleEngineCommand(const String &line) {
   // prochain changement.
   az2::printPatchSelect(Serial, track, 0);
   az2::printPatchSelect(Serial1, track, 0);
-  az2::printPatchSelect(Serial3, track, 0);
 }
 
 // PATCH:<piste 0-3>:<index de patch, voir az2::enginePatchCount(moteur actif)>
@@ -594,9 +584,22 @@ void handlePatchCommand(const String &line) {
   relayLine(line);
 }
 
+// Etat du bus d'effets maitre -- source commune pour FX:reverb:/FX:delay:
+// (serie) ET les potards 2/3 cables directement sur le Teensy (voir
+// updateLocalControls()), pour que les deux chemins restent coherents.
+float masterVolume = 1.0f;  // potard 1
+float reverbWet = 0.0f;     // potard 2 ou FX:reverb:
+float delayWet = 0.0f;      // potard 3 ou FX:delay:
+
+void applyMasterMix() {
+  mixMaster.gain(0, masterVolume);
+  mixMaster.gain(1, reverbWet * masterVolume);
+  mixMaster.gain(2, delayWet * masterVolume);
+}
+
 // FX:reverb:<0-100> ou FX:delay:<0-100> -- bus d'effets maitre (voir
-// mixMaster/reverbUnit/delayUnit plus haut), pas encore de reglage par
-// piste (cf feuille de route etape 4, "mixeur vrai").
+// mixMaster/reverbUnit/delayUnit plus haut). Piste par piste reste a
+// faire (cf feuille de route etape 4, "mixeur vrai").
 void handleFxCommand(const String &line) {
   const int idx1 = line.indexOf(':');
   const int idx2 = line.indexOf(':', idx1 + 1);
@@ -608,12 +611,13 @@ void handleFxCommand(const String &line) {
   const float wet = static_cast<float>(amount) / 100.0f;
 
   if (param == "reverb") {
-    mixMaster.gain(1, wet);
+    reverbWet = wet;
   } else if (param == "delay") {
-    mixMaster.gain(2, wet);
+    delayWet = wet;
   } else {
     return;
   }
+  applyMasterMix();
   relayLine(line);
 }
 
@@ -633,6 +637,110 @@ void reportCpuUsage() {
   Serial.print(":max=");
   Serial.print(AudioMemoryUsageMax());
   Serial.println("/200");
+}
+
+// ---------------------------------------------------------------------
+// Croix + 4 boutons + 3 potentiometres, cables DIRECTEMENT sur le Teensy
+// -- remplace le Pico/la matrice SparkFun, abandonnes le 2026-09-14
+// ("ca m'a soule, on fait sans la matrice de bouton") apres un mux LED
+// impossible a faire fonctionner malgre un long diagnostic (voir
+// AZ2_CABLAGE_PICO.md). Cablage simple, pas de scan matriciel : chaque
+// switch a sa propre broche (INPUT_PULLUP, l'autre patte au GND commun),
+// voir AZ2_CABLAGE_MASTER.md pour le tableau complet. Ces memes croix+
+// boutons serviront plus tard de manette pour le mode JEUX (voir
+// AZ2_EMULATION_JEUX.md).
+// ---------------------------------------------------------------------
+constexpr int kNavUpPin = 2, kNavDownPin = 3, kNavLeftPin = 4, kNavRightPin = 5;
+constexpr int kBtnAPin = 6, kBtnBPin = 8, kBtnCPin = 9, kBtnDPin = 23;
+constexpr int kPotPins[3] = {14, 15, 16};  // A0, A1, A2
+
+constexpr uint32_t kLocalDebounceMs = 15;
+
+struct DigitalControl {
+  const char *label;  // direction ("UP".."RIGHT") ou nom de bouton ("A".."D")
+  int pin;
+  bool isNav;  // true = croix (NAV:), false = bouton (BTN:)
+  bool state = false;
+  bool lastRaw = false;
+  uint32_t lastChangeMs = 0;
+};
+
+DigitalControl localControls[] = {
+    {"UP", kNavUpPin, true},
+    {"DOWN", kNavDownPin, true},
+    {"LEFT", kNavLeftPin, true},
+    {"RIGHT", kNavRightPin, true},
+    {"A", kBtnAPin, false},
+    {"B", kBtnBPin, false},
+    {"C", kBtnCPin, false},
+    {"D", kBtnDPin, false},
+};
+constexpr uint8_t kLocalControlCount = sizeof(localControls) / sizeof(localControls[0]);
+
+void setupLocalControls() {
+  for (DigitalControl &c : localControls) {
+    pinMode(c.pin, INPUT_PULLUP);
+  }
+}
+
+void updateDigitalControls() {
+  const uint32_t now = millis();
+  for (DigitalControl &c : localControls) {
+    const bool raw = digitalRead(c.pin) == LOW;  // pull-up : appuye = LOW
+    if (raw != c.lastRaw) {
+      c.lastRaw = raw;
+      c.lastChangeMs = now;
+    }
+    if ((now - c.lastChangeMs) >= kLocalDebounceMs && raw != c.state) {
+      c.state = raw;
+      if (c.isNav) {
+        az2::printNav(Serial, c.label, raw);
+        az2::printNav(Serial1, c.label, raw);
+      } else {
+        az2::printBtn(Serial, c.label[0], raw);
+        az2::printBtn(Serial1, c.label[0], raw);
+      }
+    }
+  }
+}
+
+// Lissage simple (moyenne mobile) + seuil de variation minimal, pour ne
+// pas spammer un POT: a chaque micro-vibration de l'ADC.
+float potSmoothed[3] = {-1.0f, -1.0f, -1.0f};  // -1 = pas encore lu
+uint8_t potLastSent[3] = {255, 255, 255};      // 255 = jamais envoye
+constexpr float kPotSmoothingAlpha = 0.2f;
+
+void updatePots() {
+  for (uint8_t i = 0; i < 3; ++i) {
+    const float raw = static_cast<float>(analogRead(kPotPins[i]));  // 0-1023
+    if (potSmoothed[i] < 0.0f) {
+      potSmoothed[i] = raw;  // premiere lecture : pas de lissage
+    } else {
+      potSmoothed[i] += (raw - potSmoothed[i]) * kPotSmoothingAlpha;
+    }
+
+    const uint8_t value = static_cast<uint8_t>(constrain(potSmoothed[i] / 1023.0f * 127.0f, 0.0f, 127.0f));
+    if (value == potLastSent[i]) {
+      continue;
+    }
+    potLastSent[i] = value;
+
+    az2::printPot(Serial, i, value);
+    az2::printPot(Serial1, i, value);
+
+    const float unit = static_cast<float>(value) / 127.0f;
+    switch (i) {
+      case 0: masterVolume = unit; break;
+      case 1: reverbWet = unit; break;
+      case 2: delayWet = unit; break;
+    }
+    applyMasterMix();
+  }
+}
+
+void updateLocalControls() {
+  updateDigitalControls();
+  updatePots();
 }
 
 // ---------------------------------------------------------------------
@@ -785,7 +893,6 @@ void readStream(Stream &in, String &lineBuffer) {
 void readSerialCommands() {
   readStream(Serial, usbLine);
   readStream(Serial1, espLine);
-  readStream(Serial3, picoLine);
 }
 
 // Verifie que la/les puce(s) PSRAM soudees sont bien detectees et
@@ -828,7 +935,6 @@ void sendStatus() {
 void setup() {
   Serial.begin(az2::kControlBaud);
   Serial1.begin(az2::kControlBaud);
-  Serial3.begin(az2::kControlBaud);
   // 200 (au lieu de 48) depuis le passage a 8 pistes + le bus d'effets
   // maitre : AudioEffectDelay retient ses blocs dans ce pool partage,
   // proportionnellement au temps de delay configure (350ms ~= 121 blocs a
@@ -858,15 +964,16 @@ void setup() {
   mixFinal.gain(1, 0.8f);  // groupe pistes 4-7
   mixFinal.gain(2, 0.5f);  // voix live
 
-  // Bus d'effets maitre : sec a fond, reverb/delay a 0 par defaut (actives
-  // via FX:reverb:/FX:delay:, voir handleFxCommand()) -- pour ne pas
-  // surprendre au premier boot avec un effet impose.
+  // Bus d'effets maitre : sec a fond, reverb/delay a 0 par defaut tant
+  // que les potards n'ont pas ete lus une premiere fois (voir
+  // updateLocalControls()) -- pour ne pas surprendre au premier boot
+  // avec un effet impose avant meme la premiere lecture ADC.
   reverbUnit.roomsize(0.6f);
   reverbUnit.damping(0.4f);
   delayUnit.delay(0, 350.0f);  // temps fixe en v1, cf feuille de route pour le rendre reglable
-  mixMaster.gain(0, 1.0f);
-  mixMaster.gain(1, 0.0f);
-  mixMaster.gain(2, 0.0f);
+  applyMasterMix();
+
+  setupLocalControls();
 
   checkPsram();
 
@@ -882,5 +989,6 @@ void setup() {
 void loop() {
   readSerialCommands();
   updateSequencer();
+  updateLocalControls();
   sendStatus();
 }

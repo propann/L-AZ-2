@@ -126,9 +126,16 @@ abrupt, coherent avec son usage typique.
    suivante).
 8. SD sur l'ESP32 (ecran) : ROMs de jeux (format a definir), utile pour
    le mode JEUX (etape 7) une fois la carte presente.
-9. Pico transforme en joystick/manette pour le mode jeux (voir
-   [AZ2_TODO_PICO.md](AZ2_TODO_PICO.md) -- pas cable actuellement, notes
-   accumulees en attendant).
+9. ~~Pico transforme en joystick/manette~~ -- **obsolete, Pico abandonne
+   le 2026-09-15** (voir AZ2_CABLAGE_PICO.md). Remplace : la croix + 4
+   boutons cables directement sur le Teensy (etape "control" ci-dessous)
+   servent deja a la fois de navigation et de manette de jeu, voir
+   [AZ2_TODO_PICO.md](AZ2_TODO_PICO.md) (page de cloture).
+10. Croix + 4 boutons + 3 potentiometres cables directement sur le
+    Teensy (`NAV:`/`BTN:`/`POT:`, voir AZ2_CABLAGE_MASTER.md) --
+    remplace le Pico. Potards 1-3 deja branches sur le bus d'effets
+    maitre (volume/reverb/delay), firmware pret, cablage physique en
+    cours.
 
 ## Impact protocole (a suivre au fur et a mesure)
 

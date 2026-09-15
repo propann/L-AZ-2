@@ -1,4 +1,18 @@
-# AZ-2 - Cablage complet du Pico (clavier, LEDs, encodeurs)
+# AZ-2 - Cablage complet du Pico (clavier, LEDs, encodeurs) -- ABANDONNE
+
+**Ce plan est abandonne le 2026-09-15.** Le mux LED (section 2) n'a
+jamais pu etre fait fonctionner malgre un long diagnostic en direct (EN
+non relie -> corrige, resistance serie manquante -> ajoutee, masses
+LED/boutons -> verifiees/pontees, 3.3V puis 5V testes) : zero LED sur
+absolument toutes les combinaisons testees. Plutot que de continuer a
+deviner a distance sans pouvoir voir le cablage, le Pico + la matrice
+SparkFun + le mux sont retires du projet -- remplaces par une croix + 4
+boutons + 3 potentiometres cables directement sur le Teensy, voir
+[AZ2_CABLAGE_MASTER.md](AZ2_CABLAGE_MASTER.md). Ce document reste comme
+reference (boutons et encodeurs, eux, marchaient bien) au cas ou le sujet
+serait repris un jour avec, par exemple, une photo du cablage en main.
+
+---
 
 Le Pico est le 3e cerveau du projet (decision du 2026-09-13) : le module
 ecran ESP32-4848S040C_I n'a presque plus de GPIO libre une fois

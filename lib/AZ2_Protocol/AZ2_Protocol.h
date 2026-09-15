@@ -93,6 +93,33 @@ inline void printBpm(Print &out, float bpm) {
   out.println(bpm, 2);
 }
 
+// Croix directionnelle + 4 boutons, cablees directement sur le Teensy
+// (voir AZ2_CABLAGE_MASTER.md) depuis l'abandon du Pico/matrice SparkFun
+// le 2026-09-14 ("ça m'a soule, on fait sans la matrice de bouton"). Ces
+// noms servent aussi de futurs boutons de jeu (croix + A/B/C/D) pour le
+// mode JEUX (voir AZ2_EMULATION_JEUX.md).
+inline void printNav(Print &out, const char *direction, bool pressed) {
+  out.print("NAV:");
+  out.print(direction);
+  out.println(pressed ? ":DOWN" : ":UP");
+}
+
+inline void printBtn(Print &out, char button, bool pressed) {
+  out.print("BTN:");
+  out.print(button);
+  out.println(pressed ? ":DOWN" : ":UP");
+}
+
+// Potentiometre : valeur ABSOLUE (pas un delta comme printMacro/l'ancien
+// encodeur Pico) -- 0-127, format compatible MIDI CC en vue d'une
+// eventuelle sortie MIDI plus tard.
+inline void printPot(Print &out, uint8_t index, uint8_t value) {
+  out.print("POT:");
+  out.print(index);
+  out.print(':');
+  out.println(value);
+}
+
 inline void printPattern(Print &out, uint8_t pattern) {
   out.print("PATTERN:");
   if (pattern < 10) {

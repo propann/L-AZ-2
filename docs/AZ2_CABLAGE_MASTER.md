@@ -1,8 +1,10 @@
-# AZ-2 - Plan de cablage complet (les 3 cartes)
+# AZ-2 - Plan de cablage complet (2 cartes : ESP32 ecran + Teensy)
 
-**Etat au 2026-09-13 : son confirme, boutons+encodeurs(1,2,4) confirmes,
-ecran+tactile confirmes, tous les liens UART confirmes. Reste a cabler :
-mux LED, encodeur 3 (optionnel).**
+**Etat au 2026-09-15 : son confirme, ecran+tactile confirmes, lien UART
+ESP32<->Teensy confirme. Le Pico (3e cerveau clavier) et la matrice
+SparkFun 4x4 sont ABANDONNES (voir "Pourquoi le Pico a ete abandonne"
+plus bas) -- remplaces par une croix + 4 boutons + 3 potentiometres
+cables directement sur le Teensy, a cabler/tester.**
 
 ## Tableau simple (tout, en un coup d'oeil)
 
@@ -13,38 +15,53 @@ mux LED, encodeur 3 (optionnel).**
 | DAC | Jumper H3L | - | Droite (3.3V) | **Confirme** |
 | DAC | SCK | - | GND (souder direct, pas de fil vers le Teensy) | **Confirme** |
 | Teensy | RX1/TX1 | pin 0/1 | ESP32 GPIO19/20 | **Confirme** (HELLO OK) |
-| Teensy | RX3/TX3 | pin 15/14 | Pico GPIO0/1 | **Confirme** (HELLO OK) |
 | ESP32 (integre) | Tactile SDA/SCL | GPIO40/41 | FT6336U (deja cable usine) | **Confirme**, multi-doigt actif |
-| Pico | Colonnes/lignes matrice | GPIO2-9 | Matrice SparkFun | **Confirme** (plusieurs pads testes) |
-| Pico | Encodeurs 1, 2, 4 | GPIO15-20, 26-28 | 3x EC11 | **Confirme** (rotation + bouton) |
-| Pico | Encodeur 3 | GPIO21/22 | - | Non cable (optionnel, pins libres) |
-| Pico | Mux LED S0-S3 + signal | GPIO10-14 | Mux CD74HC4067 | A cabler |
-| Mux LED | Canaux 0-11 | - | Anodes RGB (voir AZ2_CABLAGE_PICO.md) | A cabler |
+| Teensy | Croix HAUT/BAS/GAUCHE/DROITE | pin 2/3/4/5 | 4 switches | A cabler |
+| Teensy | Boutons A/B/C/D | pin 6/8/9/23 | 4 switches | A cabler |
+| Teensy | Potards 1/2/3 | pin 14/15/16 (A0/A1/A2) | 3 potentiometres | A cabler |
 | Toutes cartes | GND | - | Masse commune (etoile recommandee) | Confirme fonctionnel |
+
+## Pourquoi le Pico a ete abandonne (2026-09-14/15)
+
+Le Pico + la matrice SparkFun 4x4 + son mux LED CD74HC4067 ont fait
+l'objet d'un long diagnostic en direct (broche EN du mux non reliee au
+GND -> corrigee ; resistance serie manquante sur SIG -> ajoutee 220Ω ;
+masses LED/boutons -> verifiees et pontees correctement ; alimentation
+3.3V puis 5V testee) sans jamais obtenir la moindre LED fonctionnelle.
+Plutot que de continuer a deviner a distance, la decision a ete prise de
+simplifier : plus de 3e carte, plus de matrice/mux, juste des switches et
+potentiometres cables directement sur le Teensy (architecture a 2 cartes,
+comme a l'origine du projet). Detail complet du diagnostic (utile si on
+reprend le sujet un jour) : [AZ2_CABLAGE_PICO.md](AZ2_CABLAGE_PICO.md).
+Le code Pico reste dans `src_pico/` pour reference, mais n'est plus
+construit par defaut (voir `platformio.ini`, environnement `ctrl_pico`
+commente).
+
+Les pins 14/15 du Teensy (ex-`Serial3`, ex-lien UART vers le Pico) sont
+maintenant reutilisees comme entrees analogiques (potards 1 et 2).
 
 ## Conseils pour le montage en boitier
 
 - **Masse en etoile** : fais converger tous les fils GND (Teensy, ESP32,
-  Pico, DAC, mux) vers un seul point commun (un domino/bornier ou un point
-  de soudure central) plutot qu'en chaine -- evite les boucles de masse.
-- **Separe l'analogique du numerique** : fais courir les 3 fils I2S vers le
-  DAC (BCK/LRCK/DIN) a l'ecart des fils de la matrice/mux qui commutent
-  vite (bruit possible sur le son) ; garde-les courts si possible.
+  switches, potards) vers un seul point commun (un domino/bornier ou un
+  point de soudure central) plutot qu'en chaine -- evite les boucles de
+  masse.
+- **Separe l'analogique du numerique** : fais courir les 3 fils I2S vers
+  le DAC (BCK/LRCK/DIN) a l'ecart des fils des potards (bruit ADC
+  possible sur le son) ; garde-les courts si possible.
 - **Teste avant de fermer la boite** : verifie chaque continuite (jumpers
   DAC, GND commun) au multimetre et flashe/reteste chaque carte AVANT de
   visser le capot -- beaucoup plus penible a debugger une fois monte.
-- **Accessible depuis l'exterieur du boitier** : les 3 ports USB (ESP32,
-  Teensy, Pico -- pour reflasher), le jack de sortie du DAC, et idealement
-  un trou pour voir/toucher l'ecran.
+- **Accessible depuis l'exterieur du boitier** : les 2 ports USB (ESP32,
+  Teensy -- pour reflasher), le jack de sortie du DAC, et idealement un
+  trou pour voir/toucher l'ecran, plus les switches/potards en facade.
 - **Alimentation** : chaque carte peut garder son propre port USB pour
   l'instant (simplifie les tests) ; a centraliser sur une seule alim 5V
   plus tard si besoin.
 
 ```mermaid
 flowchart LR
-    MATRIX[Matrice SparkFun 4x4\n+ mux LED RGB] --> PICO[Pico\nctrl_pico]
-    ENC[Encodeurs 1,2,4] --> PICO
-    PICO -- UART 230400\nSerial1 <-> Serial3 --> TEENSY[Teensy 4.1\nmaster_teensy]
+    NAV[Croix + 4 boutons + 3 potards] --> TEENSY[Teensy 4.1\nmaster_teensy]
     TEENSY -- I2S --> DAC[PCM5102A]
     ESP[ESP32-S3 ecran\nVIEWE UEDX48480040E-WB\nscreen_esp] -- UART 230400\nGPIO19/20 <-> Serial1 --> TEENSY
 ```
@@ -54,10 +71,12 @@ flowchart LR
 | Rail | Alimente | Note |
 | --- | --- | --- |
 | 5 V | Ecran (module VIEWE, port USB-C dedie) | Ne jamais faire remonter 5V sur un GPIO |
-| 3.3 V | PCM5102A, logique mux, LEDs (via resistances) | Tension logique commune du projet |
-| GND commun | ESP32, Teensy, Pico, PCM5102A, matrice, mux | Obligatoire pour tous les liens UART/I2S/scan |
+| 3.3 V | PCM5102A, logique | Tension logique commune du projet |
+| GND commun | ESP32, Teensy, PCM5102A, switches, potards | Obligatoire pour tous les liens UART/I2S/lectures |
 
-Regle dure: tous les signaux logiques doivent rester en 3.3 V (Teensy 4.x et Pico sont tous les deux natifs 3.3 V, aucun level-shifter necessaire entre eux).
+Regle dure: tous les signaux logiques doivent rester en 3.3 V (Teensy 4.x
+et ESP32-S3 sont tous les deux natifs 3.3 V, aucun level-shifter
+necessaire entre eux).
 
 ## 1. Teensy 4.1 -> PCM5102A (DAC audio) — CONFIRME, SON OK
 
@@ -89,90 +108,44 @@ utiliser GPIO19/20, les deux seules broches vraiment libres. Voir
 [AZ2_ECRAN_FACADE.md](AZ2_ECRAN_FACADE.md) pour le detail du pourquoi.
 Code + cablage confirmes : `HELLO:TEENSY_AUDIO` recu cote ESP32.
 
-## 3. Teensy 4.1 <-> Pico (lien UART "clavier") — CONFIRME
+## 3. Teensy 4.1 -> Croix + 4 boutons — A CABLER
 
-| Pico | Teensy 4.1 |
+| Fonction | Teensy pin |
 | --- | --- |
-| GPIO0 (TX, `Serial1` par defaut) | pin 14 (RX3) |
-| GPIO1 (RX, `Serial1` par defaut) | pin 15 (TX3) |
-| GND | GND |
+| Croix HAUT | 2 |
+| Croix BAS | 3 |
+| Croix GAUCHE | 4 |
+| Croix DROITE | 5 |
+| Bouton A | 6 |
+| Bouton B | 8 |
+| Bouton C | 9 |
+| Bouton D | 23 |
 
-Debit `230400`, cote Teensy c'est `Serial3`. Au boot, le Pico envoie
-`HELLO:PICO_KEYPAD`, le Teensy repond `HELLO:TEENSY_AUDIO`.
+Tous en `INPUT_PULLUP` (deja fait dans le firmware,
+`setupLocalControls()`), l'autre patte de chaque switch au GND commun.
+Protocole envoye : `NAV:<HAUT/BAS/GAUCHE/DROITE>:DOWN`/`UP` pour la croix,
+`BTN:<A/B/C/D>:DOWN`/`UP` pour les boutons -- anti-rebond 15ms. Ces memes
+switches serviront plus tard de manette pour le mode JEUX (voir
+[AZ2_EMULATION_JEUX.md](AZ2_EMULATION_JEUX.md)).
 
-## 4. Pico -> Matrice de boutons SparkFun 4x4 — CONFIRME
+## 4. Teensy 4.1 -> 3 Potentiometres — A CABLER
 
-| Fonction | Pico GPIO |
-| --- | --- |
-| Colonne 0 (pads 0/4/8/12) | GPIO2 |
-| Colonne 1 (pads 1/5/9/13) | GPIO3 |
-| Colonne 2 (pads 2/6/10/14) | GPIO4 |
-| Colonne 3 (pads 3/7/11/15) | GPIO5 |
-| Ligne 0 (pads 0/1/2/3) | GPIO6 |
-| Ligne 1 (pads 4/5/6/7) | GPIO7 |
-| Ligne 2 (pads 8/9/10/11) | GPIO8 |
-| Ligne 3 (pads 12/13/14/15) | GPIO9 |
+| Fonction | Teensy pin | Role par defaut |
+| --- | --- | --- |
+| Potard 1 | 14 (A0) | Volume general (bus d'effets maitre) |
+| Potard 2 | 15 (A1) | Reverb (wet) |
+| Potard 3 | 16 (A2) | Delay (wet) |
 
-Vraie matrice ligne/colonne (pas 16 boutons independants) : appuyer relie
-une ligne a une colonne. Plusieurs pads testes en direct (00, 02, 04, 10,
-15) avec DOWN/UP corrects. Detail: [AZ2_CABLAGE_PICO.md](AZ2_CABLAGE_PICO.md#1-matrice-de-boutons-sparkfun-4x4).
+Cablage potentiometre standard : les 2 pattes externes sur 3.3V et GND,
+le curseur (patte du milieu) sur la broche Teensy. Protocole envoye :
+`POT:<0-2>:<0-127>` (valeur absolue, format compatible MIDI CC), avec
+lissage + seuil de variation pour ne pas spammer -- voir
+`updatePots()`/`applyMasterMix()` dans `src_teensy/az2_audio/main.cpp`.
+Ces 3 potards pilotent DIRECTEMENT le mixeur/bus d'effets deja code
+(reverb/delay ajoutes le 2026-09-14) -- pas besoin de l'ESP32 pour que
+ca marche, effet immediat.
 
-## 5. Pico -> Mux LED RGB (CD74HC4067) -> matrice LED — A CABLER
-
-| Fonction | Pico GPIO |
-| --- | --- |
-| Mux LED S0 | GPIO10 |
-| Mux LED S1 | GPIO11 |
-| Mux LED S2 | GPIO12 |
-| Mux LED S3 | GPIO13 |
-| Mux LED signal (entree commune, avec resistance serie) | GPIO14 |
-
-Cablage cote mux -> LED (12 canaux utilises sur 16, canal = couleur\*4 +
-ligne) :
-
-| Canal mux | Anode | Canal mux | Anode | Canal mux | Anode |
-| --- | --- | --- | --- | --- | --- |
-| 0 | Rouge L0 | 4 | Vert L0 | 8 | Bleu L0 |
-| 1 | Rouge L1 | 5 | Vert L1 | 9 | Bleu L1 |
-| 2 | Rouge L2 | 6 | Vert L2 | 10 | Bleu L2 |
-| 3 | Rouge L3 | 7 | Vert L3 | 11 | Bleu L3 |
-
-Les 4 colonnes cathodes sont les MEMES fils que les colonnes boutons
-(section 4) — pas de fils supplementaires cote colonnes.
-
-⚠️ Notice SparkFun : erreur de reperage Vert/Bleu inversee sur certains
-lots — si les couleurs sortent echangees, inverser ces deux fils. Firmware
-pret : un pad presse s'allume tout de suite en blanc (mode test local,
-sans besoin du Teensy). Detail complet: [AZ2_CABLAGE_PICO.md](AZ2_CABLAGE_PICO.md#2-leds-rgb-via-multiplexeur-cd74hc4067).
-
-## 6. Pico -> Encodeurs rotatifs — CONFIRME (1, 2, 4), 3 non cable
-
-| Encodeur | A | B | Bouton |
-| --- | --- | --- | --- |
-| 1 | GPIO15 | GPIO16 | GPIO17 |
-| 2 | GPIO18 | GPIO19 | GPIO20 |
-| 4 | GPIO26 | GPIO27 | GPIO28 |
-
-Tout en `INPUT_PULLUP`, l'autre patte de chaque contact au GND commun.
-Rotation + clic bouton testes et confirmes pour 1, 2 et 4. Encodeur 3 pas
-cable (GPIO21/22 libres pour plus tard) — GPIO23/24 a eviter (alim/VBUS de
-la Pico). GPIO25 pilote la LED embarquee (clignote en heartbeat visuel).
-
-## 7. Recapitulatif GPIO Pico (24 broches utilisees sur 27 disponibles)
-
-| Usage | GPIO |
-| --- | --- |
-| UART Teensy | 0, 1 |
-| Colonnes matrice | 2, 3, 4, 5 |
-| Lignes matrice | 6, 7, 8, 9 |
-| Mux LED (S0-S3 + signal) | 10, 11, 12, 13, 14 |
-| Encodeur 1 | 15, 16, 17 |
-| Encodeur 2 | 18, 19, 20 |
-| LED embarquee (heartbeat) | 25 |
-| Encodeur 4 | 26, 27, 28 |
-| Libres (encodeur 3 futur, ou reserves carte) | 21, 22, 23, 24 |
-
-## 8. Recapitulatif GPIO ESP32-S3 ecran (fixes par la carte, non modifiables)
+## 5. Recapitulatif GPIO ESP32-S3 ecran (fixes par la carte, non modifiables)
 
 | Usage | GPIO |
 | --- | --- |
@@ -188,15 +161,27 @@ la Pico). GPIO25 pilote la LED embarquee (clignote en heartbeat visuel).
 
 Source: README officiel VIEWE (voir [AZ2_ECRAN_FACADE.md](AZ2_ECRAN_FACADE.md)).
 
-## Etat d'avancement (2026-09-13)
+## 6. Recapitulatif GPIO Teensy 4.1
+
+| Usage | Pin |
+| --- | --- |
+| UART ESP32 (Serial1) | 0, 1 |
+| Croix (4) | 2, 3, 4, 5 |
+| DIN I2S (DAC) | 7 |
+| Boutons A/B (2) | 6, 8 |
+| Bouton C | 9 |
+| Boutons D | 23 |
+| Potards 1-3 (A0-A2) | 14, 15, 16 |
+| LRCK/BCK I2S (DAC) | 20, 21 |
+| Libre (reserve SD/SPI futur) | 10, 11, 12, 13 |
+
+## Etat d'avancement (2026-09-15)
 
 | Liaison | Etat |
 | --- | --- |
 | Teensy -> PCM5102A | **Son confirme** (Synth_Dexed, note tenue via PAD:NN:DOWN) |
 | Ecran ESP32 (affichage + tactile) | **Confirme** : intro, menu navigable au doigt, 2 points de contact |
 | UART ESP32 <-> Teensy | **Confirme** (HELLO echange) |
-| UART Pico <-> Teensy | **Confirme** (HELLO echange) |
-| Boutons Pico (matrice) | **Confirme** (plusieurs pads testes) |
-| Encodeurs Pico (1, 2, 4) | **Confirme** (rotation + bouton) |
-| Encodeur 3 | Non cable (optionnel) |
-| Mux LED Pico | Firmware pret (mode test local inclus), cablage physique a faire |
+| Croix + 4 boutons (Teensy) | Firmware pret (`NAV:`/`BTN:`), cablage physique a faire |
+| 3 potentiometres (Teensy) | Firmware pret (`POT:`, pilote volume/reverb/delay), cablage physique a faire |
+| Pico + matrice + mux LED | **Abandonne** (voir "Pourquoi le Pico a ete abandonne") |

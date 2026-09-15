@@ -236,22 +236,30 @@ void scanMatrix() {
 // colonne, canal par canal, avec le detail imprime en clair. Se pilote
 // depuis le moniteur serie USB du Pico (pas besoin du Teensy) :
 //   LEDTEST        -- demarre le defilement automatique (~0,7s/canal)
+//   LEDTEST:ALL    -- pareil mais les 4 colonnes ensemble (jusqu'a 4 LED
+//                     a la fois, pratique si une seule LED est HS)
 //   LEDTEST:STOP   -- arrete, revient au scan normal
 // ---------------------------------------------------------------------
 bool ledTestActive = false;
+bool ledTestAllColumns = false;  // mode LEDTEST:ALL -- voir plus bas
 uint8_t ledTestColumn = 0;
 uint8_t ledTestChannel = 0;
 uint32_t ledTestLastChangeMs = 0;
 constexpr uint32_t kLedTestHoldMs = 700;
 
-void ledTestEnter() {
+void ledTestEnter(bool allColumns) {
   ledTestActive = true;
+  ledTestAllColumns = allColumns;
   ledTestColumn = 0;
   ledTestChannel = 0;
   ledTestLastChangeMs = 0;  // force l'affichage immediat du premier canal
   releaseAllColumns();
   digitalWrite(kLedMuxSignal, LOW);
-  Serial.println("LEDTEST:START -- une LED doit rester allumee en continu a chaque etape");
+  if (allColumns) {
+    Serial.println("LEDTEST:START (4 colonnes ensemble) -- jusqu'a 4 LED allumees a la fois");
+  } else {
+    Serial.println("LEDTEST:START -- une LED doit rester allumee en continu a chaque etape");
+  }
 }
 
 void ledTestExit() {
@@ -273,23 +281,35 @@ void ledTestStep() {
 
   const uint8_t color = static_cast<uint8_t>(ledTestChannel / 4);
   const uint8_t row = static_cast<uint8_t>(ledTestChannel % 4);
-  const uint8_t pad = az2::padId(row, ledTestColumn);
   static const char *const kColorNames[3] = {"ROUGE", "VERT", "BLEU"};
 
-  Serial.print("LEDTEST:pad=");
-  if (pad < 10) {
-    Serial.print('0');
-  }
-  Serial.print(pad);
-  Serial.print(":col=");
-  Serial.print(ledTestColumn);
-  Serial.print(":ligne=");
+  Serial.print("LEDTEST:ligne=");
   Serial.print(row);
   Serial.print(":couleur=");
-  Serial.println(kColorNames[color]);
+  Serial.print(kColorNames[color]);
 
-  pinMode(kColPins[ledTestColumn], OUTPUT);
-  digitalWrite(kColPins[ledTestColumn], LOW);
+  if (ledTestAllColumns) {
+    // Les 4 colonnes en meme temps : jusqu'a 4 LED (une par colonne, meme
+    // ligne/couleur) allumees simultanement -- pour maximiser la chance
+    // de voir quelque chose si une seule LED est peut-etre HS.
+    Serial.println(":colonnes=0,1,2,3");
+    for (int col : kColPins) {
+      pinMode(col, OUTPUT);
+      digitalWrite(col, LOW);
+    }
+  } else {
+    const uint8_t pad = az2::padId(row, ledTestColumn);
+    Serial.print(":pad=");
+    if (pad < 10) {
+      Serial.print('0');
+    }
+    Serial.print(pad);
+    Serial.print(":col=");
+    Serial.println(ledTestColumn);
+    pinMode(kColPins[ledTestColumn], OUTPUT);
+    digitalWrite(kColPins[ledTestColumn], LOW);
+  }
+
   writeLedMuxChannel(ledTestChannel);
   digitalWrite(kLedMuxSignal, HIGH);
 
@@ -310,7 +330,9 @@ void readUsbCommands() {
     if (c == '\n') {
       line.trim();
       if (line == "LEDTEST") {
-        ledTestEnter();
+        ledTestEnter(false);
+      } else if (line == "LEDTEST:ALL") {
+        ledTestEnter(true);
       } else if (line == "LEDTEST:STOP") {
         ledTestExit();
       }
