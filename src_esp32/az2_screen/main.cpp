@@ -1271,10 +1271,15 @@ void handleTeensyLine(const String &line) {
       if (currentScreen == Screen::Controls && !screensaverActive) {
         drawBtnBox(static_cast<uint8_t>(index));
       }
-      // Page JEUX : A/B/C/D -> boutons Game Boy A/B/SELECT/START.
+      // Page JEUX : A/B -> boutons Game Boy A/B. SELECT/START sont
+      // passes aux encodeurs 2/3 (voir ENC: plus bas) -- demande
+      // 2026-09-15 ("les boutons start select faut les config sur les
+      // encodeurs ... comme ca on a a/b, start/select et les
+      // gachettes") : C/D se liberent pour un futur role de gachette
+      // (pas encore assigne).
       const bool inGbGame = (currentScreen == Screen::Retro && gbIsLoaded());
-      if (currentScreen == Screen::Retro) {
-        static const GbButton kGbMap[4] = {GbButton::A, GbButton::B, GbButton::Select, GbButton::Start};
+      if (currentScreen == Screen::Retro && index < 2) {
+        static const GbButton kGbMap[2] = {GbButton::A, GbButton::B};
         gbSetButton(kGbMap[index], pressed);
       }
       // Menu principal : A confirme la selection surlignee par la
@@ -1323,9 +1328,13 @@ void handleTeensyLine(const String &line) {
     }
   } else if (line.startsWith("ENC:")) {
     // Bouton poussoir integre a l'encodeur (voir AZ2_Protocol.h) --
-    // pas de fonction musicale assignee, juste un temoin visuel : allume
-    // le slider POT correspondant a 100% sur la page CONTROLES pendant
-    // l'appui (voir drawPotBar()).
+    // temoin visuel sur la page CONTROLES (allume le slider POT
+    // correspondant a 100% pendant l'appui, voir drawPotBar()), PLUS en
+    // page JEUX : encodeur 1 (Reverb) -> SELECT, encodeur 2 (Delay) ->
+    // START (demande 2026-09-15, "faut les config sur les encodeurs ...
+    // comme ca on a a/b, start/select et les gachettes" -- libere C/D
+    // pour un futur role de gachette). Encodeur 0 (Volume) reserve au
+    // declencheur d'enregistrement de sample (voir gb_audio.h).
     const int firstColon = line.indexOf(':');
     const int secondColon = line.indexOf(':', firstColon + 1);
     if (firstColon >= 0 && secondColon >= 0) {
@@ -1339,6 +1348,13 @@ void handleTeensyLine(const String &line) {
         encSwState[index] = pressed;
         if (currentScreen == Screen::Controls && !screensaverActive) {
           drawPotBar(index);
+        }
+        if (currentScreen == Screen::Retro && gbIsLoaded()) {
+          if (index == 1) {
+            gbSetButton(GbButton::Select, pressed);
+          } else if (index == 2) {
+            gbSetButton(GbButton::Start, pressed);
+          }
         }
       }
     }

@@ -102,12 +102,24 @@ AudioMixer4 mixFinal;    // groupe A + groupe B + voix live (entree 3 libre)
 // effets sur le son") -- en aval de mixFinal, pas par piste (un
 // AudioEffectDelay pleine echelle coute ~350 Ko de RAM ; un seul sur le
 // bus master est largement suffisant et abordable, un par piste ne le
-// serait pas). mixMaster combine signal sec (0), reverb (1) et delay (2)
-// -- l'entree 3 reste libre pour un futur effet.
+// serait pas). mixMaster combine signal sec (0), reverb (1), delay (2)
+// et le son de l'emulateur GB (3, voir gbAudioQueue plus bas -- demande
+// 2026-09-15, "il faut un emulateur complet classe ... pour que le DAC
+// le joue").
 AudioEffectFreeverb reverbUnit;
 AudioEffectDelay delayUnit;
 AudioMixer4 mixMaster;
 AudioOutputI2S i2sOut;
+
+// Son de l'emulateur Game Boy (ESP32 -> Teensy, voir AZ2_Protocol.h
+// "kGbAudioPacketMagic" et handleGbAudioPacket() plus bas) : ESP32
+// envoie du PCM mono 8 bits a kGbAudioSampleRate Hz (8kHz, delibere --
+// tient large dans le lien serie 230400 bauds) ; on le re-echantillonne
+// vers 44.1kHz/16 bits et on le pousse dans cette queue, jouee comme
+// n'importe quel autre "moteur" par le bus d'effets maitre (reverb/
+// delay/volume s'appliquent donc dessus aussi si les potards sont
+// tournes).
+AudioPlayQueue gbAudioQueue;
 
 // Une connexion "prise" par piste, rebranchee vers le moteur actif de
 // cette piste (voir setTrackEngine()) -- pas connectee au demarrage,
@@ -122,6 +134,7 @@ AudioConnection patchFinalToReverb(mixFinal, 0, reverbUnit, 0);
 AudioConnection patchReverbToMaster(reverbUnit, 0, mixMaster, 1);
 AudioConnection patchFinalToDelay(mixFinal, 0, delayUnit, 0);
 AudioConnection patchDelayToMaster(delayUnit, 0, mixMaster, 2);
+AudioConnection patchGbAudioToMaster(gbAudioQueue, 0, mixMaster, 3);
 AudioConnection patchOutL(mixMaster, 0, i2sOut, 0);
 AudioConnection patchOutR(mixMaster, 0, i2sOut, 1);
 
@@ -674,6 +687,7 @@ void applyMasterMix() {
   mixMaster.gain(0, masterVolume);
   mixMaster.gain(1, reverbWet * masterVolume);
   mixMaster.gain(2, delayWet * masterVolume);
+  mixMaster.gain(3, masterVolume);  // son GB (voir gbAudioQueue) -- suit le potard 1 comme le signal sec
 }
 
 // FX:reverb:<0-100> ou FX:delay:<0-100> -- bus d'effets maitre (voir
@@ -1050,9 +1064,111 @@ void handleCommand(const String &line) {
   }
 }
 
-void readStream(Stream &in, String &lineBuffer) {
+// ---------------------------------------------------------------------
+// Son de l'emulateur GB (ESP32 -> Teensy, voir AZ2_Protocol.h et
+// gb_emulator.cpp cote ESP32) -- demande le 2026-09-15 ("il faut un
+// emulateur complet classe ... envoyer sous forme de paquet ... pour
+// que le DAC le joue"). Paquets binaires [magic][longueur][PCM mono 8
+// bits non signe a kGbAudioSampleRate Hz] mele au flux texte habituel
+// sur Serial1 -- voir AudioRxState/readStream() plus bas pour la
+// reconnaissance de l'octet magique AVANT accumulation de ligne texte.
+//
+// Re-echantillonnage simple (repetition ponderee par un accumulateur de
+// phase, pas d'interpolation fine -- suffisant pour des formes d'onde
+// aussi simples que celles du GB) de 8kHz vers 44.1kHz (frequence native
+// de la lib Audio Teensy), 8 bits non signe -> 16 bits signe, pousse
+// dans un anneau puis servi a gbAudioQueue (voir plus haut) par blocs de
+// AUDIO_BLOCK_SAMPLES (128, definis par la lib Audio).
+constexpr size_t kGbRingCapacity = 2048;  // ~46ms a 44.1kHz, large marge face a la gigue serie
+int16_t gbRing[kGbRingCapacity];
+size_t gbRingHead = 0;
+size_t gbRingTail = 0;
+
+void gbRingPush(int16_t sample) {
+  const size_t next = (gbRingHead + 1) % kGbRingCapacity;
+  if (next == gbRingTail) {
+    return;  // anneau plein -- echantillon perdu plutot que bloquer (micro-glitch tolere)
+  }
+  gbRing[gbRingHead] = sample;
+  gbRingHead = next;
+}
+
+float gbUpsamplePhase = 0.0f;
+const float kGbSamplesOutPerIn = 44100.0f / static_cast<float>(az2::kGbAudioSampleRate);
+
+void handleGbAudioPacket(const uint8_t *pcm, uint8_t len) {
+  for (uint8_t i = 0; i < len; ++i) {
+    const int16_t sample16 = static_cast<int16_t>((static_cast<int>(pcm[i]) - 128) << 8);
+    gbUpsamplePhase += kGbSamplesOutPerIn;
+    while (gbUpsamplePhase >= 1.0f) {
+      gbRingPush(sample16);
+      gbUpsamplePhase -= 1.0f;
+    }
+  }
+}
+
+// Vide l'anneau vers gbAudioQueue par blocs complets -- appelee depuis
+// loop(), independamment du rythme d'arrivee des paquets serie.
+void feedGbAudioQueue() {
+  while (gbAudioQueue.available()) {
+    const size_t ready = (gbRingHead >= gbRingTail) ? (gbRingHead - gbRingTail)
+                                                     : (kGbRingCapacity - gbRingTail + gbRingHead);
+    if (ready < AUDIO_BLOCK_SAMPLES) {
+      break;
+    }
+    int16_t *buf = gbAudioQueue.getBuffer();
+    if (buf == nullptr) {
+      break;
+    }
+    for (int i = 0; i < AUDIO_BLOCK_SAMPLES; ++i) {
+      buf[i] = gbRing[gbRingTail];
+      gbRingTail = (gbRingTail + 1) % kGbRingCapacity;
+    }
+    gbAudioQueue.playBuffer();
+  }
+}
+
+// Etat de reception binaire (paquets audio GB), UNIQUEMENT pour Serial1
+// (ESP32) -- Serial (USB) n'en recoit jamais, voir readSerialCommands().
+struct AudioRxState {
+  bool inPacket = false;
+  bool haveLen = false;
+  uint8_t len = 0;
+  uint8_t pos = 0;
+  uint8_t buf[255];
+};
+AudioRxState gbAudioRx;
+
+void readStream(Stream &in, String &lineBuffer, AudioRxState *audioState) {
   while (in.available() > 0) {
-    const char c = static_cast<char>(in.read());
+    const uint8_t b = static_cast<uint8_t>(in.read());
+
+    if (audioState != nullptr) {
+      if (audioState->inPacket) {
+        if (!audioState->haveLen) {
+          audioState->len = b;
+          audioState->pos = 0;
+          audioState->haveLen = true;
+          if (audioState->len == 0) {
+            audioState->inPacket = false;  // paquet vide, rien a faire
+          }
+          continue;
+        }
+        audioState->buf[audioState->pos++] = b;
+        if (audioState->pos >= audioState->len) {
+          handleGbAudioPacket(audioState->buf, audioState->len);
+          audioState->inPacket = false;
+        }
+        continue;
+      }
+      if (b == az2::kGbAudioPacketMagic) {
+        audioState->inPacket = true;
+        audioState->haveLen = false;
+        continue;
+      }
+    }
+
+    const char c = static_cast<char>(b);
     if (c == '\r') {
       continue;
     }
@@ -1073,8 +1189,8 @@ void readStream(Stream &in, String &lineBuffer) {
 }
 
 void readSerialCommands() {
-  readStream(Serial, usbLine);
-  readStream(Serial1, espLine);
+  readStream(Serial, usbLine, nullptr);
+  readStream(Serial1, espLine, &gbAudioRx);
 }
 
 // Verifie que la/les puce(s) PSRAM soudees sont bien detectees et
@@ -1144,6 +1260,12 @@ void setup() {
   // (voir AZ2_FEUILLE_DE_ROUTE_MOTEUR.md, "performance reelle").
   AudioMemory(200);
 
+  // Son GB (voir gbAudioQueue plus haut) : NON_STALLING -- si l'anneau
+  // envoie plus vite que la queue ne se vide (ne devrait pas arriver,
+  // 80 blocs de marge sur Teensy 4.x), on ignore plutot que de bloquer
+  // tout loop() (sequenceur, controles...) en attendant de la place.
+  gbAudioQueue.setBehaviour(AudioPlayQueue::NON_STALLING);
+
   // init_braids() = init materielle obligatoire de la lib (osc.Init()),
   // sur LES 4 instances par piste (pas seulement celle active au boot) --
   // sinon une piste basculee sur Braids plus tard partirait non initialisee.
@@ -1199,6 +1321,7 @@ void setup() {
 
 void loop() {
   readSerialCommands();
+  feedGbAudioQueue();
   updateSequencer();
   updateLocalControls();
   sendStatus();

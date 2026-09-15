@@ -5,20 +5,53 @@
 // affichee via gbBlitLine() (implementee dans main.cpp, seul endroit qui
 // connait `gfx`).
 //
-// Son : PAS FAIT dans cette premiere version (ENABLE_SOUND=0) -- notre
-// architecture audio est centree sur le Teensy (voir
-// src_teensy/az2_audio), brancher le son GB dessus demanderait de
-// streamer les echantillons APU par l'UART existant (230400 bauds, pas
-// concu pour de l'audio temps reel) ou un vrai DAC/ampli sur l'ESP32
-// lui-meme -- a designer plus tard, note dans AZ2_EMULATION_JEUX.md.
-// Video seule pour l'instant, comme un GB muet.
+// Son : demande le 2026-09-15 ("il faut un emulateur complet classe" +
+// "envoyer sous forme de paquet ... pour que le DAC le joue"). Walnut-
+// CGB (comme Peanut-GB dont il derive) n'emet PAS le son lui-meme -- il
+// appelle juste audio_read()/audio_write() sur les acces aux registres
+// APU (0xFF10-0xFF3F) et attend d'une lib externe qu'elle les
+// transforme en PCM. On utilise minigb_apu (deltabeard/Peanut-GB,
+// vendored dans minigb_apu/, licence MIT) pour ca -- meme famille de
+// projet que Walnut-CGB. Notre architecture audio reste centree sur le
+// Teensy (le DAC PCM5102A y est cable) : chaque frame GB, on recupere
+// un buffer PCM stereo 16 bits de minigb_apu, on le reduit a du mono 8
+// bits a kGbAudioSampleRate Hz (voir AZ2_Protocol.h) et on l'envoie en
+// paquet binaire sur le MEME lien Serial1 que le reste du protocole
+// (voir sendGbAudioPacket() plus bas) -- volontairement basse
+// resolution pour tenir large dans le budget du lien 230400 bauds.
+// Cote Teensy : src_teensy/az2_audio/main.cpp recoit ces paquets,
+// re-echantillonne vers 44.1kHz et les joue via un AudioPlayQueue
+// branche sur le bus d'effets maitre (meme chemin que les moteurs de
+// synthese), donc avec reverb/delay/volume si les potards sont
+// tournes.
 
 #include "gb_emulator.h"
 
 #define ENABLE_LCD 1
-#define ENABLE_SOUND 0
+#define ENABLE_SOUND 1
+
+// Prototypes requis par walnut_cgb.h AVANT son #include -- le coeur les
+// appelle directement au fil de l'emulation (pas via pointeur de
+// fonction enregistre comme lcd_draw_line/gb_rom_read), donc ils
+// doivent deja exister a ce point. Definis plus bas (pont vers
+// minigb_apu), une fois apuCtx declare.
+uint8_t audio_read(const uint16_t addr);
+void audio_write(const uint16_t addr, const uint8_t val);
+
 #include "walnut_cgb/walnut_cgb.h"
 
+// minigb_apu.h/.c est un fichier C pur (pas de garde extern "C" dans le
+// header -- verifie directement dedans, absent), compile en C par la
+// LDF PlatformIO (detection automatique par extension .c) -- ses
+// symboles ont donc un linkage C plat, pas le name-mangling C++. Sans
+// ce extern "C", l'edition de liens echoue ("undefined reference" aux
+// noms mangles C++ style _Z21minigb_apu_audio_read..., trouve en
+// compilant une premiere fois).
+extern "C" {
+#include "minigb_apu/minigb_apu.h"
+}
+
+#include <AZ2_Protocol.h>
 #include <Arduino_GFX_Library.h>  // pour la macro RGB565() (palette DMG)
 #include <SD.h>
 #include <esp_heap_caps.h>
@@ -27,6 +60,7 @@
 namespace {
 
 struct gb_s gb;
+minigb_apu_ctx apuCtx;
 bool romLoaded = false;
 uint8_t *romData = nullptr;
 uint32_t romSize = 0;
@@ -145,6 +179,43 @@ void lcdDrawLine(struct gb_s *pgb, const uint8_t *pixels, const uint_fast8_t lin
 
 }  // namespace
 
+// Pont registres APU <-> minigb_apu -- signature exigee telle quelle
+// par walnut_cgb.h (voir le prototype avant son #include, plus haut).
+uint8_t audio_read(const uint16_t addr) {
+  return minigb_apu_audio_read(&apuCtx, addr);
+}
+
+void audio_write(const uint16_t addr, const uint8_t val) {
+  minigb_apu_audio_write(&apuCtx, addr, val);
+}
+
+namespace {
+
+// Un buffer PCM stereo 16 bits (AUDIO_SAMPLES_TOTAL echantillons, voir
+// minigb_apu.h) par frame GB -- reduit a mono 8 bits avant l'envoi (voir
+// AZ2_Protocol.h, kGbAudioPacketMagic) pour tenir dans le budget serie.
+int16_t gbAudioStereoBuf[AUDIO_SAMPLES_TOTAL];
+uint8_t gbAudioMonoBuf[AUDIO_SAMPLES];
+
+void sendGbAudioPacket() {
+  minigb_apu_audio_callback(&apuCtx, gbAudioStereoBuf);
+
+  for (unsigned i = 0; i < AUDIO_SAMPLES; ++i) {
+    const int32_t mixed = static_cast<int32_t>(gbAudioStereoBuf[i * 2]) +
+                           static_cast<int32_t>(gbAudioStereoBuf[i * 2 + 1]);
+    const int16_t mono = static_cast<int16_t>(mixed / 2);
+    // 16 bits signe -> 8 bits non signe (PCM8 standard, offset binaire
+    // +128 -- meme convention que la plupart des lecteurs WAV 8 bits).
+    gbAudioMonoBuf[i] = static_cast<uint8_t>((mono >> 8) + 128);
+  }
+
+  Serial1.write(az2::kGbAudioPacketMagic);
+  Serial1.write(static_cast<uint8_t>(AUDIO_SAMPLES));
+  Serial1.write(gbAudioMonoBuf, AUDIO_SAMPLES);
+}
+
+}  // namespace
+
 bool gbIsLoaded() {
   return romLoaded;
 }
@@ -259,6 +330,7 @@ bool gbLoadRom(const char *filename) {
   }
 
   gb_init_lcd(&gb, lcdDrawLine);
+  minigb_apu_audio_init(&apuCtx);  // etat APU frais -- pas de bruit/note residuelle de la ROM precedente
   gb.direct.joypad = 0xFF;  // rien de presse (voir gbSetButton() -- 0=presse, 1=relache)
   // frame_skip=true : le coeur continue d'emuler CHAQUE frame a vitesse
   // normale (logique/timing du jeu corrects), mais n'appelle
@@ -284,6 +356,7 @@ bool gbLoadRom(const char *filename) {
 void gbRunFrame() {
   if (romLoaded) {
     gb_run_frame(&gb);
+    sendGbAudioPacket();
   }
 }
 

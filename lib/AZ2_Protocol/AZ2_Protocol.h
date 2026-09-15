@@ -5,6 +5,22 @@
 namespace az2 {
 
 constexpr uint32_t kControlBaud = 230400;
+
+// Son de l'emulateur GB, ESP32 -> Teensy (demande 2026-09-15, "il faut
+// un emulateur complet classe" + "envoyer sous forme de paquet ... pour
+// que le DAC le joue"). Framing binaire distinct du protocole texte
+// habituel (toujours ASCII imprimable, jamais l'octet 0x01) : sur le
+// MEME lien Serial1 que NAV:/BTN:/POT:/etc, un paquet est
+// [kGbAudioPacketMagic][longueur 1 octet][longueur octets de PCM mono
+// 8 bits non signe, AUDIO_SAMPLE_RATE Hz -- voir minigb_apu.h cote
+// ESP32]. Pas de saut de ligne, pas de contenu ASCII -- le lecteur cote
+// Teensy doit reconnaitre l'octet magique AVANT d'accumuler une ligne
+// texte (voir readStream()/AudioRxState dans src_teensy/az2_audio/
+// main.cpp). Debit choisi expres bas (8 kHz mono 8 bits = 8 Ko/s) pour
+// tenir large dans le budget du lien 230400 bauds (~23 Ko/s bruts)
+// mele au reste du trafic de controle.
+constexpr uint8_t kGbAudioPacketMagic = 0x01;
+constexpr uint32_t kGbAudioSampleRate = 8000;
 constexpr uint8_t kPadCount = 16;
 constexpr uint8_t kPadRows = 4;
 constexpr uint8_t kPadCols = 4;

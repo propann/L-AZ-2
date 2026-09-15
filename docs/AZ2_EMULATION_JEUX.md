@@ -127,21 +127,39 @@ Suite a "y'a rien dans jeux, c'est le moment de mettre l'emulateur" :
    ROM dechargee en quittant la page (libere la PSRAM). Echec propre
    (pas de crash) si pas de carte/dossier/fichier -- page d'attente
    avec le message exact.
-4. **[FAIT]** Entrees mappees sur la croix + boutons A/B/C/D deja cables
-   sur le Teensy (`NAV:`/`BTN:`, voir AZ2_CABLAGE_MASTER.md) : croix ->
-   directions Game Boy, A/B -> A/B, C/D -> SELECT/START.
+4. **[FAIT, remappe le 2026-09-15]** Entrees mappees sur la croix +
+   boutons A/B + encodeurs deja cables sur le Teensy (`NAV:`/`BTN:`/
+   `ENC:`, voir AZ2_CABLAGE_MASTER.md) : croix -> directions Game Boy,
+   A/B -> A/B, encodeur 1 (Reverb) -> SELECT, encodeur 2 (Delay) ->
+   START (demande : "faut les config sur les encodeurs ... comme ca on
+   a a/b, start/select et les gachettes"). C/D liberes (futur role de
+   gachette, pas encore assigne) ; encodeur 0 (Volume) reserve au
+   declencheur d'enregistrement de sample (voir plus bas, capture
+   audio).
 5. **[FAIT]** Page JEUX (`Screen::Retro`) mise a jour : affiche le jeu
    si une ROM est chargee (`gbRunFrame()` appelee depuis `loop()`,
    cadencee a ~59,7 images/s -- cible theorique, PAS mesuree en reel
    faute de ROM disponible), sinon la raison exacte de l'echec + "touche
    pour reessayer" (utile apres avoir insere une carte SD).
-6. **PAS FAIT** : le son (`ENABLE_SOUND=0` dans `gb_emulator.cpp`) --
-   notre architecture audio est centree sur le Teensy, brancher l'APU
-   Game Boy dessus demande de reflechir a un chemin (streamer par l'UART
-   existant, pas concu pour ca, ou un DAC/ampli propre a l'ESP32) --
-   remis a plus tard, video seule pour l'instant.
-7. **PAS FAIT** : sauvegardes cart RAM persistees sur SD (actuellement
-   perdues a l'extinction).
+6. **[FAIT, 2026-09-15]** Le son : demande explicite ("il faut un
+   emulateur complet classe ... envoyer sous forme de paquet ... pour
+   que le DAC le joue"). Walnut-CGB n'emet pas l'audio lui-meme
+   (`audio_read`/`audio_write` = simples hooks registre) -- ajout de
+   **minigb_apu** (deltabeard/Peanut-GB, vendored dans `minigb_apu/`,
+   licence MIT) qui transforme ces acces en PCM. `ENABLE_SOUND=1`
+   desormais ; chaque frame GB, le buffer stereo 16 bits de minigb_apu
+   est reduit a du mono 8 bits a 8kHz (delibere, tient large dans le
+   budget du lien serie 230400 bauds existant vers le Teensy) et envoye
+   en paquet binaire sur Serial1 (`kGbAudioPacketMagic`, voir
+   AZ2_Protocol.h) mele au reste du protocole texte. Cote Teensy :
+   re-echantillonnage vers 44.1kHz et lecture via un `AudioPlayQueue`
+   branche sur le bus d'effets maitre (meme chemin que les moteurs de
+   synthese -- reverb/delay/volume s'appliquent donc dessus aussi).
+   Compile et flashe sans crash sur les deux cartes -- **son reel pas
+   encore entendu/valide**, a confirmer en chargeant une ROM.
+7. **[FAIT, 2026-09-15]** Sauvegardes cart RAM persistees sur SD :
+   `<rom>.sav` a cote de la ROM dans `/games/`, ecrit en quittant la
+   page JEUX, relu au chargement suivant si present.
 8. **[FAIT, 2026-09-15]** ROM legale testee en reel : *Tobu Tobu Girl*
    (`tobu.gb`, homebrew, licence MIT/CC-BY-SA, cartouche MBC1+RAM+BATT --
    type supporte) recuperee depuis archive.org (metadata JSON verifiee
