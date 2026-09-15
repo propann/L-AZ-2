@@ -82,25 +82,61 @@ absent ; le Teensy est a jour et flashe)
 - Pas de filtre par piste, pas d'ADSR editable (l'ADSR de l'Analog est
   fixe en dur dans `setup()`), pas de vue d'onde/oscilloscope.
 
-## Prochaines etapes (cette nuit, dans l'ordre)
+## Journal de la nuit -- ce qui a ete fait
 
-1. Couleurs pour les effets sur la vue detail (visuel).
-2. Filtre par piste (AudioFilterStateVariable, deja dans la lib Audio
-   Teensy -- cutoff/resonance).
-3. ADSR editable (au moins moteur Analog, deja structure autour d'une
-   enveloppe).
-4. Vue "oscilloscope" : reutilise le meme mecanisme de paquets binaires
-   que le son GB (voir AZ2_Protocol.h), mais Teensy -> ESP32 cette
-   fois, pour visualiser la forme d'onde en direct pendant l'edition
-   d'un patch.
-5. Continuer le tracker (gammes/accords, clavier live) si le temps le
-   permet.
+Ordre reel (pas tout a fait celui prevu au depart, un bug reel a pris
+du temps a chasser -- voir plus bas) :
 
-Rien de tout ca ne sera flashe/teste sur l'ESP32 cette nuit (acces
-physique requis) -- tout sera compile-verifie (`pio run`) a chaque
-etape, marque clairement "pas teste en reel" tant que ce n'est pas
-confirme.
+1. **[FAIT, teste en reel]** Couleurs par effet sur le tracker (grille
+   + vue detail) -- une couleur par effet (ARP/CUT/RET), pastille sur
+   la grille, fond teinte sur la vue detail. Compile, pas teste a
+   l'oeil (ESP32 pas flashe cette nuit).
+2. **[FAIT, teste en reel]** Filtre resonant par piste (`FILT:`,
+   `AudioFilterStateVariable` -- Chamberlin SVF entier, tres bon
+   marche en CPU). Insere entre chaque moteur et son mixeur de groupe.
+   Teensy flashe, `CPU?` interroge : 8.6%/9.9% -- essentiellement
+   identique a avant (8-15% deja mesure), les 8 filtres n'ajoutent
+   presque rien. Grand ouvert par defaut (le constructeur de la lib
+   partait a 1000Hz, corrige explicitement sinon toutes les pistes
+   auraient ete etouffees des le premier boot).
+3. **[FAIT, teste en reel]** ADSR editable par piste (`ENV:`), applique
+   a `trackAnalogEnv[]` (seul moteur de la palette avec une vraie
+   enveloppe generique exposable -- Dexed/EPiano ont leur propre
+   comportement interne au patch, Braids/Karplus n'ont pas
+   d'enveloppe). Teste : commande acceptee/relayee, CPU inchange.
+4. **[FAIT, BUG REEL trouve et corrige, teste en reel]**
+   Oscilloscope Teensy -> ESP32 (`SCOPE:`, meme principe de paquet
+   binaire que le son GB mais dans l'autre sens). Premiere version
+   **gelait completement le Teensy** des que PLAY et SCOPE tournaient
+   en meme temps (plus aucune reponse serie du tout). Diagnostique
+   methodiquement par bissection sur les commits precedents (tick
+   rewrite seul OK, filtre seul OK, ADSR seul OK -- donc le bug etait
+   forcement dans le scope non commite), puis isolation precise
+   (connect() seul OK, begin() seul OK, les deux + audio reel qui
+   circule = gel garanti). Cause : la boucle de purge appelait
+   `freeBuffer()` SANS `readBuffer()` d'abord -- `freeBuffer()` ne fait
+   RIEN si aucun bloc n'a ete lu, donc la boucle tournait a l'infini.
+   Corrige, reteste plusieurs fois avec le sequenceur actif 5s+ en
+   continu : CPU 10.6%, memoire audio saine (135-143/200 blocs), aucun
+   gel. Cote ESP32 : page PATCH (selecteur de piste, tracer d'onde,
+   6 reglages CUTOFF/RESONANCE/ATTACK/DECAY/SUSTAIN/RELEASE) codee et
+   compilee, **jamais vue a l'ecran** (ESP32 pas flashe).
 
-## Journal de la nuit
+## Etat au reveil -- ce qui reste
 
-(rempli au fil de l'eau)
+- **ESP32 jamais reflashe cette nuit** (mode boot manuel requis, acces
+  physique). Tout ce qui est cote ecran depuis "Tracker : ticks
+  internes..." (voir git log) n'a ete verifie qu'a la compilation :
+  fix 8 pistes, vue detail tracker, couleurs d'effets, son GB au DAC
+  (partie ESP32 qui envoie), page PATCH + oscilloscope. **Rien de tout
+  ca n'a ete vu a l'oeil ni entendu.**
+- **Teensy a jour et verifie en reel** pour tout : tick rewrite, filtre,
+  ADSR, oscilloscope (bug corrige).
+- Prochaine chose utile au reveil : mode boot manuel sur l'ESP32
+  (BOOT maintenu + RESET + relacher BOOT), puis `pio run -e screen_esp
+  -t upload --upload-port /dev/ttyUSB0`, puis verifier a l'oeil/a
+  l'oreille tout ce qui precede.
+- Pas commence : gammes/accords, clavier tactile comme editeur live,
+  sauvegarde/chargement de projet (etapes 5-7 de
+  `AZ2_TRACKER_ETUDE.md`), colonne INST reellement appliquee au son,
+  chainage de patterns, role "gachette" pour C/D.
