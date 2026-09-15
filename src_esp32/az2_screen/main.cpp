@@ -1393,6 +1393,15 @@ void handleTouchUp(uint8_t slot) {
 void loop() {
   static uint32_t lastHeartbeatMs = 0;
   static bool wasActive[2] = {false, false};
+  // Anti-rebond bruit I2C (voir "il apparait des que je touche un
+  // bouton" -- 2026-09-15) : le bus tactile (GPIO40/41) peut capter du
+  // bruit electrique d'un switch pas encore fixe proprement -- un seul
+  // echantillon parasite peut avoir des coordonnees qui tombent par
+  // hasard dans l'ecran (touchCount/BAD_COUNT ne filtre que les cas
+  // grossiers, voir readTouches()). On n'accepte donc un DOWN qu'apres
+  // 2 lectures consecutives actives -- un vrai doigt reste pose largement
+  // plus longtemps qu'un tour de loop(), un blip electrique non.
+  static bool pendingActive[2] = {false, false};
   const uint32_t now = millis();
 
   readTeensyStatus();
@@ -1401,7 +1410,10 @@ void loop() {
   readTouches(touches);
 
   for (uint8_t slot = 0; slot < 2; ++slot) {
-    const bool active = touches[slot].active;
+    const bool rawActive = touches[slot].active;
+    const bool active = rawActive && (wasActive[slot] || pendingActive[slot]);
+    pendingActive[slot] = rawActive;
+
     if (active && !wasActive[slot]) {
       noteActivity();
       if (screensaverActive) {
