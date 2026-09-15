@@ -380,13 +380,38 @@ void relayLine(const String &line) {
 // Note PAR PAS (comme MicroDexed-touch: seq.note_data[pattern][step],
 // voir sequencer.cpp) -- demande le 2026-09-15 ("prend le sequenceur du
 // dexed touch"), remplace l'ancienne note unique fixe par piste (v0).
+// Colonnes tracker (etude LSDJ/M8/Polyend, voir AZ2_TRACKER_ETUDE.md) :
+// NOTE (stepNote), INST (stepPatch -- 0xFF = patch par defaut de la
+// piste ; stocke/transmis mais PAS ENCORE applique en temps reel, voir
+// note dans triggerStepFx()/advanceTick() plus bas -- changer un patch
+// Dexed coute trop cher pour une ISR), FX+VAL (stepFx/stepFxVal).
+enum StepFx : uint8_t { kStepFxNone = 0, kStepFxArp = 1, kStepFxCut = 2, kStepFxRetrig = 3 };
+constexpr uint8_t kStepFxCount = 4;  // kStepFxNone..kStepFxRetrig
+
 struct SequencerTrack {
   bool stepOn[kStepCount] = {};
-  uint8_t stepNote[kStepCount] = {};  // seede par seedDefaultNotes()
+  uint8_t stepNote[kStepCount] = {};    // seede par seedDefaultNotes()
+  uint8_t stepPatch[kStepCount];        // 0xFF par defaut, voir seedDefaultNotes()
+  uint8_t stepFx[kStepCount] = {};      // StepFx, 0 = aucun
+  uint8_t stepFxVal[kStepCount] = {};   // ARP: xy (nibbles, demi-tons) ; CUT/RETRIG: nb de ticks
   uint8_t playingNote = 0;  // note reellement tenue, pour l'extinction correcte
   bool stepPlaying = false;
+  // Etat d'effet du pas EN COURS (recalcule a chaque declenchement,
+  // consulte/avance par l'ISR de tick -- voir advanceTick()).
+  uint8_t activeFx = kStepFxNone;
+  uint8_t activeFxVal = 0;
+  uint8_t baseNote = 0;          // note de reference du pas (l'ARP applique ses offsets dessus)
+  uint8_t ticksSinceTrigger = 0;
 };
 SequencerTrack seqTracks[kTrackCount];
+
+// Sous-decoupage du pas en "ticks" (fondation commune a ARP/CUT/RETRIG
+// dans LSDJ/M8/Polyend, voir AZ2_TRACKER_ETUDE.md) -- 4 ticks/pas, assez
+// pour un arpege a 3 notes (root/x/y) et un retrig audible sans
+// surcharger l'IntervalTimer (deja a stepIntervalUs()/4, reste tres
+// raisonnable meme aux tempos les plus rapides geres par ailleurs).
+constexpr uint8_t kTicksPerStep = 4;
+volatile uint8_t currentTick = 0;
 
 // Horloge du sequenceur : sur IntervalTimer (interruption materielle),
 // comme MicroDexed-touch (voir src_teensy/microdexed-touch/MicroDexed-touch/
@@ -419,6 +444,7 @@ void seedDefaultNotes() {
   for (uint8_t t = 0; t < kTrackCount; ++t) {
     for (uint8_t s = 0; s < kStepCount; ++s) {
       seqTracks[t].stepNote[s] = kDefaultNotes[t];
+      seqTracks[t].stepPatch[s] = 0xFF;  // 0xFF = patch par defaut de la piste (voir INST, plus haut)
     }
   }
 }
@@ -427,6 +453,12 @@ float stepIntervalUs() {
   // stepsPerBeat pas par temps (4 = double-croche/1/16 par defaut) ;
   // bpm = noires/minute. En microsecondes pour IntervalTimer.
   return 60000000.0f / bpm / static_cast<float>(stepsPerBeat);
+}
+
+// L'ISR (advanceTick()) tourne a kTicksPerStep fois le rythme d'un pas
+// -- voir SequencerTrack plus haut pour le pourquoi (ARP/CUT/RETRIG).
+float tickIntervalUs() {
+  return stepIntervalUs() / static_cast<float>(kTicksPerStep);
 }
 
 void announceClock() {
@@ -502,28 +534,100 @@ void allTrackNotesOff() {
   }
 }
 
-// Appelee directement par sequencerTimer (interruption materielle) --
-// donc a l'heure pile, pas de jitter du a loop(). Reste volontairement
-// minimale : que du declenchement de notes, aucun Serial.print ici (voir
-// clockPending / updateSequencer()).
-void advanceSequencer() {
-  allTrackNotesOff();
-
-  currentStep = static_cast<uint8_t>((currentStep + 1) % kStepCount);
-  if (currentStep == 0) {
-    ++currentBar;
+// Applique l'effet actif d'une piste sur le tick courant (ticksSinceTrigger
+// deja positionne par l'appelant) -- ARP/RETRIG reutilisent directement
+// trackNoteOn()/trackNoteOff() (note-off puis note-on, comme un vrai
+// changement de pas), donc marchent uniformement sur les 5 moteurs sans
+// rien connaitre de leurs specificites. Note : le patch (colonne INST,
+// stepPatch) n'est PAS applique ici -- changer de patch Dexed en cours de
+// route est trop couteux pour une ISR (voir SequencerTrack plus haut),
+// laisse pour une iteration future.
+void triggerStepFx(uint8_t t) {
+  SequencerTrack &tr = seqTracks[t];
+  if (!tr.stepPlaying) {
+    return;
   }
+  switch (tr.activeFx) {
+    case kStepFxArp: {
+      // xy = 2 decalages en demi-tons (nibbles haut/bas de activeFxVal) --
+      // cycle racine -> +x -> +y a chaque tick, comme LSDJ "C"/M8 "ARP".
+      const uint8_t x = static_cast<uint8_t>(tr.activeFxVal >> 4);
+      const uint8_t y = static_cast<uint8_t>(tr.activeFxVal & 0x0F);
+      const uint8_t phase = static_cast<uint8_t>(tr.ticksSinceTrigger % 3);
+      const uint8_t offset = (phase == 0) ? 0 : (phase == 1) ? x : y;
+      const uint8_t newNote = static_cast<uint8_t>(constrain(static_cast<int>(tr.baseNote) + offset, 0, 127));
+      trackNoteOff(t, tr.playingNote);
+      trackNoteOn(t, newNote, 100);
+      tr.playingNote = newNote;
+      break;
+    }
+    case kStepFxCut: {
+      // Coupe la note avant la fin naturelle du pas (LSDJ "K", Polyend
+      // "gate length") -- activeFxVal = nombre de ticks avant coupure.
+      if (tr.ticksSinceTrigger >= tr.activeFxVal) {
+        trackNoteOff(t, tr.playingNote);
+        tr.stepPlaying = false;
+      }
+      break;
+    }
+    case kStepFxRetrig: {
+      // Redeclenche la meme note a intervalle regulier (LSDJ "R", M8
+      // "RET") -- activeFxVal = ticks entre 2 declenchements.
+      if (tr.activeFxVal > 0 && (tr.ticksSinceTrigger % tr.activeFxVal) == 0) {
+        trackNoteOff(t, tr.playingNote);
+        trackNoteOn(t, tr.baseNote, 100);
+        tr.playingNote = tr.baseNote;
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
 
-  for (uint8_t t = 0; t < kTrackCount; ++t) {
-    if (seqTracks[t].stepOn[currentStep]) {
-      const uint8_t note = seqTracks[t].stepNote[currentStep];
-      trackNoteOn(t, note, 100);
-      seqTracks[t].playingNote = note;
-      seqTracks[t].stepPlaying = true;
+// Appelee directement par sequencerTimer (interruption materielle), a
+// kTicksPerStep fois le rythme d'un pas -- donc a l'heure pile, pas de
+// jitter du a loop(). Tick 0 = declenchement du pas (comme l'ancien
+// advanceSequencer()) ; ticks suivants = traitement d'effet (ARP/CUT/
+// RETRIG, voir triggerStepFx()). Reste volontairement minimale : aucun
+// Serial.print ici (voir clockPending / updateSequencer()).
+void advanceTick() {
+  if (currentTick == 0) {
+    allTrackNotesOff();
+
+    currentStep = static_cast<uint8_t>((currentStep + 1) % kStepCount);
+    if (currentStep == 0) {
+      ++currentBar;
+    }
+
+    for (uint8_t t = 0; t < kTrackCount; ++t) {
+      SequencerTrack &tr = seqTracks[t];
+      if (tr.stepOn[currentStep]) {
+        const uint8_t note = tr.stepNote[currentStep];
+        trackNoteOn(t, note, 100);
+        tr.playingNote = note;
+        tr.baseNote = note;
+        tr.stepPlaying = true;
+        tr.activeFx = tr.stepFx[currentStep];
+        tr.activeFxVal = tr.stepFxVal[currentStep];
+        tr.ticksSinceTrigger = 0;
+      } else {
+        tr.stepPlaying = false;
+        tr.activeFx = kStepFxNone;
+      }
+    }
+
+    clockPending = true;
+  } else {
+    for (uint8_t t = 0; t < kTrackCount; ++t) {
+      if (seqTracks[t].stepPlaying && seqTracks[t].activeFx != kStepFxNone) {
+        seqTracks[t].ticksSinceTrigger = currentTick;
+        triggerStepFx(t);
+      }
     }
   }
 
-  clockPending = true;
+  currentTick = static_cast<uint8_t>((currentTick + 1) % kTicksPerStep);
 }
 
 // Appelee depuis loop() : se contente d'imprimer le CLOCK: en attente
@@ -538,8 +642,9 @@ void updateSequencer() {
 
 void startSequencer() {
   playing = true;
-  currentStep = kStepCount - 1;  // le prochain advanceSequencer() ira au pas 0
-  sequencerTimer.begin(advanceSequencer, stepIntervalUs());
+  currentStep = kStepCount - 1;  // le prochain tick 0 (voir advanceTick()) ira au pas 0
+  currentTick = 0;
+  sequencerTimer.begin(advanceTick, tickIntervalUs());
 }
 
 void stopSequencer() {
@@ -592,6 +697,57 @@ void handleNoteCommand(const String &line) {
   relayLine(line);
 }
 
+// INST:<piste>:<pas>:<patch 0-N ou 255 pour "defaut piste"> -- colonne
+// INST du tracker (voir AZ2_TRACKER_ETUDE.md). Stocke/transmet pour
+// l'instant ; PAS ENCORE applique en temps reel au declenchement (voir
+// commentaire sur SequencerTrack::stepPatch plus haut).
+void handleInstCommand(const String &line) {
+  const int idx1 = line.indexOf(':');
+  const int idx2 = line.indexOf(':', idx1 + 1);
+  const int idx3 = line.indexOf(':', idx2 + 1);
+  if (idx1 < 0 || idx2 < 0 || idx3 < 0) {
+    return;
+  }
+
+  const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+  const uint8_t step = static_cast<uint8_t>(line.substring(idx2 + 1, idx3).toInt());
+  const int patch = line.substring(idx3 + 1).toInt();
+
+  if (track >= kTrackCount || step >= kStepCount || patch < 0 || patch > 255) {
+    return;
+  }
+
+  seqTracks[track].stepPatch[step] = static_cast<uint8_t>(patch);
+  relayLine(line);
+}
+
+// SFX:<piste>:<pas>:<effet 0-3, voir StepFx>:<valeur 0-255> -- colonne
+// FX+VAL du tracker. Prefixe "SFX" (Step FX) et non "FX" -- deja pris
+// par les effets du bus maitre (FX:reverb:/FX:delay:, voir
+// handleFxCommand()).
+void handleStepFxCommand(const String &line) {
+  const int idx1 = line.indexOf(':');
+  const int idx2 = line.indexOf(':', idx1 + 1);
+  const int idx3 = line.indexOf(':', idx2 + 1);
+  const int idx4 = line.indexOf(':', idx3 + 1);
+  if (idx1 < 0 || idx2 < 0 || idx3 < 0 || idx4 < 0) {
+    return;
+  }
+
+  const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+  const uint8_t step = static_cast<uint8_t>(line.substring(idx2 + 1, idx3).toInt());
+  const int fx = line.substring(idx3 + 1, idx4).toInt();
+  const int val = line.substring(idx4 + 1).toInt();
+
+  if (track >= kTrackCount || step >= kStepCount || fx < 0 || fx >= kStepFxCount || val < 0 || val > 255) {
+    return;
+  }
+
+  seqTracks[track].stepFx[step] = static_cast<uint8_t>(fx);
+  seqTracks[track].stepFxVal[step] = static_cast<uint8_t>(val);
+  relayLine(line);
+}
+
 // BPM:<valeur, 30-300>
 void handleBpmCommand(const String &line) {
   const int idx = line.indexOf(':');
@@ -604,7 +760,7 @@ void handleBpmCommand(const String &line) {
     if (playing) {
       // Reajuste la periode de l'ISR tout de suite, sans couper/reprendre
       // la lecture (IntervalTimer::update() change juste l'intervalle).
-      sequencerTimer.update(stepIntervalUs());
+      sequencerTimer.update(tickIntervalUs());
     }
     relayLine(line);  // confirme tel quel, l'UI ESP32/Pico affiche le tempo reel
   }
@@ -631,7 +787,7 @@ void handleDivCommand(const String &line) {
 
   stepsPerBeat = value;
   if (playing) {
-    sequencerTimer.update(stepIntervalUs());
+    sequencerTimer.update(tickIntervalUs());
   }
   relayLine(line);
 }
@@ -1025,6 +1181,16 @@ void handleCommand(const String &line) {
 
   if (line.startsWith("NOTE:")) {
     handleNoteCommand(line);
+    return;
+  }
+
+  if (line.startsWith("INST:")) {
+    handleInstCommand(line);
+    return;
+  }
+
+  if (line.startsWith("SFX:")) {
+    handleStepFxCommand(line);
     return;
   }
 

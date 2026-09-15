@@ -588,17 +588,22 @@ int8_t hitTestAudioPad(int16_t x, int16_t y) {
 // Page SEQUENCEUR -- grille tactile 4 pistes x 16 pas, envoie STEP: au
 // Teensy ; curseur de lecture synchronise sur les CLOCK: recus ; bouton
 // PLAY/STOP qui reflete l'etat reel (STATUS:TEENSY_AUDIO:).
-// 4 pistes / 16 pas : doit rester aligne avec kTrackCount/kStepCount cote
-// Teensy (src_teensy/az2_audio/main.cpp).
-// ---------------------------------------------------------------------
-constexpr uint8_t kSeqTrackCount = 4;
+// 8 pistes / 16 pas : doit rester aligne avec kTrackCount/kStepCount cote
+// Teensy (src_teensy/az2_audio/main.cpp). Etait fige a 4 depuis le
+// passage du Teensy a 8 pistes (2026-09-14) -- bug trouve le 2026-09-15
+// en batissant le tracker ("un tracker 8 pistes") : les pistes 4-7
+// existaient et jouaient deja (seedDefaultNotes() les seede aussi) mais
+// n'etaient ni visibles ni editables depuis l'ecran (page SEQUENCEUR
+// ET MOTEURS, toutes deux baties sur kSeqTrackCount). Corrige ici,
+// cellules retrecies pour que 8 lignes tiennent avant le transport.
+constexpr uint8_t kSeqTrackCount = 8;
 constexpr uint8_t kSeqStepCount = 16;
 constexpr int16_t kSeqGridLeft = 17;
 constexpr int16_t kSeqGridTop = 90;
 constexpr int16_t kSeqCellW = 26;
 constexpr int16_t kSeqGapX = 2;
-constexpr int16_t kSeqCellH = 48;
-constexpr int16_t kSeqGapY = 8;
+constexpr int16_t kSeqCellH = 22;
+constexpr int16_t kSeqGapY = 3;
 constexpr int16_t kSeqTransportW = 200;
 constexpr int16_t kSeqTransportH = 50;
 constexpr int16_t kSeqTransportX = (kScreenSize - kSeqTransportW) / 2;
@@ -622,17 +627,32 @@ bool seqStepOn[kSeqTrackCount][kSeqStepCount] = {};
 // defauts que seedDefaultNotes() cote Teensy tant que le NOTE: echo n'est
 // pas arrive.
 uint8_t seqStepNote[kSeqTrackCount][kSeqStepCount];
+// Colonnes INST/FX/VAL du tracker (voir AZ2_TRACKER_ETUDE.md, INST:/SFX:
+// dans AZ2_Protocol.h et handleInstCommand()/handleStepFxCommand() cote
+// Teensy) -- 0xFF = patch par defaut de la piste, 0 = pas d'effet.
+uint8_t seqStepPatch[kSeqTrackCount][kSeqStepCount];
+uint8_t seqStepFx[kSeqTrackCount][kSeqStepCount] = {};
+uint8_t seqStepFxVal[kSeqTrackCount][kSeqStepCount] = {};
 uint8_t seqCurrentStep = 0;
 bool seqPlaying = false;
 float seqBpm = 120.0f;
 uint8_t seqStepsPerBeat = 4;
 
 // Dernier pas touche : la croix du Teensy (NAV:UP/DOWN, voir
-// handleTeensyLine()) transpose la note de CE pas -- pas besoin d'une
-// interface piano-roll complete, on reutilise le clavier physique qu'on
-// vient de cabler.
+// handleTeensyLine()) transpose la note de CE pas (mode grille) ou
+// change la valeur de la colonne selectionnee (mode detail, voir
+// seqDetailMode/seqDetailCol) -- pas besoin d'une interface piano-roll
+// complete, on reutilise le clavier physique qu'on vient de cabler.
 int8_t selectedSeqTrack = -1;
 int8_t selectedSeqStep = -1;
+
+// Vue "detail" (colonnes NOTE/INST/FX/VAL d'UNE piste, comme l'ecran
+// phrase de LSDJ/M8 -- voir AZ2_TRACKER_ETUDE.md) -- s'ouvre en touchant
+// deux fois le meme pas deja selectionne sur la grille, remplace
+// temporairement la grille 8 pistes (pas assez de place pour les 2 a la
+// fois sur 480x480).
+bool seqDetailMode = false;
+int8_t seqDetailCol = 0;  // 0=NOTE 1=INST 2=FX 3=VAL, voir kSeqDetailColNames
 
 void seqCellRect(uint8_t track, uint8_t step, int16_t &x, int16_t &y) {
   x = static_cast<int16_t>(kSeqGridLeft + step * (kSeqCellW + kSeqGapX));
@@ -740,7 +760,159 @@ void drawSeqDivision() {
   gfx->print("  (toucher pour changer)");
 }
 
+// ---------------------------------------------------------------------
+// Vue DETAIL (colonnes NOTE/INST/FX/VAL d'une piste, voir seqDetailMode
+// plus haut et docs/AZ2_TRACKER_ETUDE.md) -- 16 lignes, une par pas.
+// ---------------------------------------------------------------------
+constexpr int16_t kDetailTop = 72;
+constexpr int16_t kDetailRowH = 20;
+constexpr int16_t kDetailRowGap = 3;
+constexpr int16_t kDetailLeft = kMargin;
+constexpr int16_t kDetailStepW = 26;
+constexpr int16_t kDetailNoteW = 60;
+constexpr int16_t kDetailInstW = 50;
+constexpr int16_t kDetailFxW = 50;
+constexpr int16_t kDetailValW = 44;
+
+const char *const kNoteNames[12] = {"C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"};
+const char *const kStepFxNames[] = {"---", "ARP", "CUT", "RET"};
+constexpr uint8_t kStepFxCount = sizeof(kStepFxNames) / sizeof(kStepFxNames[0]);
+
+void formatNoteName(uint8_t note, char *out, size_t outSize) {
+  const int octave = static_cast<int>(note) / 12 - 1;  // MIDI 60 = C4, convention M8/LSDJ
+  snprintf(out, outSize, "%s%d", kNoteNames[note % 12], octave);
+}
+
+int16_t detailColX(uint8_t col) {
+  // 0=STEP (pas de colonne editable, juste le numero), 1=NOTE, 2=INST,
+  // 3=FX, 4=VAL -- decalage de 1 par rapport a seqDetailCol (qui ne
+  // compte que les colonnes editables).
+  switch (col) {
+    case 0: return kDetailLeft;
+    case 1: return static_cast<int16_t>(kDetailLeft + kDetailStepW);
+    case 2: return static_cast<int16_t>(kDetailLeft + kDetailStepW + kDetailNoteW);
+    case 3: return static_cast<int16_t>(kDetailLeft + kDetailStepW + kDetailNoteW + kDetailInstW);
+    default: return static_cast<int16_t>(kDetailLeft + kDetailStepW + kDetailNoteW + kDetailInstW + kDetailFxW);
+  }
+}
+
+void drawDetailHeader() {
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  const int16_t y = static_cast<int16_t>(kDetailTop - 14);
+  gfx->setCursor(static_cast<int16_t>(detailColX(0) + 2), y);
+  gfx->print("PAS");
+  gfx->setCursor(static_cast<int16_t>(detailColX(1) + 2), y);
+  gfx->print("NOTE");
+  gfx->setCursor(static_cast<int16_t>(detailColX(2) + 2), y);
+  gfx->print("INST");
+  gfx->setCursor(static_cast<int16_t>(detailColX(3) + 2), y);
+  gfx->print("FX");
+  gfx->setCursor(static_cast<int16_t>(detailColX(4) + 2), y);
+  gfx->print("VAL");
+}
+
+void drawDetailRow(uint8_t step) {
+  const uint8_t track = static_cast<uint8_t>(selectedSeqTrack);
+  const int16_t y = static_cast<int16_t>(kDetailTop + step * (kDetailRowH + kDetailRowGap));
+  const bool on = seqStepOn[track][step];
+  const bool rowSelected = (step == selectedSeqStep);
+  const bool playhead = (step == seqCurrentStep);
+  const uint16_t accent = kPalette[track % kPaletteCount];
+
+  gfx->fillRect(kDetailLeft, y, kSeqRightEdge - kDetailLeft, kDetailRowH,
+                playhead ? dimColor(accent, 4) : RGB565_BLACK);
+
+  char buf[8];
+  gfx->setTextSize(1);
+
+  // PAS
+  gfx->setTextColor(kDim);
+  snprintf(buf, sizeof(buf), "%02d", step);
+  gfx->setCursor(static_cast<int16_t>(detailColX(0) + 2), static_cast<int16_t>(y + 6));
+  gfx->print(buf);
+
+  // NOTE (colonne editable 0)
+  const bool noteSel = rowSelected && seqDetailCol == 0;
+  if (noteSel) {
+    gfx->fillRect(detailColX(1), y, kDetailNoteW, kDetailRowH, accent);
+  }
+  gfx->setTextColor(noteSel ? RGB565_BLACK : (on ? RGB565_WHITE : kFaint));
+  if (on) {
+    formatNoteName(seqStepNote[track][step], buf, sizeof(buf));
+  } else {
+    snprintf(buf, sizeof(buf), "---");
+  }
+  gfx->setCursor(static_cast<int16_t>(detailColX(1) + 2), static_cast<int16_t>(y + 6));
+  gfx->print(buf);
+
+  // INST (colonne editable 1) -- 0xFF = defaut piste, affiche "--"
+  const bool instSel = rowSelected && seqDetailCol == 1;
+  if (instSel) {
+    gfx->fillRect(detailColX(2), y, kDetailInstW, kDetailRowH, accent);
+  }
+  gfx->setTextColor(instSel ? RGB565_BLACK : (on ? RGB565_WHITE : kFaint));
+  const uint8_t patch = seqStepPatch[track][step];
+  if (patch == 0xFF) {
+    snprintf(buf, sizeof(buf), "--");
+  } else {
+    snprintf(buf, sizeof(buf), "%02d", patch);
+  }
+  gfx->setCursor(static_cast<int16_t>(detailColX(2) + 2), static_cast<int16_t>(y + 6));
+  gfx->print(buf);
+
+  // FX (colonne editable 2)
+  const bool fxSel = rowSelected && seqDetailCol == 2;
+  if (fxSel) {
+    gfx->fillRect(detailColX(3), y, kDetailFxW, kDetailRowH, accent);
+  }
+  gfx->setTextColor(fxSel ? RGB565_BLACK : (on ? RGB565_WHITE : kFaint));
+  gfx->setCursor(static_cast<int16_t>(detailColX(3) + 2), static_cast<int16_t>(y + 6));
+  gfx->print(kStepFxNames[seqStepFx[track][step]]);
+
+  // VAL (colonne editable 3) -- vide si pas d'effet actif
+  const bool valSel = rowSelected && seqDetailCol == 3;
+  if (valSel) {
+    gfx->fillRect(detailColX(4), y, kDetailValW, kDetailRowH, accent);
+  }
+  gfx->setTextColor(valSel ? RGB565_BLACK : (on ? RGB565_WHITE : kFaint));
+  if (seqStepFx[track][step] == 0) {
+    snprintf(buf, sizeof(buf), "--");
+  } else {
+    snprintf(buf, sizeof(buf), "%02X", seqStepFxVal[track][step]);
+  }
+  gfx->setCursor(static_cast<int16_t>(detailColX(4) + 2), static_cast<int16_t>(y + 6));
+  gfx->print(buf);
+}
+
+void drawSeqDetailPage() {
+  char title[16];
+  snprintf(title, sizeof(title), "PISTE %d - DETAIL", selectedSeqTrack);
+  drawSubHeader(title, kPalette[selectedSeqTrack % kPaletteCount]);
+  drawDetailHeader();
+  for (uint8_t s = 0; s < kSeqStepCount; ++s) {
+    drawDetailRow(s);
+  }
+}
+
+int8_t hitTestDetailRow(int16_t x, int16_t y) {
+  if (x < kDetailLeft || x > kSeqRightEdge) {
+    return -1;
+  }
+  for (uint8_t s = 0; s < kSeqStepCount; ++s) {
+    const int16_t rowY = static_cast<int16_t>(kDetailTop + s * (kDetailRowH + kDetailRowGap));
+    if (y >= rowY && y < rowY + kDetailRowH) {
+      return static_cast<int8_t>(s);
+    }
+  }
+  return -1;
+}
+
 void drawSequencerPage() {
+  if (seqDetailMode && selectedSeqTrack >= 0) {
+    drawSeqDetailPage();
+    return;
+  }
   drawSubHeader("SEQUENCEUR", kPalette[0]);
   drawSeqGrid();
   drawSeqTransport();
@@ -793,12 +965,18 @@ bool hitTestSeqCell(int16_t x, int16_t y, uint8_t &track, uint8_t &step) {
 // change de moteur (ENGINE:), la moitie droite change de patch (PATCH:)
 // -- le Teensy applique et renvoie confirmation, voir handleTeensyLine().
 // ---------------------------------------------------------------------
-uint8_t trackEngine[kSeqTrackCount] = {az2::kEngineDexed, az2::kEngineDexed, az2::kEngineEPiano, az2::kEngineBraids};
-uint8_t trackPatch[kSeqTrackCount] = {0, 0, 0, 0};
+// Meme motif que seedDefaultNotes() cote Teensy (Dexed/Dexed/EPiano/
+// Braids repete sur les pistes 4-7) -- juste le defaut affiche avant
+// que announceHello() ne confirme l'etat reel a la connexion.
+uint8_t trackEngine[kSeqTrackCount] = {az2::kEngineDexed, az2::kEngineDexed, az2::kEngineEPiano, az2::kEngineBraids,
+                                        az2::kEngineDexed, az2::kEngineDexed, az2::kEngineEPiano, az2::kEngineBraids};
+uint8_t trackPatch[kSeqTrackCount] = {0, 0, 0, 0, 0, 0, 0, 0};
 
 constexpr int16_t kEngRowTop = 90;
-constexpr int16_t kEngRowH = 70;
-constexpr int16_t kEngRowGap = 10;
+// Retreci (etait 70/10) pour que 8 pistes tiennent -- voir le meme fix
+// que kSeqCellH/kSeqGapY plus haut (kSeqTrackCount 4 -> 8, 2026-09-15).
+constexpr int16_t kEngRowH = 40;
+constexpr int16_t kEngRowGap = 4;
 constexpr int16_t kEngLeft = kMargin;
 constexpr int16_t kEngWidth = kScreenSize - 2 * kMargin;
 constexpr int16_t kEngSplitX = kEngLeft + kEngWidth / 2;
@@ -817,24 +995,24 @@ void drawEngRow(uint8_t track) {
   gfx->drawFastVLine(kEngSplitX, y, kEngRowH - kEngRowGap, kFaint);
 
   char title[12];
-  snprintf(title, sizeof(title), "PISTE %d", track);
+  snprintf(title, sizeof(title), "P%d", track);
   gfx->setTextSize(1);
   gfx->setTextColor(kDim);
-  gfx->setCursor(static_cast<int16_t>(kEngLeft + 8), static_cast<int16_t>(y + 6));
+  gfx->setCursor(static_cast<int16_t>(kEngLeft + 6), static_cast<int16_t>(y + 2));
   gfx->print(title);
 
   gfx->setTextSize(2);
   gfx->setTextColor(RGB565_WHITE);
-  gfx->setCursor(static_cast<int16_t>(kEngLeft + 8), static_cast<int16_t>(y + 22));
+  gfx->setCursor(static_cast<int16_t>(kEngLeft + 6), static_cast<int16_t>(y + 16));
   gfx->print(az2::engineName(trackEngine[track]));
 
   gfx->setTextSize(1);
   gfx->setTextColor(kDim);
-  gfx->setCursor(static_cast<int16_t>(kEngSplitX + 8), static_cast<int16_t>(y + 6));
+  gfx->setCursor(static_cast<int16_t>(kEngSplitX + 6), static_cast<int16_t>(y + 2));
   gfx->print("PATCH");
   gfx->setTextSize(2);
   gfx->setTextColor(accent);
-  gfx->setCursor(static_cast<int16_t>(kEngSplitX + 8), static_cast<int16_t>(y + 22));
+  gfx->setCursor(static_cast<int16_t>(kEngSplitX + 6), static_cast<int16_t>(y + 16));
   gfx->print(az2::enginePatchName(trackEngine[track], trackPatch[track]));
 }
 
@@ -1159,6 +1337,12 @@ void goTo(Screen s) {
     menuSelected = 0;
   }
 
+  // Quitter le sequenceur retombe toujours sur la grille 8 pistes, pas
+  // au milieu d'une vue detail perimee (meme logique que le menu).
+  if (s != Screen::Sequencer) {
+    seqDetailMode = false;
+  }
+
   currentScreen = s;
   drawScreen(s);
 }
@@ -1240,19 +1424,61 @@ void handleTeensyLine(const String &line) {
             drawMenu();
           }
         }
-        // Sur la page SEQUENCEUR, HAUT/BAS transpose la note du dernier
-        // pas touche (voir selectedSeqTrack/Step) -- demande le
-        // 2026-09-15 ("prend le sequenceur du dexed touch"), reutilise
-        // la croix qu'on vient de cabler au lieu d'une interface
-        // piano-roll complete.
-        if (pressed && currentScreen == Screen::Sequencer &&
-            selectedSeqTrack >= 0 && selectedSeqStep >= 0 && (index == 0 || index == 1)) {
+        // Sur la page SEQUENCEUR, la croix edite le pas selectionne
+        // (voir selectedSeqTrack/Step) -- demande le 2026-09-14 ("prend
+        // le sequenceur du dexed touch"), etendue le 2026-09-15 ("un
+        // tracker 8 pistes") : en vue detail, GAUCHE/DROITE choisissent
+        // la colonne (NOTE/INST/FX/VAL) et HAUT/BAS modifient sa valeur
+        // ; en vue grille (comportement d'origine), HAUT/BAS transposent
+        // directement la note.
+        if (pressed && currentScreen == Screen::Sequencer && selectedSeqTrack >= 0 && selectedSeqStep >= 0) {
           const uint8_t t = static_cast<uint8_t>(selectedSeqTrack);
           const uint8_t s = static_cast<uint8_t>(selectedSeqStep);
-          const int newNote = constrain(static_cast<int>(seqStepNote[t][s]) + (index == 0 ? 1 : -1), 0, 127);
-          char msg[20];
-          snprintf(msg, sizeof(msg), "NOTE:%d:%d:%d", t, s, newNote);
-          sendToTeensy(msg);
+          if (seqDetailMode) {
+            if (index == 2 || index == 3) {
+              const int8_t prevCol = seqDetailCol;
+              seqDetailCol = static_cast<int8_t>((seqDetailCol + (index == 3 ? 1 : 3)) % 4);
+              if (seqDetailCol != prevCol) {
+                drawDetailRow(s);
+              }
+            } else if (index == 0 || index == 1) {
+              const int dir = (index == 0) ? 1 : -1;
+              char msg[24];
+              switch (seqDetailCol) {
+                case 0: {
+                  const int newNote = constrain(static_cast<int>(seqStepNote[t][s]) + dir, 0, 127);
+                  snprintf(msg, sizeof(msg), "NOTE:%d:%d:%d", t, s, newNote);
+                  sendToTeensy(msg);
+                  break;
+                }
+                case 1: {
+                  const uint8_t count = az2::enginePatchCount(trackEngine[t]);
+                  const int base = (seqStepPatch[t][s] == 0xFF) ? trackPatch[t] : seqStepPatch[t][s];
+                  const int newPatch = (base + dir + count) % count;
+                  snprintf(msg, sizeof(msg), "INST:%d:%d:%d", t, s, newPatch);
+                  sendToTeensy(msg);
+                  break;
+                }
+                case 2: {
+                  const int newFx = (seqStepFx[t][s] + dir + kStepFxCount) % kStepFxCount;
+                  snprintf(msg, sizeof(msg), "SFX:%d:%d:%d:%d", t, s, newFx, seqStepFxVal[t][s]);
+                  sendToTeensy(msg);
+                  break;
+                }
+                default: {
+                  const int newVal = constrain(static_cast<int>(seqStepFxVal[t][s]) + dir, 0, 255);
+                  snprintf(msg, sizeof(msg), "SFX:%d:%d:%d:%d", t, s, seqStepFx[t][s], newVal);
+                  sendToTeensy(msg);
+                  break;
+                }
+              }
+            }
+          } else if (index == 0 || index == 1) {
+            const int newNote = constrain(static_cast<int>(seqStepNote[t][s]) + (index == 0 ? 1 : -1), 0, 127);
+            char msg[20];
+            snprintf(msg, sizeof(msg), "NOTE:%d:%d:%d", t, s, newNote);
+            sendToTeensy(msg);
+          }
         }
       }
     }
@@ -1306,10 +1532,17 @@ void handleTeensyLine(const String &line) {
         menuSelected = 0;
         drawMenu();
       }
-      // Partout ailleurs (sauf en pleine partie GB, ou B est le bouton
-      // B du jeu) : B revient au menu -- convention manette classique,
-      // meme demande ("il faut que ca serve dans les menus").
-      if (pressed && letter == 'B' && currentScreen != Screen::Menu && !inGbGame) {
+      // Dans la vue detail du sequenceur : B revient a la grille 8
+      // pistes (pas besoin de ressortir de Screen::Sequencer) -- meme
+      // logique que le menu.
+      if (pressed && letter == 'B' && currentScreen == Screen::Sequencer && seqDetailMode) {
+        seqDetailMode = false;
+        drawSequencerPage();
+      } else if (pressed && letter == 'B' && currentScreen != Screen::Menu && !inGbGame) {
+        // Partout ailleurs (sauf en pleine partie GB, ou B est le
+        // bouton B du jeu) : B revient au menu -- convention manette
+        // classique, meme demande ("il faut que ca serve dans les
+        // menus").
         goTo(Screen::Menu);
       }
     }
@@ -1369,7 +1602,48 @@ void handleTeensyLine(const String &line) {
       if (track < kSeqTrackCount && step < kSeqStepCount) {
         seqStepNote[track][step] = note;
         if (currentScreen == Screen::Sequencer && !screensaverActive) {
-          drawSeqCell(track, step);
+          if (seqDetailMode && track == selectedSeqTrack) {
+            drawDetailRow(step);
+          } else if (!seqDetailMode) {
+            drawSeqCell(track, step);
+          }
+        }
+      }
+    }
+  } else if (line.startsWith("INST:")) {
+    // Colonne INST du tracker (voir AZ2_TRACKER_ETUDE.md, handleInstCommand()
+    // cote Teensy) -- 255 = patch par defaut de la piste.
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    const int i3 = line.indexOf(':', i2 + 1);
+    if (i1 >= 0 && i2 >= 0 && i3 >= 0) {
+      const uint8_t track = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
+      const uint8_t step = static_cast<uint8_t>(line.substring(i2 + 1, i3).toInt());
+      const uint8_t patch = static_cast<uint8_t>(line.substring(i3 + 1).toInt());
+      if (track < kSeqTrackCount && step < kSeqStepCount) {
+        seqStepPatch[track][step] = patch;
+        if (currentScreen == Screen::Sequencer && seqDetailMode && track == selectedSeqTrack && !screensaverActive) {
+          drawDetailRow(step);
+        }
+      }
+    }
+  } else if (line.startsWith("SFX:")) {
+    // Colonne FX+VAL du tracker (voir handleStepFxCommand() cote
+    // Teensy).
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    const int i3 = line.indexOf(':', i2 + 1);
+    const int i4 = line.indexOf(':', i3 + 1);
+    if (i1 >= 0 && i2 >= 0 && i3 >= 0 && i4 >= 0) {
+      const uint8_t track = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
+      const uint8_t step = static_cast<uint8_t>(line.substring(i2 + 1, i3).toInt());
+      const uint8_t fx = static_cast<uint8_t>(line.substring(i3 + 1, i4).toInt());
+      const uint8_t val = static_cast<uint8_t>(line.substring(i4 + 1).toInt());
+      if (track < kSeqTrackCount && step < kSeqStepCount && fx < kStepFxCount) {
+        seqStepFx[track][step] = fx;
+        seqStepFxVal[track][step] = val;
+        if (currentScreen == Screen::Sequencer && seqDetailMode && track == selectedSeqTrack && !screensaverActive) {
+          drawDetailRow(step);
         }
       }
     }
@@ -1384,7 +1658,11 @@ void handleTeensyLine(const String &line) {
       if (track < kSeqTrackCount && step < kSeqStepCount) {
         seqStepOn[track][step] = on;
         if (currentScreen == Screen::Sequencer && !screensaverActive) {
-          drawSeqCell(track, step);
+          if (seqDetailMode && track == selectedSeqTrack) {
+            drawDetailRow(step);
+          } else if (!seqDetailMode) {
+            drawSeqCell(track, step);
+          }
         }
       }
     }
@@ -1396,9 +1674,14 @@ void handleTeensyLine(const String &line) {
         const uint8_t oldStep = seqCurrentStep;
         seqCurrentStep = newStep;
         if (currentScreen == Screen::Sequencer && !screensaverActive) {
-          for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
-            drawSeqCell(t, oldStep);
-            drawSeqCell(t, seqCurrentStep);
+          if (seqDetailMode) {
+            drawDetailRow(oldStep);
+            drawDetailRow(seqCurrentStep);
+          } else {
+            for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
+              drawSeqCell(t, oldStep);
+              drawSeqCell(t, seqCurrentStep);
+            }
           }
         }
       }
@@ -1575,10 +1858,11 @@ void setup() {
 
   // Memes valeurs par defaut que seedDefaultNotes() cote Teensy --
   // corrige des le premier NOTE:/HELLO recu si jamais desynchronise.
-  static const uint8_t kDefaultNotes[kSeqTrackCount] = {48, 55, 60, 64};
+  static const uint8_t kDefaultNotes[kSeqTrackCount] = {48, 55, 60, 64, 60, 67, 72, 76};
   for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
     for (uint8_t s = 0; s < kSeqStepCount; ++s) {
       seqStepNote[t][s] = kDefaultNotes[t];
+      seqStepPatch[t][s] = 0xFF;  // meme defaut que cote Teensy (voir seedDefaultNotes())
     }
   }
 
@@ -1621,7 +1905,12 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
   Serial.print(":y=");
   Serial.println(y);
 
-  if (currentScreen != Screen::Menu && hitBack(x, y)) {
+  if (currentScreen == Screen::Sequencer && seqDetailMode && hitBack(x, y)) {
+    // "< PISTE N - DETAIL" -- revient a la grille 8 pistes, pas au menu
+    // (voir drawSubHeader()/hitBack(), meme zone tactile que d'habitude).
+    seqDetailMode = false;
+    drawSequencerPage();
+  } else if (currentScreen != Screen::Menu && hitBack(x, y)) {
     goTo(Screen::Menu);
   } else if (currentScreen == Screen::Menu) {
     if (menuCategory < 0) {
@@ -1655,6 +1944,22 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       snprintf(msg, sizeof(msg), "PAD:%02d:DOWN:vel=100", pad);
       sendToTeensy(msg);
     }
+  } else if (currentScreen == Screen::Sequencer && seqDetailMode) {
+    const int8_t hitStep = hitTestDetailRow(x, y);
+    if (hitStep >= 0) {
+      const uint8_t track = static_cast<uint8_t>(selectedSeqTrack);
+      if (hitStep == selectedSeqStep) {
+        // 2e toucher sur la ligne deja selectionnee -> bascule ON/OFF
+        // (meme geste que sur la grille).
+        const bool newState = !seqStepOn[track][hitStep];
+        seqStepOn[track][hitStep] = newState;
+        char msg[20];
+        snprintf(msg, sizeof(msg), "STEP:%d:%d:%d", track, hitStep, newState ? 1 : 0);
+        sendToTeensy(msg);
+      }
+      selectedSeqStep = hitStep;
+      drawSeqDetailPage();  // 16 lignes seulement -- redessiner tout est bon marche
+    }
   } else if (currentScreen == Screen::Sequencer) {
     const int8_t tempoHit = hitTestSeqTempo(x, y);
     uint8_t track, step;
@@ -1683,23 +1988,34 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       snprintf(msg, sizeof(msg), "DIV:%d", az2::kDivisionOptions[nextIdx].stepsPerBeat);
       sendToTeensy(msg);
     } else if (hitTestSeqCell(x, y, track, step)) {
-      // Selectionne ce pas pour la croix (HAUT/BAS transpose sa note,
-      // voir handleTeensyLine() -> NAV:) -- que le pas soit allume ou
-      // eteint par ce meme toucher.
       const int8_t prevTrack = selectedSeqTrack;
       const int8_t prevStep = selectedSeqStep;
-      selectedSeqTrack = static_cast<int8_t>(track);
-      selectedSeqStep = static_cast<int8_t>(step);
-      if (prevTrack >= 0 && prevStep >= 0 && (prevTrack != selectedSeqTrack || prevStep != selectedSeqStep)) {
-        drawSeqCell(static_cast<uint8_t>(prevTrack), static_cast<uint8_t>(prevStep));  // efface l'ancien surlignage
-      }
+      const bool sameCell = (prevTrack == static_cast<int8_t>(track) && prevStep == static_cast<int8_t>(step));
 
-      const bool newState = !seqStepOn[track][step];
-      seqStepOn[track][step] = newState;  // optimiste ; re-synchronise par l'echo STEP: du Teensy
-      drawSeqCell(track, step);
-      char msg[20];
-      snprintf(msg, sizeof(msg), "STEP:%d:%d:%d", track, step, newState ? 1 : 0);
-      sendToTeensy(msg);
+      if (sameCell) {
+        // 2e toucher sur le pas deja selectionne -> ouvre la vue
+        // detail (colonnes NOTE/INST/FX/VAL, voir AZ2_TRACKER_ETUDE.md)
+        // au lieu de re-basculer ON/OFF.
+        seqDetailMode = true;
+        seqDetailCol = 0;
+        drawSequencerPage();
+      } else {
+        // Selectionne ce pas pour la croix (HAUT/BAS transpose sa
+        // note, voir handleTeensyLine() -> NAV:) -- que le pas soit
+        // allume ou eteint par ce meme toucher.
+        selectedSeqTrack = static_cast<int8_t>(track);
+        selectedSeqStep = static_cast<int8_t>(step);
+        if (prevTrack >= 0 && prevStep >= 0) {
+          drawSeqCell(static_cast<uint8_t>(prevTrack), static_cast<uint8_t>(prevStep));  // efface l'ancien surlignage
+        }
+
+        const bool newState = !seqStepOn[track][step];
+        seqStepOn[track][step] = newState;  // optimiste ; re-synchronise par l'echo STEP: du Teensy
+        drawSeqCell(track, step);
+        char msg[20];
+        snprintf(msg, sizeof(msg), "STEP:%d:%d:%d", track, step, newState ? 1 : 0);
+        sendToTeensy(msg);
+      }
     }
   } else if (currentScreen == Screen::Engines) {
     bool isPatchSide = false;
