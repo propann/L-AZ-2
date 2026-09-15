@@ -121,11 +121,35 @@ AudioOutputI2S i2sOut;
 // tournes).
 AudioPlayQueue gbAudioQueue;
 
+// Filtre PAR PISTE (demande 2026-09-15, "on fait un max de code ...
+// tracker" -- filtre resonant classique de synthe/tracker). Un
+// AudioFilterStateVariable par piste (Chamberlin SVF entier, tres bon
+// marche en CPU -- verifie dans filter_variable.h/.cpp, standard PJRC,
+// deja utilise a N instances dans de nombreux projets Teensy) INSERE
+// entre le moteur actif de la piste et son mixeur de groupe (voir
+// setTrackEngine() : patchTrackIn[] pointe maintenant vers le filtre,
+// pas directement le groupe). Sortie 0 = passe-bas (lowpass), la seule
+// utilisee pour l'instant (1=passe-bande, 2=passe-haut, pas exposes en
+// v1). Frequence de coupure par defaut = grande ouverte (aucun filtrage
+// audible tant qu'on ne touche pas FILT:, voir handleFiltCommand()).
+AudioFilterStateVariable trackFilter[kTrackCount];
+
 // Une connexion "prise" par piste, rebranchee vers le moteur actif de
 // cette piste (voir setTrackEngine()) -- pas connectee au demarrage,
 // setup() choisit le moteur par defaut de chaque piste comme n'importe
-// quel autre changement.
+// quel autre changement. Pointe desormais vers trackFilter[track], pas
+// directement le mixeur de groupe (voir patchFilterToGroup[] plus bas).
 AudioConnection patchTrackIn[kTrackCount];
+// Connexion FIXE filtre -> groupe (channel deterministe par piste, pas
+// besoin d'etre dynamique comme patchTrackIn[]) -- pistes 0-3 sur
+// mixTracksA canaux 0-3, pistes 4-7 sur mixTracksB canaux 0-3 (voir
+// trackGroupMixer()/trackGroupChannel()).
+AudioConnection patchFilterToGroup[kTrackCount] = {
+    AudioConnection(trackFilter[0], 0, mixTracksA, 0), AudioConnection(trackFilter[1], 0, mixTracksA, 1),
+    AudioConnection(trackFilter[2], 0, mixTracksA, 2), AudioConnection(trackFilter[3], 0, mixTracksA, 3),
+    AudioConnection(trackFilter[4], 0, mixTracksB, 0), AudioConnection(trackFilter[5], 0, mixTracksB, 1),
+    AudioConnection(trackFilter[6], 0, mixTracksB, 2), AudioConnection(trackFilter[7], 0, mixTracksB, 3),
+};
 AudioConnection patchGroupA(mixTracksA, 0, mixFinal, 0);
 AudioConnection patchGroupB(mixTracksB, 0, mixFinal, 1);
 AudioConnection patchLiveIn(liveVoice, 0, mixFinal, 2);
@@ -305,25 +329,28 @@ void setTrackEngine(uint8_t track, uint8_t engine) {
   AudioMixer4 &group = trackGroupMixer(track);
   const uint8_t channel = trackGroupChannel(track);
 
+  // patchTrackIn[] rebranche l'ENTREE du filtre de la piste (voir
+  // trackFilter[]/patchFilterToGroup[] plus haut), pas le groupe
+  // directement -- le filtre reste branche au groupe en permanence.
   patchTrackIn[track].disconnect();
   switch (engine) {
     case az2::kEngineDexed:
-      patchTrackIn[track].connect(trackDexedEngine[track], 0, group, channel);
+      patchTrackIn[track].connect(trackDexedEngine[track], 0, trackFilter[track], 0);
       break;
     case az2::kEngineEPiano:
-      patchTrackIn[track].connect(trackEPianoEngine[track], 0, group, channel);
+      patchTrackIn[track].connect(trackEPianoEngine[track], 0, trackFilter[track], 0);
       break;
     case az2::kEngineBraids:
-      patchTrackIn[track].connect(trackBraidsEngine[track], 0, group, channel);
+      patchTrackIn[track].connect(trackBraidsEngine[track], 0, trackFilter[track], 0);
       break;
     case az2::kEngineKarplus:
-      patchTrackIn[track].connect(trackKarplusEngine[track], 0, group, channel);
+      patchTrackIn[track].connect(trackKarplusEngine[track], 0, trackFilter[track], 0);
       break;
     case az2::kEngineAnalog:
       // Le point de connexion "moteur" est la SORTIE de l'enveloppe, pas
       // l'oscillateur directement (voir trackAnalogEnv[]/patchAnalogEnv[]
       // plus haut, chaine en permanence).
-      patchTrackIn[track].connect(trackAnalogEnv[track], 0, group, channel);
+      patchTrackIn[track].connect(trackAnalogEnv[track], 0, trackFilter[track], 0);
       break;
   }
 
@@ -870,6 +897,37 @@ void handleFxCommand(const String &line) {
   relayLine(line);
 }
 
+// FILT:<piste 0-7>:<coupure 0-127>:<resonance 0-127> -- filtre resonant
+// par piste (voir trackFilter[] plus haut), demande le 2026-09-15 ("on
+// fait un max de code ... tracker/M8 killer"). Coupure mappee en
+// exponentiel (20Hz-18kHz, sensation "synthe" standard -- un potentio-
+// metre/encodeur lineaire sur une echelle logarithmique) ; resonance
+// lineaire sur la plage acceptee par AudioFilterStateVariable (0.7-5.0,
+// voir filter_variable.h). 127/0 = grand ouvert/neutre = aucun filtrage
+// audible, comportement par defaut avant tout FILT:.
+void handleFiltCommand(const String &line) {
+  const int idx1 = line.indexOf(':');
+  const int idx2 = line.indexOf(':', idx1 + 1);
+  const int idx3 = line.indexOf(':', idx2 + 1);
+  if (idx1 < 0 || idx2 < 0 || idx3 < 0) {
+    return;
+  }
+  const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+  const int cutoff = constrain(line.substring(idx2 + 1, idx3).toInt(), 0, 127);
+  const int res = constrain(line.substring(idx3 + 1).toInt(), 0, 127);
+  if (track >= kTrackCount) {
+    return;
+  }
+
+  // 20Hz a 18000Hz exponentiel : freq = 20 * (18000/20)^(cutoff/127).
+  const float ratio = static_cast<float>(cutoff) / 127.0f;
+  const float freq = 20.0f * powf(18000.0f / 20.0f, ratio);
+  trackFilter[track].frequency(freq);
+  trackFilter[track].resonance(0.7f + (static_cast<float>(res) / 127.0f) * (5.0f - 0.7f));
+
+  relayLine(line);
+}
+
 // CPU? -- charge processeur et memoire audio reelles, demande le
 // 2026-09-14 ("cote performance on est comment") avant d'augmenter
 // pistes/moteurs. AudioProcessorUsage() = charge instantanee (%),
@@ -1224,6 +1282,11 @@ void handleCommand(const String &line) {
     return;
   }
 
+  if (line.startsWith("FILT:")) {
+    handleFiltCommand(line);
+    return;
+  }
+
   if (line == "CPU?") {
     reportCpuUsage();
     return;
@@ -1445,6 +1508,14 @@ void setup() {
     trackAnalogEnv[t].decay(50.0f);
     trackAnalogEnv[t].sustain(0.7f);
     trackAnalogEnv[t].release(150.0f);
+  }
+  // Filtre par piste (voir trackFilter[]) grand ouvert par defaut --
+  // le constructeur AudioFilterStateVariable part a 1000Hz (voir
+  // filter_variable.h), ce qui couperait audiblement le son de TOUTES
+  // les pistes des le premier boot si on ne le corrige pas ici.
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    trackFilter[t].frequency(18000.0f);
+    trackFilter[t].resonance(0.7f);
   }
   loadDexedPatch(liveVoice, 0);  // "FM-Rhodes" plutot qu'un init_voice vide
 
