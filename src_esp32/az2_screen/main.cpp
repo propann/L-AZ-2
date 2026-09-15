@@ -12,9 +12,6 @@
 //      cables directement sur le Teensy (NAV:/BTN:/POT:, remplace le
 //      Pico/mux LED abandonnes le 2026-09-15, voir AZ2_CABLAGE_MASTER.md).
 //      Pas de tap ici, page de VERIFICATION seulement.
-//    - ENCODEURS : idem, affiche les MACRO:n:+/-N relayes par le Teensy
-//      (page laissee en l'etat, plus rien ne source de MACRO: pour
-//      l'instant depuis l'abandon du Pico).
 //    - AUDIO : grille de 16 pads tactiles qui envoient PAD:NN:DOWN/UP
 //      directement au Teensy depuis l'ecran -- pour faire jouer le Teensy
 //      sans attendre que le Pico soit cable.
@@ -183,10 +180,9 @@ bool inBox(int16_t x, int16_t y, int16_t bx, int16_t by, int16_t bw, int16_t bh)
 // ---------------------------------------------------------------------
 // Etat partage entre les pages / le lien Teensy
 // ---------------------------------------------------------------------
-enum class Screen : uint8_t { Menu, Controls, Encoders, Audio, Sequencer, Engines, Retro, Config, Links, About };
+enum class Screen : uint8_t { Menu, Controls, Audio, Sequencer, Engines, Retro, Config, Links, About };
 Screen currentScreen = Screen::Menu;
 
-int32_t macroValue[4] = {};
 bool teensyLinked = false;
 
 constexpr uint8_t kLogLines = 8;
@@ -251,7 +247,6 @@ constexpr MenuItem kMenuItems[] = {
     {"SEQUENCEUR", "programmer les 16 pas", Screen::Sequencer},
     {"MOTEURS", "moteur + patch par piste", Screen::Engines},
     {"CONTROLES", "croix + boutons + potards (Teensy)", Screen::Controls},
-    {"ENCODEURS", "verifier les 4 rotatifs", Screen::Encoders},
     {"AUDIO", "jouer le Teensy depuis l'ecran", Screen::Audio},
     {"JEUX", "NES (en construction, voir doc)", Screen::Retro},
     {"CONFIGURATION", "ecran de veille, reglages", Screen::Config},
@@ -424,73 +419,6 @@ void drawControlsPage() {
   }
   for (uint8_t i = 0; i < 3; ++i) {
     drawPotBar(i);
-  }
-}
-
-// ---------------------------------------------------------------------
-// Page ENCODEURS -- visualisation seule (MACRO:n:+/-N relaye par le Teensy)
-// Jauge horizontale centree sur zero: verte/couleur palette vers la droite
-// (valeur positive), rouge vers la gauche (negative) -- longueur = valeur,
-// couleur = sens, comme demande.
-// ---------------------------------------------------------------------
-constexpr int16_t kEncRowH = 64;
-constexpr int16_t kEncRowPitch = 76;
-constexpr int32_t kGaugeRange = 24;  // plage affichee +/-24 (transpose max)
-
-void drawEncoderGauge(uint8_t index, int16_t rowY) {
-  const int16_t barX = static_cast<int16_t>(kMargin + 16);
-  const int16_t barW = static_cast<int16_t>(kScreenSize - 2 * kMargin - 32);
-  const int16_t barY = static_cast<int16_t>(rowY + 44);
-  constexpr int16_t barH = 14;
-  const int16_t midX = static_cast<int16_t>(barX + barW / 2);
-  const int16_t halfW = static_cast<int16_t>(barW / 2 - 2);
-
-  gfx->fillRect(barX, barY, barW, barH, RGB565_BLACK);
-  gfx->drawRect(barX, barY, barW, barH, kFaint);
-  gfx->drawFastVLine(midX, barY, barH, kFaint);
-
-  const int32_t clamped = constrain(macroValue[index], -kGaugeRange, kGaugeRange);
-  if (clamped == 0) {
-    return;
-  }
-  const int16_t fillW = static_cast<int16_t>((labs(clamped) * halfW) / kGaugeRange);
-  const uint16_t fillColor = clamped > 0 ? kPalette[index % kPaletteCount] : RGB565(240, 80, 80);
-  const int16_t fillX = clamped > 0 ? static_cast<int16_t>(midX + 1)
-                                     : static_cast<int16_t>(midX - fillW);
-  gfx->fillRect(fillX, static_cast<int16_t>(barY + 1), fillW, static_cast<int16_t>(barH - 2), fillColor);
-}
-
-void drawEncoderRow(uint8_t index) {
-  const int16_t y = static_cast<int16_t>(100 + index * kEncRowPitch);
-  const bool active = macroValue[index] != 0;
-  const uint16_t accent = kPalette[index % kPaletteCount];
-
-  gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, kEncRowH, RGB565_BLACK);
-  gfx->drawRect(kMargin, y, kScreenSize - 2 * kMargin, kEncRowH, active ? accent : kFaint);
-
-  gfx->setTextSize(2);
-  gfx->setTextColor(active ? accent : RGB565_WHITE);
-  gfx->setCursor(static_cast<int16_t>(kMargin + 16), static_cast<int16_t>(y + 6));
-  gfx->print("ENC ");
-  gfx->print(index + 1);
-
-  gfx->setTextSize(1);
-  gfx->setTextColor(kDim);
-  gfx->setCursor(static_cast<int16_t>(kMargin + 16), static_cast<int16_t>(y + 28));
-  if (index == 0) {
-    gfx->print("transpose (Teensy) : ");
-  } else {
-    gfx->print("valeur : ");
-  }
-  gfx->print(macroValue[index]);
-
-  drawEncoderGauge(index, y);
-}
-
-void drawEncodersPage() {
-  drawSubHeader("ENCODEURS", kPalette[1]);
-  for (uint8_t i = 0; i < 4; ++i) {
-    drawEncoderRow(i);
   }
 }
 
@@ -1014,7 +942,6 @@ void drawScreen(Screen s) {
   switch (s) {
     case Screen::Menu: drawMenu(); return;
     case Screen::Controls: drawControlsPage(); return;
-    case Screen::Encoders: drawEncodersPage(); return;
     case Screen::Audio: drawAudioPage(); return;
     case Screen::Sequencer: drawSequencerPage(); return;
     case Screen::Engines: drawEnginesPage(); return;
@@ -1125,19 +1052,6 @@ void handleTeensyLine(const String &line) {
         }
       }
     }
-  } else if (line.startsWith("MACRO:")) {
-    const int firstColon = line.indexOf(':');
-    const int secondColon = line.indexOf(':', firstColon + 1);
-    if (firstColon >= 0 && secondColon >= 0) {
-      const uint8_t index = static_cast<uint8_t>(line.substring(firstColon + 1, secondColon).toInt());
-      const int32_t delta = line.substring(secondColon + 1).toInt();
-      if (index >= 1 && index <= 4) {
-        macroValue[index - 1] += delta;
-        if (currentScreen == Screen::Encoders) {
-          drawEncoderRow(index - 1);
-        }
-      }
-    }
   } else if (line.startsWith("STEP:")) {
     const int i1 = line.indexOf(':');
     const int i2 = line.indexOf(':', i1 + 1);
@@ -1224,8 +1138,7 @@ void handleTeensyLine(const String &line) {
   if (currentScreen == Screen::Links) {
     drawLinksPage();
   }
-  if (currentScreen != Screen::Controls && currentScreen != Screen::Encoders &&
-      currentScreen != Screen::Links) {
+  if (currentScreen != Screen::Controls && currentScreen != Screen::Links) {
     drawLinkStatus();
   }
 }
