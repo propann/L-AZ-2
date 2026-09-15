@@ -22,6 +22,7 @@
 #include <Arduino_GFX_Library.h>  // pour la macro RGB565() (palette DMG)
 #include <SD.h>
 #include <esp_heap_caps.h>
+#include <cstring>
 
 namespace {
 
@@ -32,6 +33,11 @@ uint32_t romSize = 0;
 uint8_t *cartRam = nullptr;
 uint32_t cartRamSize = 0;
 char romTitle[17] = {0};
+// Chemin de sauvegarde (cart RAM) pour la ROM courante, meme nom que la
+// ROM avec l'extension remplacee par .sav, a cote d'elle dans /games --
+// convention classique d'emulateur (rom.gb + rom.sav). Vide si aucune
+// ROM chargee ou si la cartouche n'a pas de RAM (cartRamSize==0).
+char saveRamPath[64] = {0};
 
 uint8_t romRead(struct gb_s *, const uint_fast32_t addr) {
   return (addr < romSize) ? romData[addr] : 0xFF;
@@ -72,6 +78,54 @@ constexpr uint16_t kDmgPalette[4] = {
     RGB565(224, 248, 208), RGB565(136, 192, 112), RGB565(52, 104, 86), RGB565(8, 24, 32),
 };
 
+// Sauvegarde (voir saveRamPath ci-dessus) -- convention .sav a cote de
+// la ROM sur la carte SD. Demande 2026-09-15 ("sauvegarde tout") :
+// ecrit au moment de decharger la ROM (voir gbUnload()), relu au
+// chargement suivant si le fichier existe deja (voir gbLoadRom()). Pas
+// d'ecriture pendant le jeu (juste a la sortie) -- suffisant pour une
+// sauvegarde a l'extinction/au changement de jeu, pas de risque
+// d'ecriture SD en boucle pendant que ca joue.
+void gbSaveCartRam() {
+  if (cartRam == nullptr || cartRamSize == 0 || saveRamPath[0] == '\0') {
+    return;
+  }
+  File f = SD.open(saveRamPath, FILE_WRITE);
+  if (!f) {
+    Serial.print("GB:SAVE_OPEN_ERROR:");
+    Serial.println(saveRamPath);
+    return;
+  }
+  const size_t written = f.write(cartRam, cartRamSize);
+  f.close();
+  if (written != cartRamSize) {
+    Serial.println("GB:SAVE_WRITE_ERROR");
+  } else {
+    Serial.print("GB:SAVED:");
+    Serial.println(saveRamPath);
+  }
+}
+
+void gbLoadCartRamIfPresent() {
+  if (cartRam == nullptr || cartRamSize == 0 || saveRamPath[0] == '\0') {
+    return;
+  }
+  if (!SD.exists(saveRamPath)) {
+    return;  // pas de sauvegarde existante -- cartRam reste a 0xFF (deja initialise), rien d'anormal
+  }
+  File f = SD.open(saveRamPath);
+  if (!f) {
+    Serial.print("GB:SAVE_READ_OPEN_ERROR:");
+    Serial.println(saveRamPath);
+    return;
+  }
+  const size_t readBytes = f.read(cartRam, cartRamSize);
+  f.close();
+  Serial.print("GB:SAVE_LOADED:");
+  Serial.print(saveRamPath);
+  Serial.print(":bytes=");
+  Serial.println(readBytes);
+}
+
 // lcd_draw_line du coeur : convertit les 160 pixels de la ligne en RGB565
 // (CGB : index direct dans gb->cgb.fixPalette deja converti par le coeur
 // ; DMG : 2 bits de teinte -> kDmgPalette) et transmet a gbBlitLine()
@@ -96,6 +150,9 @@ bool gbIsLoaded() {
 }
 
 void gbUnload() {
+  if (romLoaded) {
+    gbSaveCartRam();  // avant de liberer cartRam -- voir saveRamPath
+  }
   if (romData != nullptr) {
     heap_caps_free(romData);
     romData = nullptr;
@@ -106,6 +163,7 @@ void gbUnload() {
   }
   romLoaded = false;
   romTitle[0] = '\0';
+  saveRamPath[0] = '\0';
 }
 
 uint8_t gbScanRoms(char names[][kGbRomNameLen]) {
@@ -186,6 +244,15 @@ bool gbLoadRom(const char *filename) {
     cartRam = static_cast<uint8_t *>(heap_caps_malloc(cartRamSize, MALLOC_CAP_SPIRAM));
     if (cartRam != nullptr) {
       memset(cartRam, 0xFF, cartRamSize);
+      // Chemin de sauvegarde = meme nom que la ROM, extension .sav (voir
+      // saveRamPath) -- tronque a la premiere extension trouvee, gere
+      // .gb comme .gbc.
+      snprintf(saveRamPath, sizeof(saveRamPath), "/games/%s", filename);
+      char *dot = strrchr(saveRamPath, '.');
+      if (dot != nullptr) {
+        strcpy(dot, ".sav");
+      }
+      gbLoadCartRamIfPresent();
     } else {
       cartRamSize = 0;  // pas de sauvegarde possible, mais on continue sans planter
     }

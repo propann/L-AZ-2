@@ -165,17 +165,20 @@ pas de carte SD branchee.
 
 ### Ce qu'on supprime (nettoyage, pas de perte fonctionnelle reelle)
 
-- **Page ENCODEURS** : plus aucune source de `MACRO:` depuis l'abandon
-  du Pico -- page morte dans le menu, a retirer (confusion pour rien).
-- **`src_esp32/retro-go-master/`** (Retro-Go vendored) : etudie et
-  ECARTE le 2026-09-14 pour le mode JEUX (ESP-IDF, incompatible avec
-  notre ecran RGB parallele sans un vrai double demarrage -- voir
-  AZ2_EMULATION_JEUX.md). Le dossier prend de la place dans le depot
-  sans etre le chemin retenu (Walnut-CGB) -- a retirer ou archiver
-  ailleurs.
+- ~~**Page ENCODEURS**~~ -- **[FAIT]** retiree le 2026-09-15 (plus
+  aucune source de `MACRO:` depuis l'abandon du Pico).
+- ~~**`src_esp32/retro-go-master/`**~~ (Retro-Go vendored, 134 Mo,
+  1670 fichiers) -- **[FAIT, 2026-09-15]** supprime (`git rm -r`).
+  Etudie et ECARTE le 2026-09-14 pour le mode JEUX (ESP-IDF,
+  incompatible avec notre ecran RGB parallele sans un vrai double
+  demarrage -- voir AZ2_EMULATION_JEUX.md), jamais le chemin retenu
+  (Walnut-CGB). Reste dans l'historique git si jamais utile de le
+  retrouver.
 - **`kHelloKeypad`** dans AZ2_Protocol.h : plus emis par personne depuis
-  l'abandon du Pico -- laisse par prudence mais candidat a la
-  suppression si rien ne le reutilise.
+  l'abandon du Pico -- laisse par prudence (verifie encore le
+  2026-09-15, toujours candidat a la suppression si rien ne le
+  reutilise, mais lie a `src_pico/` garde volontairement pour
+  reference, voir ci-dessous).
 - **`src_pico/`** : deja hors des builds par defaut (voir
   `platformio.ini`), garde uniquement pour reference -- a
   supprimer completement si on est surs de ne jamais y revenir (pour

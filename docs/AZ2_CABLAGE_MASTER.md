@@ -3,8 +3,11 @@
 **Etat au 2026-09-15 : son confirme, ecran+tactile confirmes, lien UART
 ESP32<->Teensy confirme. Le Pico (3e cerveau clavier) et la matrice
 SparkFun 4x4 sont ABANDONNES (voir "Pourquoi le Pico a ete abandonne"
-plus bas) -- remplaces par une croix + 4 boutons + 3 potentiometres
-cables directement sur le Teensy, a cabler/tester.**
+plus bas) -- remplaces par une croix + 4 boutons + 3 encodeurs rotatifs
+(avec bouton integre, pas de simples potentiometres -- voir section 4)
+cables directement sur le Teensy. Les 3 encodeurs sont CABLES et
+TESTES en reel (voir section 4 pour les bugs trouves/corriges) ;
+croix + boutons A-D restent a cabler.**
 
 ## Tableau simple (tout, en un coup d'oeil)
 
@@ -18,7 +21,7 @@ cables directement sur le Teensy, a cabler/tester.**
 | ESP32 (integre) | Tactile SDA/SCL | GPIO40/41 | FT6336U (deja cable usine) | **Confirme**, multi-doigt actif |
 | Teensy | Croix HAUT/BAS/GAUCHE/DROITE | pin 2/3/4/5 | 4 switches | A cabler |
 | Teensy | Boutons A/B/C/D | pin 6/8/9/23 | 4 switches | A cabler |
-| Teensy | Potards 1/2/3 | pin 14/15/16 (A0/A1/A2) | 3 potentiometres | A cabler |
+| Teensy | Encodeurs 1/2/3 (CLK/DT/SW) | pin 14-16 / 17-19 / 22,24,25 | 3 encodeurs rotatifs + bouton | **Cable, teste** |
 | Toutes cartes | GND | - | Masse commune (etoile recommandee) | Confirme fonctionnel |
 
 ## Pourquoi le Pico a ete abandonne (2026-09-14/15)
@@ -128,22 +131,49 @@ Protocole envoye : `NAV:<HAUT/BAS/GAUCHE/DROITE>:DOWN`/`UP` pour la croix,
 switches serviront plus tard de manette pour le mode JEUX (voir
 [AZ2_EMULATION_JEUX.md](AZ2_EMULATION_JEUX.md)).
 
-## 4. Teensy 4.1 -> 3 Potentiometres — A CABLER
+## 4. Teensy 4.1 -> 3 Encodeurs rotatifs (avec bouton) — CABLE, CONFIRME
 
-| Fonction | Teensy pin | Role par defaut |
-| --- | --- | --- |
-| Potard 1 | 14 (A0) | Volume general (bus d'effets maitre) |
-| Potard 2 | 15 (A1) | Reverb (wet) |
-| Potard 3 | 16 (A2) | Delay (wet) |
+**Ce ne sont PAS de simples potentiometres lineaires** -- precise le
+2026-09-15 ("c'est des encodeurs rotatifs avec un bouton") : modules
+incrementaux type EC11/KY-040, 5 broches chacun (GND, +, SW, DT, CLK).
+Plan de cablage FIGE le 2026-09-15 (l'utilisateur a cable dessus,
+premier test reel effectue) :
 
-Cablage potentiometre standard : les 2 pattes externes sur 3.3V et GND,
-le curseur (patte du milieu) sur la broche Teensy. Protocole envoye :
-`POT:<0-2>:<0-127>` (valeur absolue, format compatible MIDI CC), avec
-lissage + seuil de variation pour ne pas spammer -- voir
-`updatePots()`/`applyMasterMix()` dans `src_teensy/az2_audio/main.cpp`.
-Ces 3 potards pilotent DIRECTEMENT le mixeur/bus d'effets deja code
-(reverb/delay ajoutes le 2026-09-14) -- pas besoin de l'ESP32 pour que
-ca marche, effet immediat.
+| Encodeur | Role par defaut | CLK | DT | SW (bouton) |
+| --- | --- | --- | --- | --- |
+| Encodeur 1 | Volume general (bus d'effets maitre) | pin 14 (A0) | pin 15 (A1) | pin 16 (A2) |
+| Encodeur 2 | Reverb (wet) | pin 17 (A3) | pin 18 (A4) | pin 19 (A5) |
+| Encodeur 3 | Delay (wet) | pin 22 | pin 24 (A10) | pin 25 (A11) |
+
+Cablage par encodeur : GND -> masse commune, + -> 3.3V (jamais 5V), puis
+SW/DT/CLK chacun sur sa broche Teensy dediee (tableau ci-dessus). Pas de
+resistance a ajouter, `INPUT_PULLUP` active en interne sur les 9 broches
+(CLK/DT par la lib PJRC `Encoder`, deja fournie par le coeur Teensy ;
+SW par le firmware, meme debounce digital que la croix/boutons A-D).
+
+Rotation -> `POT:<0-2>:<0-127>` (valeur absolue accumulee par cran,
+meme protocole qu'un potard classique -- rien a changer cote
+ESP32/mixeur). Bouton SW -> `ENC:<0-2>:DOWN/UP` (namespace separe de
+`BTN:` pour ne pas percuter le mapping manette A/B/Select/Start du mode
+JEUX) -- pas de fonction musicale assignee, allume le slider
+correspondant a 100% sur la page CONTROLES pendant l'appui (temoin
+visuel de cablage). Voir `updateEncoders()`/`updateEncoderButtons()`
+dans `src_teensy/az2_audio/main.cpp`.
+
+**Bugs reels trouves et corriges au premier test (2026-09-15)** :
+- Rebond electrique/mecanique : sans toucher aux encodeurs, `POT:`
+  derivait en continu de +/-1-2 -- corrige par un filtre de stabilite
+  (`kEncSettleMs`, n'accepte une position que si le brut reste stable
+  au moins 5ms).
+- Sens inverse : tourner a droite faisait baisser la valeur -- corrige
+  en logiciel (`kEncDirection = -1`), pas besoin de recabler.
+- Bouton SW pas du tout affiche cote ESP32 (page CONTROLES ne gerait
+  pas `ENC:`) -- ajoute.
+
+`kEncCountsPerDetent = 4` (transitions de quadrature par cran mecanique,
+valeur typique EC11/KY-040) et `kEncStepPerDetent = 2` (amplitude par
+cran sur l'echelle 0-127) sont ajustables si un cran fait sauter de plus
+ou moins que prevu.
 
 ## 5. Recapitulatif GPIO ESP32-S3 ecran (fixes par la carte, non modifiables)
 
@@ -171,9 +201,12 @@ Source: README officiel VIEWE (voir [AZ2_ECRAN_FACADE.md](AZ2_ECRAN_FACADE.md)).
 | Boutons A/B (2) | 6, 8 |
 | Bouton C | 9 |
 | Boutons D | 23 |
-| Potards 1-3 (A0-A2) | 14, 15, 16 |
+| Encodeur 1 CLK/DT/SW (A0-A2) | 14, 15, 16 |
+| Encodeur 2 CLK/DT/SW (A3-A5) | 17, 18, 19 |
 | LRCK/BCK I2S (DAC) | 20, 21 |
+| Encodeur 3 CLK (A8) | 22 |
 | Libre (reserve SD/SPI futur) | 10, 11, 12, 13 |
+| Encodeur 3 DT/SW (A10/A11) | 24, 25 |
 
 ## Etat d'avancement (2026-09-15)
 
@@ -183,5 +216,5 @@ Source: README officiel VIEWE (voir [AZ2_ECRAN_FACADE.md](AZ2_ECRAN_FACADE.md)).
 | Ecran ESP32 (affichage + tactile) | **Confirme** : intro, menu navigable au doigt, 2 points de contact |
 | UART ESP32 <-> Teensy | **Confirme** (HELLO echange) |
 | Croix + 4 boutons (Teensy) | Firmware pret (`NAV:`/`BTN:`), cablage physique a faire |
-| 3 potentiometres (Teensy) | Firmware pret (`POT:`, pilote volume/reverb/delay), cablage physique a faire |
+| 3 encodeurs rotatifs + bouton (Teensy) | **Cable, teste en reel** (`POT:`/`ENC:`, pilote volume/reverb/delay -- rebond electrique, sens inverse et bouton non affiche trouves et corriges le 2026-09-15, voir section 4) |
 | Pico + matrice + mux LED | **Abandonne** (voir "Pourquoi le Pico a ete abandonne") |

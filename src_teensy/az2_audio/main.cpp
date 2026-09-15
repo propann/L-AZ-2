@@ -17,6 +17,8 @@
 #include <Arduino.h>
 #include <Audio.h>
 #include <AZ2_Protocol.h>
+#include <Encoder.h>
+#include <SD.h>
 #include <synth_dexed.h>
 #include <synth_mda_epiano.h>
 #include <synth_braids.h>
@@ -729,7 +731,6 @@ void reportCpuUsage() {
 // ---------------------------------------------------------------------
 constexpr int kNavUpPin = 2, kNavDownPin = 3, kNavLeftPin = 4, kNavRightPin = 5;
 constexpr int kBtnAPin = 6, kBtnBPin = 8, kBtnCPin = 9, kBtnDPin = 23;
-constexpr int kPotPins[3] = {14, 15, 16};  // A0, A1, A2
 
 constexpr uint32_t kLocalDebounceMs = 15;
 
@@ -754,10 +755,13 @@ DigitalControl localControls[] = {
 };
 constexpr uint8_t kLocalControlCount = sizeof(localControls) / sizeof(localControls[0]);
 
+void setupEncoderButtons();  // definie plus bas avec le reste des encodeurs
+
 void setupLocalControls() {
   for (DigitalControl &c : localControls) {
     pinMode(c.pin, INPUT_PULLUP);
   }
+  setupEncoderButtons();
 }
 
 void updateDigitalControls() {
@@ -781,46 +785,126 @@ void updateDigitalControls() {
   }
 }
 
-// Lissage (moyenne mobile) + seuil de variation minimal + limite de
-// frequence d'envoi, pour ne pas spammer un POT: en boucle. Necessaire y
-// compris potard reellement cable (bruit ADC normal), mais critique tant
-// qu'une broche reste flottante (non cablee) : une entree flottante peut
-// capter du bruit et se balader sur une bonne partie de la plage, pas
-// juste vibrer de +/-1 -- observe reellement le 2026-09-15 (potards pas
-// encore cables, port serie sature de POT: en continu).
-float potSmoothed[3] = {-1.0f, -1.0f, -1.0f};  // -1 = pas encore lu
-uint8_t potLastSent[3] = {255, 255, 255};      // 255 = jamais envoye
-uint32_t potLastSentMs[3] = {};
-constexpr float kPotSmoothingAlpha = 0.05f;   // plus bas = plus lisse (etait 0.2)
-constexpr uint8_t kPotChangeThreshold = 2;     // ignore les variations de 0-1 unite
-constexpr uint32_t kPotMinIntervalMs = 50;     // plafond dur, quel que soit le bruit source
+// Les 3 "potards" sont en realite des encodeurs rotatifs incrementaux
+// avec bouton poussoir integre (type EC11/KY-040), pas de simples
+// potentiometres lineaires -- precise le 2026-09-15 ("c'est des
+// encodeurs rotatifs avec un bouton"). Chaque encodeur = 2 broches en
+// quadrature (CLK/DT, decodees par la lib PJRC Encoder deja fournie
+// par le coeur Teensy -- interruptions materielles, disponibles sur
+// TOUTES les broches du Teensy 4.x, aucune restriction comme sur AVR)
+// + 1 broche SW (bouton, meme debounce digital que la croix/A-D
+// ci-dessus). Voir AZ2_CABLAGE_MASTER.md pour le tableau de brochage
+// complet.
+constexpr int kEncClkPins[3] = {14, 17, 22};  // A0, A3, A8
+constexpr int kEncDtPins[3] = {15, 18, 24};   // A1, A4, A10
+constexpr int kEncSwPins[3] = {16, 19, 25};   // A2, A5, A11
 
-void updatePots() {
+Encoder rotaryEncoders[3] = {
+    Encoder(kEncClkPins[0], kEncDtPins[0]),
+    Encoder(kEncClkPins[1], kEncDtPins[1]),
+    Encoder(kEncClkPins[2], kEncDtPins[2]),
+};
+
+struct EncoderButton {
+  uint8_t index;
+  int pin;
+  bool state = false;
+  bool lastRaw = false;
+  uint32_t lastChangeMs = 0;
+};
+
+EncoderButton encoderButtons[3] = {
+    {0, kEncSwPins[0]},
+    {1, kEncSwPins[1]},
+    {2, kEncSwPins[2]},
+};
+
+void setupEncoderButtons() {
+  for (EncoderButton &b : encoderButtons) {
+    pinMode(b.pin, INPUT_PULLUP);
+  }
+}
+
+// Le clic n'a pas de fonction musicale assignee pour l'instant -- juste
+// transmis (ENC:<0-2>:DOWN/UP, voir AZ2_Protocol.h), meme principe que
+// BTN:C/BTN:D deja libres pour un usage futur.
+void updateEncoderButtons() {
+  const uint32_t now = millis();
+  for (EncoderButton &b : encoderButtons) {
+    const bool raw = digitalRead(b.pin) == LOW;  // pull-up : appuye = LOW
+    if (raw != b.lastRaw) {
+      b.lastRaw = raw;
+      b.lastChangeMs = now;
+    }
+    if ((now - b.lastChangeMs) >= kLocalDebounceMs && raw != b.state) {
+      b.state = raw;
+      az2::printEnc(Serial, b.index, raw);
+      az2::printEnc(Serial1, b.index, raw);
+    }
+  }
+}
+
+// La lib Encoder compte generalement 4 transitions par cran mecanique
+// sur les modules EC11/KY-040 courants -- kEncCountsPerDetent divise ce
+// brut en "crans" ; kEncStepPerDetent est l'amplitude (sur 0-127)
+// ajoutee/retiree par cran. kEncDirection inverse le sens si besoin --
+// premier test reel le 2026-09-15 ("les potentiometres doivent
+// fonctionner dans l'autre sens") : tourner a droite faisait baisser la
+// valeur avec kEncClkPins/kEncDtPins tels que cables -- corrige ici en
+// logiciel plutot que d'inverser CLK/DT au fer a souder.
+constexpr int32_t kEncCountsPerDetent = 4;
+constexpr int32_t kEncStepPerDetent = 2;
+constexpr int32_t kEncDirection = -1;
+
+// BUG REEL trouve le 2026-09-15 (encodeurs cables, premier test) : sans
+// toucher aux encodeurs, POT:0-2 derivait en continu de +/-1-2 unites
+// (rebond electrique/mecanique typique des encodeurs bon marche --
+// chaque micro-rebond sur CLK/DT est une "vraie" transition de
+// quadrature pour la lib Encoder, donc compte comme un mini-mouvement).
+// Fix : n'accepter une nouvelle position que si le brut est reste
+// STABLE au moins kEncSettleMs -- un vrai cran humain reste en place
+// bien plus longtemps que ca, un rebond electrique non.
+int32_t encLastDetents[3] = {0, 0, 0};       // derniere position ACCEPTEE
+int32_t encPendingDetents[3] = {0, 0, 0};    // derniere position BRUTE vue
+uint32_t encPendingSinceMs[3] = {0, 0, 0};   // depuis quand le brut est a cette valeur
+constexpr uint32_t kEncSettleMs = 5;
+
+uint8_t encValue[3] = {100, 0, 0};  // valeurs de depart : volume audible, effets a 0
+uint8_t potLastSent[3] = {255, 255, 255};  // 255 = jamais envoye
+uint32_t potLastSentMs[3] = {};
+// Evenements discrets (un cran = un delta net), pas de bruit ADC a
+// lisser comme avec de vrais potards -- limite courte, juste pour eviter
+// de saturer le port serie sur une rotation tres rapide.
+constexpr uint32_t kPotMinIntervalMs = 20;
+
+void updateEncoders() {
   const uint32_t now = millis();
   for (uint8_t i = 0; i < 3; ++i) {
-    const float raw = static_cast<float>(analogRead(kPotPins[i]));  // 0-1023
-    if (potSmoothed[i] < 0.0f) {
-      potSmoothed[i] = raw;  // premiere lecture : pas de lissage
-    } else {
-      potSmoothed[i] += (raw - potSmoothed[i]) * kPotSmoothingAlpha;
+    const int32_t rawDetents = rotaryEncoders[i].read() / kEncCountsPerDetent;
+    if (rawDetents != encPendingDetents[i]) {
+      encPendingDetents[i] = rawDetents;
+      encPendingSinceMs[i] = now;
+    }
+    if (rawDetents != encLastDetents[i] && (now - encPendingSinceMs[i]) >= kEncSettleMs) {
+      const int32_t delta = (rawDetents - encLastDetents[i]) * kEncDirection;
+      encLastDetents[i] = rawDetents;
+      const int32_t next = static_cast<int32_t>(encValue[i]) + delta * kEncStepPerDetent;
+      encValue[i] = static_cast<uint8_t>(constrain(next, 0, 127));
     }
 
-    const uint8_t value = static_cast<uint8_t>(constrain(potSmoothed[i] / 1023.0f * 127.0f, 0.0f, 127.0f));
-    const uint8_t lastSent = potLastSent[i];
-    const uint8_t delta = value > lastSent ? static_cast<uint8_t>(value - lastSent) : static_cast<uint8_t>(lastSent - value);
-    if (lastSent != 255 && delta < kPotChangeThreshold) {
+    if (encValue[i] == potLastSent[i]) {
       continue;
     }
     if (now - potLastSentMs[i] < kPotMinIntervalMs) {
       continue;
     }
-    potLastSent[i] = value;
+    potLastSent[i] = encValue[i];
     potLastSentMs[i] = now;
 
-    az2::printPot(Serial, i, value);
-    az2::printPot(Serial1, i, value);
+    az2::printPot(Serial, i, encValue[i]);
+    az2::printPot(Serial1, i, encValue[i]);
 
-    const float unit = static_cast<float>(value) / 127.0f;
+    const float unit = static_cast<float>(encValue[i]) / 127.0f;
     switch (i) {
       case 0: masterVolume = unit; break;
       case 1: reverbWet = unit; break;
@@ -832,7 +916,8 @@ void updatePots() {
 
 void updateLocalControls() {
   updateDigitalControls();
-  updatePots();
+  updateEncoders();
+  updateEncoderButtons();
 }
 
 // ---------------------------------------------------------------------
@@ -995,6 +1080,26 @@ void readSerialCommands() {
 // Verifie que la/les puce(s) PSRAM soudees sont bien detectees et
 // utilisables (ecriture/lecture reelle, pas juste la taille annoncee au
 // boot). Imprime le resultat sur les 3 flux -- voir docs/AZ2_SAMPLEUR.md.
+// Carte SD integree au Teensy 4.1 (slot physique sur la carte, pas de
+// cablage requis -- voir docs/AZ2_FEUILLE_DE_ROUTE_MOTEUR.md etape 6,
+// "sampleur reel, une fois une carte SD presente sur le Teensy").
+// Utilisee pour stocker les samples captures depuis l'emulateur GB
+// (demande 2026-09-15, "les samples se rangent direct dans la sd du
+// teensy") -- distincte de la carte SD de l'ESP32 (qui garde les ROM).
+// Echec propre attendu tant qu'aucune carte n'est inseree.
+void setupSampleSd() {
+  if (SD.begin(BUILTIN_SDCARD)) {
+    const uint32_t sizeMb = static_cast<uint32_t>(SD.totalSize() / (1024ULL * 1024ULL));
+    Serial.print("SDTEENSY:READY:size_mb=");
+    Serial.println(sizeMb);
+    Serial1.print("SDTEENSY:READY:size_mb=");
+    Serial1.println(sizeMb);
+  } else {
+    Serial.println("SDTEENSY:NOT_PRESENT");
+    Serial1.println("SDTEENSY:NOT_PRESENT");
+  }
+}
+
 void checkPsram() {
   Serial.print("AZ2:PSRAM:detected_mb=");
   Serial.println(external_psram_size);
@@ -1079,6 +1184,7 @@ void setup() {
   applyMasterMix();
 
   setupLocalControls();
+  setupSampleSd();
 
   checkPsram();
 

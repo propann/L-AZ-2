@@ -251,69 +251,161 @@ bool hitBack(int16_t x, int16_t y) {
 }
 
 // ---------------------------------------------------------------------
-// Page Menu
+// Page Menu -- reorganisee en 4 cadres (MUSIQUE/JEUX/CONFIG/DOC) le
+// 2026-09-15 ("on est trop charge, on fait 4 cadre reglage avec tout ce
+// qui est config musique jeux doc") : la liste plate de 8 entrees
+// devenait dense a l'ecran et a la croix. Deux niveaux : une grille de
+// 4 cartes (categories), puis la sous-liste habituelle (meme style que
+// l'ancien menu plat) une fois une categorie choisie.
 // ---------------------------------------------------------------------
+enum class MenuCat : uint8_t { Musique, Jeux, Config, Doc };
+constexpr uint8_t kMenuCatCount = 4;
+
+struct CategoryInfo {
+  const char *label;
+  const char *hint;
+};
+
+constexpr CategoryInfo kCategories[kMenuCatCount] = {
+    {"MUSIQUE", "sequenceur, moteurs, audio"},
+    {"JEUX", "emulateur Game Boy / GBC"},
+    {"CONFIG", "reglages, croix/boutons"},
+    {"DOC", "journal serie, a propos"},
+};
+
 struct MenuItem {
   const char *label;
   const char *hint;
   Screen target;
+  MenuCat category;
 };
 
 constexpr MenuItem kMenuItems[] = {
-    {"SEQUENCEUR", "programmer les 16 pas", Screen::Sequencer},
-    {"MOTEURS", "moteur + patch par piste", Screen::Engines},
-    {"CONTROLES", "croix + boutons + potards (Teensy)", Screen::Controls},
-    {"AUDIO", "jouer le Teensy depuis l'ecran", Screen::Audio},
-    {"JEUX", "Game Boy / GBC (ROM sur carte SD)", Screen::Retro},
-    {"CONFIGURATION", "ecran de veille, reglages", Screen::Config},
-    {"LIENS SERIE", "journal ESP32 / Teensy", Screen::Links},
-    {"A PROPOS", "version, roles, build", Screen::About},
+    {"SEQUENCEUR", "programmer les 16 pas", Screen::Sequencer, MenuCat::Musique},
+    {"MOTEURS", "moteur + patch par piste", Screen::Engines, MenuCat::Musique},
+    {"AUDIO", "jouer le Teensy depuis l'ecran", Screen::Audio, MenuCat::Musique},
+    {"JEUX", "Game Boy / GBC (ROM sur carte SD)", Screen::Retro, MenuCat::Jeux},
+    {"CONFIGURATION", "ecran de veille, reglages", Screen::Config, MenuCat::Config},
+    {"CONTROLES", "croix + boutons + potards (Teensy)", Screen::Controls, MenuCat::Config},
+    {"LIENS SERIE", "journal ESP32 / Teensy", Screen::Links, MenuCat::Doc},
+    {"A PROPOS", "version, roles, build", Screen::About, MenuCat::Doc},
 };
 constexpr uint8_t kMenuItemCount = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
 
+// Remplit out[] (capacite >= kMenuItemCount) avec les index (dans
+// kMenuItems) des entrees de la categorie cat, renvoie le compte.
+uint8_t categoryItems(MenuCat cat, uint8_t *out) {
+  uint8_t count = 0;
+  for (uint8_t i = 0; i < kMenuItemCount; ++i) {
+    if (kMenuItems[i].category == cat) {
+      out[count++] = i;
+    }
+  }
+  return count;
+}
+
+// -1 = grille des 4 categories (accueil du menu), 0-3 = sous-liste de
+// la categorie choisie. Remis a -1 a chaque entree sur Screen::Menu
+// depuis un autre ecran (voir goTo()) -- toujours revenir a l'accueil.
+int8_t menuCategory = -1;
+// Ligne/carte survolee par la croix (voir NAV: dans handleTeensyLine())
+// -- demande 2026-09-15 ("il faut que ca serve dans les menus") : la
+// croix + le bouton A pilotent le menu, pas seulement le tactile.
+int8_t menuSelected = 0;
+
 constexpr int16_t kMenuLeft = 48;
 constexpr int16_t kMenuTop = 130;
-// 34 (au lieu de 39) depuis l'ajout de CONFIGURATION -- 9 entrees doivent
-// tenir avant la barre d'etat en bas d'ecran (kStatusY).
+// 34 (au lieu de 39) depuis l'ajout de CONFIGURATION -- une sous-liste
+// (3 entrees max par categorie) doit tenir avant la barre d'etat.
 constexpr int16_t kMenuRowH = 34;
 constexpr int16_t kMenuWidth = kScreenSize - 2 * kMenuLeft;
 
-void drawMenuRow(uint8_t index) {
-  const int16_t y = kMenuTop + index * kMenuRowH;
+// Grille 2x2 des 4 cartes de categorie.
+constexpr int16_t kCatTop = 110;
+constexpr int16_t kCatGap = 16;
+constexpr int16_t kCatW = (kScreenSize - 2 * kMargin - kCatGap) / 2;
+constexpr int16_t kCatH = (kStatusY - kCatTop - kCatGap - 24) / 2;
+
+void catRect(uint8_t index, int16_t &x, int16_t &y) {
+  x = static_cast<int16_t>(kMargin + (index % 2) * (kCatW + kCatGap));
+  y = static_cast<int16_t>(kCatTop + (index / 2) * (kCatH + kCatGap));
+}
+
+void drawCategoryCard(uint8_t index) {
+  int16_t x, y;
+  catRect(index, x, y);
   const uint16_t accent = kPalette[index % kPaletteCount];
-  gfx->drawRect(kMenuLeft, y, kMenuWidth, kMenuRowH - 6, accent);
-  gfx->setTextColor(RGB565_WHITE);
-  gfx->setTextSize(2);
-  gfx->setCursor(kMenuLeft + 14, y + 2);
-  gfx->print(kMenuItems[index].label);
+  const bool selected = (index == menuSelected);
+  gfx->fillRect(x, y, kCatW, kCatH, selected ? accent : RGB565_BLACK);
+  gfx->drawRect(x, y, kCatW, kCatH, accent);
+  gfx->setTextSize(3);
+  gfx->setTextColor(selected ? RGB565_BLACK : RGB565_WHITE);
+  gfx->setCursor(static_cast<int16_t>(x + 14), static_cast<int16_t>(y + kCatH / 2 - 24));
+  gfx->print(kCategories[index].label);
   gfx->setTextSize(1);
-  gfx->setTextColor(kDim);
-  gfx->setCursor(kMenuLeft + 14, y + 20);
-  gfx->print(kMenuItems[index].hint);
+  gfx->setTextColor(selected ? RGB565_BLACK : kDim);
+  gfx->setCursor(static_cast<int16_t>(x + 14), static_cast<int16_t>(y + kCatH / 2 + 6));
+  gfx->print(kCategories[index].hint);
+}
+
+void drawMenuSubRow(uint8_t rowIndex, uint8_t itemIndex) {
+  const int16_t y = static_cast<int16_t>(kMenuTop + rowIndex * kMenuRowH);
+  const uint16_t accent = kPalette[itemIndex % kPaletteCount];
+  const bool selected = (rowIndex == menuSelected);
+  gfx->fillRect(kMenuLeft, y, kMenuWidth, kMenuRowH - 6, selected ? accent : RGB565_BLACK);
+  gfx->drawRect(kMenuLeft, y, kMenuWidth, kMenuRowH - 6, accent);
+  gfx->setTextColor(selected ? RGB565_BLACK : RGB565_WHITE);
+  gfx->setTextSize(2);
+  gfx->setCursor(static_cast<int16_t>(kMenuLeft + 14), static_cast<int16_t>(y + 2));
+  gfx->print(kMenuItems[itemIndex].label);
+  gfx->setTextSize(1);
+  gfx->setTextColor(selected ? RGB565_BLACK : kDim);
+  gfx->setCursor(static_cast<int16_t>(kMenuLeft + 14), static_cast<int16_t>(y + 20));
+  gfx->print(kMenuItems[itemIndex].hint);
 }
 
 void drawMenu() {
-  gfx->fillScreen(RGB565_BLACK);
-  gfx->setTextColor(RGB565_WHITE);
-  gfx->setTextSize(3);
-  gfx->setCursor(kMenuLeft, 48);
-  gfx->print("AZ-2");
-  gfx->setTextSize(1);
-  gfx->setTextColor(kDim);
-  gfx->setCursor(kMenuLeft + 90, 60);
-  gfx->print("MENU DE TEST");
-  gfx->drawFastHLine(kMenuLeft, 96, kMenuWidth, kFaint);
-  for (uint8_t i = 0; i < kMenuItemCount; ++i) {
-    drawMenuRow(i);
+  if (menuCategory < 0) {
+    gfx->fillScreen(RGB565_BLACK);
+    gfx->setTextColor(RGB565_WHITE);
+    gfx->setTextSize(3);
+    gfx->setCursor(kMargin, 48);
+    gfx->print("AZ-2");
+    gfx->setTextSize(1);
+    gfx->setTextColor(kDim);
+    gfx->setCursor(static_cast<int16_t>(kMargin + 90), 60);
+    gfx->print("CHOISIS UNE SECTION");
+    gfx->drawFastHLine(kMargin, 96, kScreenSize - 2 * kMargin, kFaint);
+    for (uint8_t i = 0; i < kMenuCatCount; ++i) {
+      drawCategoryCard(i);
+    }
+    drawLinkStatus();
+  } else {
+    drawSubHeader(kCategories[menuCategory].label, kPalette[menuCategory % kPaletteCount]);
+    uint8_t items[kMenuItemCount];
+    const uint8_t count = categoryItems(static_cast<MenuCat>(menuCategory), items);
+    for (uint8_t i = 0; i < count; ++i) {
+      drawMenuSubRow(i, items[i]);
+    }
   }
-  drawLinkStatus();
 }
 
-int8_t hitTestMenuRow(int16_t x, int16_t y) {
+int8_t hitTestCategoryCard(int16_t x, int16_t y) {
+  for (uint8_t i = 0; i < kMenuCatCount; ++i) {
+    int16_t cx, cy;
+    catRect(i, cx, cy);
+    if (x >= cx && x < cx + kCatW && y >= cy && y < cy + kCatH) {
+      return static_cast<int8_t>(i);
+    }
+  }
+  return -1;
+}
+
+int8_t hitTestMenuSubRow(int16_t x, int16_t y, uint8_t count) {
   if (x < kMenuLeft || x > kMenuLeft + kMenuWidth) {
     return -1;
   }
-  for (uint8_t i = 0; i < kMenuItemCount; ++i) {
+  for (uint8_t i = 0; i < count; ++i) {
     const int16_t rowTop = kMenuTop + i * kMenuRowH;
     if (y >= rowTop && y < rowTop + (kMenuRowH - 6)) {
       return static_cast<int8_t>(i);
@@ -348,6 +440,10 @@ void padCellRect(uint8_t pad, int16_t &x, int16_t &y) {
 bool navState[4] = {};  // 0=HAUT 1=BAS 2=GAUCHE 3=DROITE
 bool btnState[4] = {};  // 0=A 1=B 2=C 3=D
 uint8_t potValue[3] = {};
+// Bouton poussoir integre a chaque encodeur rotatif (ENC:0-2, voir
+// AZ2_Protocol.h) -- ajoute le 2026-09-15, absent du premier cablage
+// (potards simples n'avaient pas de bouton).
+bool encSwState[3] = {};
 
 constexpr int16_t kNavBox = 56;
 constexpr int16_t kNavGap = 4;
@@ -403,6 +499,13 @@ constexpr int16_t kPotBarH = 26;
 constexpr int16_t kPotBarTop = 340;
 constexpr int16_t kPotBarGap = 30;
 
+// Bouton poussoir integre a l'encodeur (ENC:0-2, voir AZ2_Protocol.h) --
+// pas de fonction musicale assignee, le temoin visuel EST le slider
+// entier qui s'allume au complet pendant l'appui (demande 2026-09-15,
+// "il faut que ca allume le slider complet"), plutot qu'un petit
+// indicateur separe difficile a voir. encSwState[index] est lu
+// directement par drawPotBar() ci-dessous ; appeler drawPotBar() suffit
+// pour rafraichir l'affichage du clic, pas de fonction dediee.
 void drawPotBar(uint8_t index) {
   const int16_t y = static_cast<int16_t>(kPotBarTop + index * (kPotBarH + kPotBarGap));
   static const char *const kLabels[3] = {"POT 1 - VOLUME", "POT 2 - REVERB", "POT 3 - DELAY"};
@@ -418,7 +521,12 @@ void drawPotBar(uint8_t index) {
 
   gfx->fillRect(kPotBarX, y, kPotBarW, kPotBarH, RGB565_BLACK);
   gfx->drawRect(kPotBarX, y, kPotBarW, kPotBarH, kFaint);
-  const int16_t fillW = static_cast<int16_t>(static_cast<float>(potValue[index]) / 127.0f * (kPotBarW - 4));
+  // Bouton presse : slider allume a 100% quelle que soit la position
+  // reelle du potard (temoin visuel du clic). Sinon, remplissage
+  // proportionnel normal a la valeur.
+  const int16_t fillW = encSwState[index]
+                             ? static_cast<int16_t>(kPotBarW - 4)
+                             : static_cast<int16_t>(static_cast<float>(potValue[index]) / 127.0f * (kPotBarW - 4));
   if (fillW > 0) {
     gfx->fillRect(static_cast<int16_t>(kPotBarX + 2), static_cast<int16_t>(y + 2), fillW,
                   static_cast<int16_t>(kPotBarH - 4), kPalette[index % kPaletteCount]);
@@ -1043,6 +1151,14 @@ void goTo(Screen s) {
     gbUnload();
   }
 
+  // Revenir sur le menu depuis un autre ecran retombe toujours sur la
+  // grille des 4 categories, jamais au milieu d'une sous-liste --
+  // simple, pas d'etat perime a gerer (voir la page Menu plus haut).
+  if (s == Screen::Menu) {
+    menuCategory = -1;
+    menuSelected = 0;
+  }
+
   currentScreen = s;
   drawScreen(s);
 }
@@ -1088,6 +1204,42 @@ void handleTeensyLine(const String &line) {
         if (currentScreen == Screen::Retro) {
           gbSetButton(static_cast<GbButton>(index), pressed);
         }
+        // Menu principal : la croix deplace la selection surlignee --
+        // demande 2026-09-15 ("il faut que ca serve dans les menus"),
+        // confirmer avec BTN:A (voir plus bas). Grille de categories
+        // (menuCategory<0) : les 4 directions naviguent le 2x2. Sous-
+        // liste (menuCategory>=0) : HAUT/BAS parcourent la liste,
+        // GAUCHE revient a la grille.
+        if (pressed && currentScreen == Screen::Menu) {
+          if (menuCategory < 0) {
+            const int8_t previous = menuSelected;
+            switch (index) {
+              case 0: if (menuSelected >= 2) menuSelected -= 2; break;               // HAUT
+              case 1: if (menuSelected < 2) menuSelected += 2; break;                // BAS
+              case 2: if (menuSelected % 2 == 1) menuSelected -= 1; break;           // GAUCHE
+              case 3: if (menuSelected % 2 == 0) menuSelected += 1; break;           // DROITE
+            }
+            if (menuSelected != previous) {
+              drawCategoryCard(static_cast<uint8_t>(previous));
+              drawCategoryCard(static_cast<uint8_t>(menuSelected));
+            }
+          } else if (index == 0 || index == 1) {
+            uint8_t items[kMenuItemCount];
+            const uint8_t count = categoryItems(static_cast<MenuCat>(menuCategory), items);
+            const int8_t previous = menuSelected;
+            if (index == 0) {
+              menuSelected = static_cast<int8_t>((menuSelected == 0) ? count - 1 : menuSelected - 1);
+            } else {
+              menuSelected = static_cast<int8_t>((menuSelected + 1) % count);
+            }
+            drawMenuSubRow(static_cast<uint8_t>(previous), items[previous]);
+            drawMenuSubRow(static_cast<uint8_t>(menuSelected), items[menuSelected]);
+          } else if (index == 2) {
+            menuCategory = -1;
+            menuSelected = 0;
+            drawMenu();
+          }
+        }
         // Sur la page SEQUENCEUR, HAUT/BAS transpose la note du dernier
         // pas touche (voir selectedSeqTrack/Step) -- demande le
         // 2026-09-15 ("prend le sequenceur du dexed touch"), reutilise
@@ -1120,9 +1272,40 @@ void handleTeensyLine(const String &line) {
         drawBtnBox(static_cast<uint8_t>(index));
       }
       // Page JEUX : A/B/C/D -> boutons Game Boy A/B/SELECT/START.
+      const bool inGbGame = (currentScreen == Screen::Retro && gbIsLoaded());
       if (currentScreen == Screen::Retro) {
         static const GbButton kGbMap[4] = {GbButton::A, GbButton::B, GbButton::Select, GbButton::Start};
         gbSetButton(kGbMap[index], pressed);
+      }
+      // Menu principal : A confirme la selection surlignee par la
+      // croix (voir menuSelected ci-dessus) -- demande 2026-09-15.
+      // Grille de categories -> entre dans la categorie ; sous-liste ->
+      // ouvre la page choisie (comme un tap tactile).
+      if (pressed && letter == 'A' && currentScreen == Screen::Menu) {
+        if (menuCategory < 0) {
+          menuCategory = menuSelected;
+          menuSelected = 0;
+          drawMenu();
+        } else {
+          uint8_t items[kMenuItemCount];
+          const uint8_t count = categoryItems(static_cast<MenuCat>(menuCategory), items);
+          if (menuSelected < count) {
+            goTo(kMenuItems[items[menuSelected]].target);
+          }
+        }
+      }
+      // Dans une sous-liste du menu : B revient a la grille de
+      // categories (pas besoin de ressortir de Screen::Menu).
+      if (pressed && letter == 'B' && currentScreen == Screen::Menu && menuCategory >= 0) {
+        menuCategory = -1;
+        menuSelected = 0;
+        drawMenu();
+      }
+      // Partout ailleurs (sauf en pleine partie GB, ou B est le bouton
+      // B du jeu) : B revient au menu -- convention manette classique,
+      // meme demande ("il faut que ca serve dans les menus").
+      if (pressed && letter == 'B' && currentScreen != Screen::Menu && !inGbGame) {
+        goTo(Screen::Menu);
       }
     }
   } else if (line.startsWith("POT:")) {
@@ -1133,6 +1316,27 @@ void handleTeensyLine(const String &line) {
       const uint8_t value = static_cast<uint8_t>(line.substring(secondColon + 1).toInt());
       if (index < 3) {
         potValue[index] = value;
+        if (currentScreen == Screen::Controls && !screensaverActive) {
+          drawPotBar(index);
+        }
+      }
+    }
+  } else if (line.startsWith("ENC:")) {
+    // Bouton poussoir integre a l'encodeur (voir AZ2_Protocol.h) --
+    // pas de fonction musicale assignee, juste un temoin visuel : allume
+    // le slider POT correspondant a 100% sur la page CONTROLES pendant
+    // l'appui (voir drawPotBar()).
+    const int firstColon = line.indexOf(':');
+    const int secondColon = line.indexOf(':', firstColon + 1);
+    if (firstColon >= 0 && secondColon >= 0) {
+      const uint8_t index = static_cast<uint8_t>(line.substring(firstColon + 1, secondColon).toInt());
+      const bool pressed = line.endsWith("DOWN");
+      if (index < 3) {
+        noteActivity();
+        if (screensaverActive) {
+          screensaverExit();
+        }
+        encSwState[index] = pressed;
         if (currentScreen == Screen::Controls && !screensaverActive) {
           drawPotBar(index);
         }
@@ -1404,9 +1608,27 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
   if (currentScreen != Screen::Menu && hitBack(x, y)) {
     goTo(Screen::Menu);
   } else if (currentScreen == Screen::Menu) {
-    const int8_t hit = hitTestMenuRow(x, y);
-    if (hit >= 0) {
-      goTo(kMenuItems[hit].target);
+    if (menuCategory < 0) {
+      const int8_t hit = hitTestCategoryCard(x, y);
+      if (hit >= 0) {
+        menuCategory = hit;
+        menuSelected = 0;
+        drawMenu();
+      }
+    } else if (hitBack(x, y)) {
+      // "< CATEGORIE" en haut a gauche (voir drawSubHeader) -> retour a
+      // la grille, meme zone tactile que le retour au menu habituel.
+      menuCategory = -1;
+      menuSelected = 0;
+      drawMenu();
+    } else {
+      uint8_t items[kMenuItemCount];
+      const uint8_t count = categoryItems(static_cast<MenuCat>(menuCategory), items);
+      const int8_t hit = hitTestMenuSubRow(x, y, count);
+      if (hit >= 0) {
+        menuSelected = hit;  // garde la croix synchronisee avec le dernier choix tactile
+        goTo(kMenuItems[items[hit]].target);
+      }
     }
   } else if (currentScreen == Screen::Audio) {
     const int8_t pad = hitTestAudioPad(x, y);

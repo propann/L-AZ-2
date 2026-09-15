@@ -112,12 +112,28 @@ inline void printBtn(Print &out, char button, bool pressed) {
 
 // Potentiometre : valeur ABSOLUE (pas un delta comme printMacro/l'ancien
 // encodeur Pico) -- 0-127, format compatible MIDI CC en vue d'une
-// eventuelle sortie MIDI plus tard.
+// eventuelle sortie MIDI plus tard. Depuis le 2026-09-15, les 3
+// "potards" sont en realite des encodeurs rotatifs incrementaux (voir
+// AZ2_CABLAGE_MASTER.md) -- POT: reste le meme protocole (valeur
+// absolue accumulee cote Teensy a chaque cran), rien a changer cote
+// ESP32/consommateurs de ce message.
 inline void printPot(Print &out, uint8_t index, uint8_t value) {
   out.print("POT:");
   out.print(index);
   out.print(':');
   out.println(value);
+}
+
+// Bouton poussoir integre a chaque encodeur rotatif (voir
+// AZ2_CABLAGE_MASTER.md) -- namespace separe de BTN: (croix/A-D) pour ne
+// pas entrer en collision avec le mapping manette du mode JEUX
+// (GbButton::A/B/Select/Start, voir AZ2_EMULATION_JEUX.md). Pas de
+// fonction musicale assignee pour l'instant, juste transmis -- meme
+// principe que BTN:C/BTN:D, libres pour un usage futur.
+inline void printEnc(Print &out, uint8_t index, bool pressed) {
+  out.print("ENC:");
+  out.print(index);
+  out.println(pressed ? ":DOWN" : ":UP");
 }
 
 inline void printPattern(Print &out, uint8_t pattern) {
