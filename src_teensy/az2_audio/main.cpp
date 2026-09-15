@@ -326,9 +326,13 @@ void relayLine(const String &line) {
 // ---------------------------------------------------------------------
 // Sequenceur : 16 pas x 4 pistes, une note fixe par piste pour l'instant.
 // ---------------------------------------------------------------------
+// Note PAR PAS (comme MicroDexed-touch: seq.note_data[pattern][step],
+// voir sequencer.cpp) -- demande le 2026-09-15 ("prend le sequenceur du
+// dexed touch"), remplace l'ancienne note unique fixe par piste (v0).
 struct SequencerTrack {
   bool stepOn[kStepCount] = {};
-  uint8_t note = 60;
+  uint8_t stepNote[kStepCount] = {};  // seede par seedDefaultNotes()
+  uint8_t playingNote = 0;  // note reellement tenue, pour l'extinction correcte
   bool stepPlaying = false;
 };
 SequencerTrack seqTracks[kTrackCount];
@@ -356,13 +360,15 @@ volatile uint16_t currentBar = 1;
 volatile bool clockPending = false;
 
 void seedDefaultNotes() {
-  // Accord de depart different par piste, juste pour avoir quelque chose
-  // d'audible des le premier test (a remplacer par une vraie edition de
-  // note par pas plus tard).
-  // C3,G3,C4,E4 puis la meme chose une octave au-dessus pour les pistes 4-7.
+  // Accord de depart different par piste (tous les pas a la meme note au
+  // demarrage), juste pour avoir quelque chose d'audible avant edition --
+  // chaque pas est ensuite modifiable individuellement via NOTE:, voir
+  // handleNoteCommand(). C3,G3,C4,E4 puis une octave au-dessus pour 4-7.
   static const uint8_t kDefaultNotes[kTrackCount] = {48, 55, 60, 64, 60, 67, 72, 76};
   for (uint8_t t = 0; t < kTrackCount; ++t) {
-    seqTracks[t].note = kDefaultNotes[t];
+    for (uint8_t s = 0; s < kStepCount; ++s) {
+      seqTracks[t].stepNote[s] = kDefaultNotes[t];
+    }
   }
 }
 
@@ -429,7 +435,7 @@ void trackNoteOff(uint8_t track, uint8_t note) {
 void allTrackNotesOff() {
   for (uint8_t t = 0; t < kTrackCount; ++t) {
     if (seqTracks[t].stepPlaying) {
-      trackNoteOff(t, seqTracks[t].note);
+      trackNoteOff(t, seqTracks[t].playingNote);
       seqTracks[t].stepPlaying = false;
     }
   }
@@ -449,7 +455,9 @@ void advanceSequencer() {
 
   for (uint8_t t = 0; t < kTrackCount; ++t) {
     if (seqTracks[t].stepOn[currentStep]) {
-      trackNoteOn(t, seqTracks[t].note, 100);
+      const uint8_t note = seqTracks[t].stepNote[currentStep];
+      trackNoteOn(t, note, 100);
+      seqTracks[t].playingNote = note;
       seqTracks[t].stepPlaying = true;
     }
   }
@@ -498,6 +506,29 @@ void handleStepCommand(const String &line) {
 
   seqTracks[track].stepOn[step] = on;
   relayLine(line);  // confirme tel quel, utile pour que l'UI ESP32 se resynchronise
+}
+
+// NOTE:<piste>:<pas>:<note MIDI 0-127> -- edition de note par pas (voir
+// SequencerTrack::stepNote), independante de STEP: (on/off). Portee de
+// MicroDexed-touch (seq.note_data[pattern][step], voir sequencer.cpp).
+void handleNoteCommand(const String &line) {
+  const int idx1 = line.indexOf(':');
+  const int idx2 = line.indexOf(':', idx1 + 1);
+  const int idx3 = line.indexOf(':', idx2 + 1);
+  if (idx1 < 0 || idx2 < 0 || idx3 < 0) {
+    return;
+  }
+
+  const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+  const uint8_t step = static_cast<uint8_t>(line.substring(idx2 + 1, idx3).toInt());
+  const int note = line.substring(idx3 + 1).toInt();
+
+  if (track >= kTrackCount || step >= kStepCount || note < 0 || note > 127) {
+    return;
+  }
+
+  seqTracks[track].stepNote[step] = static_cast<uint8_t>(note);
+  relayLine(line);
 }
 
 // BPM:<valeur, 30-300>
@@ -704,13 +735,22 @@ void updateDigitalControls() {
   }
 }
 
-// Lissage simple (moyenne mobile) + seuil de variation minimal, pour ne
-// pas spammer un POT: a chaque micro-vibration de l'ADC.
+// Lissage (moyenne mobile) + seuil de variation minimal + limite de
+// frequence d'envoi, pour ne pas spammer un POT: en boucle. Necessaire y
+// compris potard reellement cable (bruit ADC normal), mais critique tant
+// qu'une broche reste flottante (non cablee) : une entree flottante peut
+// capter du bruit et se balader sur une bonne partie de la plage, pas
+// juste vibrer de +/-1 -- observe reellement le 2026-09-15 (potards pas
+// encore cables, port serie sature de POT: en continu).
 float potSmoothed[3] = {-1.0f, -1.0f, -1.0f};  // -1 = pas encore lu
 uint8_t potLastSent[3] = {255, 255, 255};      // 255 = jamais envoye
-constexpr float kPotSmoothingAlpha = 0.2f;
+uint32_t potLastSentMs[3] = {};
+constexpr float kPotSmoothingAlpha = 0.05f;   // plus bas = plus lisse (etait 0.2)
+constexpr uint8_t kPotChangeThreshold = 2;     // ignore les variations de 0-1 unite
+constexpr uint32_t kPotMinIntervalMs = 50;     // plafond dur, quel que soit le bruit source
 
 void updatePots() {
+  const uint32_t now = millis();
   for (uint8_t i = 0; i < 3; ++i) {
     const float raw = static_cast<float>(analogRead(kPotPins[i]));  // 0-1023
     if (potSmoothed[i] < 0.0f) {
@@ -720,10 +760,16 @@ void updatePots() {
     }
 
     const uint8_t value = static_cast<uint8_t>(constrain(potSmoothed[i] / 1023.0f * 127.0f, 0.0f, 127.0f));
-    if (value == potLastSent[i]) {
+    const uint8_t lastSent = potLastSent[i];
+    const uint8_t delta = value > lastSent ? static_cast<uint8_t>(value - lastSent) : static_cast<uint8_t>(lastSent - value);
+    if (lastSent != 255 && delta < kPotChangeThreshold) {
+      continue;
+    }
+    if (now - potLastSentMs[i] < kPotMinIntervalMs) {
       continue;
     }
     potLastSent[i] = value;
+    potLastSentMs[i] = now;
 
     az2::printPot(Serial, i, value);
     az2::printPot(Serial1, i, value);
@@ -829,6 +875,11 @@ void handleCommand(const String &line) {
 
   if (line.startsWith("STEP:")) {
     handleStepCommand(line);
+    return;
+  }
+
+  if (line.startsWith("NOTE:")) {
+    handleNoteCommand(line);
     return;
   }
 

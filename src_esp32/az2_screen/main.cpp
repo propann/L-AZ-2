@@ -8,10 +8,13 @@
 // 1. Intro animee "pixel art" (nom de la machine, palette synthwave).
 // 2. Menu de test avec de vraies pages (tap = on rentre dedans, "< " en
 //    haut a gauche = retour) :
-//    - PADS & LEDS : visualise en direct l'etat LED:NN:ON/OFF relaye par
-//      le Teensy (donc pilote par les pads du Pico). Pas de tap ici, page
-//      de VERIFICATION seulement.
-//    - ENCODEURS : idem, affiche les MACRO:n:+/-N relayes par le Teensy.
+//    - CONTROLES : visualise en direct la croix + 4 boutons + 3 potards
+//      cables directement sur le Teensy (NAV:/BTN:/POT:, remplace le
+//      Pico/mux LED abandonnes le 2026-09-15, voir AZ2_CABLAGE_MASTER.md).
+//      Pas de tap ici, page de VERIFICATION seulement.
+//    - ENCODEURS : idem, affiche les MACRO:n:+/-N relayes par le Teensy
+//      (page laissee en l'etat, plus rien ne source de MACRO: pour
+//      l'instant depuis l'abandon du Pico).
 //    - AUDIO : grille de 16 pads tactiles qui envoient PAD:NN:DOWN/UP
 //      directement au Teensy depuis l'ecran -- pour faire jouer le Teensy
 //      sans attendre que le Pico soit cable.
@@ -180,10 +183,9 @@ bool inBox(int16_t x, int16_t y, int16_t bx, int16_t by, int16_t bw, int16_t bh)
 // ---------------------------------------------------------------------
 // Etat partage entre les pages / le lien Teensy
 // ---------------------------------------------------------------------
-enum class Screen : uint8_t { Menu, PadsLeds, Encoders, Audio, Sequencer, Engines, Retro, Links, About };
+enum class Screen : uint8_t { Menu, Controls, Encoders, Audio, Sequencer, Engines, Retro, Links, About };
 Screen currentScreen = Screen::Menu;
 
-bool ledState[az2::kPadCount] = {};
 int32_t macroValue[4] = {};
 bool teensyLinked = false;
 
@@ -248,7 +250,7 @@ struct MenuItem {
 constexpr MenuItem kMenuItems[] = {
     {"SEQUENCEUR", "programmer les 16 pas", Screen::Sequencer},
     {"MOTEURS", "moteur + patch par piste", Screen::Engines},
-    {"PADS & LEDS", "verifier la matrice + Pico", Screen::PadsLeds},
+    {"CONTROLES", "croix + boutons + potards (Teensy)", Screen::Controls},
     {"ENCODEURS", "verifier les 4 rotatifs", Screen::Encoders},
     {"AUDIO", "jouer le Teensy depuis l'ecran", Screen::Audio},
     {"JEUX", "NES (en construction, voir doc)", Screen::Retro},
@@ -308,10 +310,10 @@ int8_t hitTestMenuRow(int16_t x, int16_t y) {
   return -1;
 }
 
-// ---------------------------------------------------------------------
-// Page PADS & LEDS -- visualisation seule (pilotee par le Pico via relais
-// Teensy : LED:NN:ON/OFF)
-// ---------------------------------------------------------------------
+// kGridLeft/kGridTop/kGridCell/kGridGap/padCellRect() : grille 4x4
+// partagee avec la page AUDIO plus bas (touche = jouer le Teensy) --
+// gardee ici meme si la page PADS & LEDS d'origine (qui les a introduits)
+// a ete remplacee par CONTROLES ci-dessous.
 constexpr int16_t kGridLeft = 60;
 constexpr int16_t kGridTop = 90;
 constexpr int16_t kGridCell = 80;
@@ -324,22 +326,103 @@ void padCellRect(uint8_t pad, int16_t &x, int16_t &y) {
   y = static_cast<int16_t>(kGridTop + row * (kGridCell + kGridGap));
 }
 
-void drawPadCell(uint8_t pad, bool lit) {
-  int16_t x, y;
-  padCellRect(pad, x, y);
-  gfx->fillRect(x, y, kGridCell, kGridCell, lit ? kPalette[pad % kPaletteCount] : RGB565_BLACK);
-  gfx->drawRect(x, y, kGridCell, kGridCell, kFaint);
-  gfx->setTextSize(1);
-  gfx->setTextColor(lit ? RGB565_BLACK : kDim);
-  gfx->setCursor(static_cast<int16_t>(x + 6), static_cast<int16_t>(y + kGridCell - 16));
-  if (pad < 10) gfx->print('0');
-  gfx->print(pad);
+// ---------------------------------------------------------------------
+// Page CONTROLES -- visualisation seule de la croix + 4 boutons + 3
+// potards cables DIRECTEMENT sur le Teensy (NAV:/BTN:/POT:, voir
+// AZ2_Protocol.h) -- remplace PADS & LEDS le 2026-09-15, suite a
+// l'abandon du Pico/mux LED (voir AZ2_CABLAGE_MASTER.md). Permet de
+// verifier chaque switch/potard un par un pendant le cablage.
+// ---------------------------------------------------------------------
+bool navState[4] = {};  // 0=HAUT 1=BAS 2=GAUCHE 3=DROITE
+bool btnState[4] = {};  // 0=A 1=B 2=C 3=D
+uint8_t potValue[3] = {};
+
+constexpr int16_t kNavBox = 56;
+constexpr int16_t kNavGap = 4;
+constexpr int16_t kNavCenterX = 130;
+constexpr int16_t kNavCenterY = 220;
+
+void navRect(uint8_t dir, int16_t &x, int16_t &y) {
+  switch (dir) {
+    case 0: x = kNavCenterX - kNavBox / 2; y = kNavCenterY - kNavBox - kNavGap; break;
+    case 1: x = kNavCenterX - kNavBox / 2; y = kNavCenterY + kNavGap; break;
+    case 2: x = kNavCenterX - kNavBox - kNavGap; y = kNavCenterY - kNavBox / 2; break;
+    default: x = kNavCenterX + kNavGap; y = kNavCenterY - kNavBox / 2; break;
+  }
 }
 
-void drawPadsLedsPage() {
-  drawSubHeader("PADS & LEDS", kPalette[0]);
-  for (uint8_t pad = 0; pad < az2::kPadCount; ++pad) {
-    drawPadCell(pad, ledState[pad]);
+void drawNavBox(uint8_t dir) {
+  int16_t x, y;
+  navRect(dir, x, y);
+  static const char *const kLabels[4] = {"H", "B", "G", "D"};
+  gfx->fillRect(x, y, kNavBox, kNavBox, navState[dir] ? kPalette[dir % kPaletteCount] : RGB565_BLACK);
+  gfx->drawRect(x, y, kNavBox, kNavBox, kFaint);
+  gfx->setTextSize(3);
+  gfx->setTextColor(navState[dir] ? RGB565_BLACK : kDim);
+  gfx->setCursor(static_cast<int16_t>(x + kNavBox / 2 - 9), static_cast<int16_t>(y + kNavBox / 2 - 12));
+  gfx->print(kLabels[dir]);
+}
+
+constexpr int16_t kBtnBox = 60;
+constexpr int16_t kBtnGap = 12;
+constexpr int16_t kBtnLeft = 300;
+constexpr int16_t kBtnTop = 160;
+
+void btnRect(uint8_t index, int16_t &x, int16_t &y) {
+  x = static_cast<int16_t>(kBtnLeft + (index % 2) * (kBtnBox + kBtnGap));
+  y = static_cast<int16_t>(kBtnTop + (index / 2) * (kBtnBox + kBtnGap));
+}
+
+void drawBtnBox(uint8_t index) {
+  int16_t x, y;
+  btnRect(index, x, y);
+  static const char kLabels[4] = {'A', 'B', 'C', 'D'};
+  gfx->fillRect(x, y, kBtnBox, kBtnBox, btnState[index] ? kPalette[(index + 1) % kPaletteCount] : RGB565_BLACK);
+  gfx->drawRect(x, y, kBtnBox, kBtnBox, kFaint);
+  gfx->setTextSize(3);
+  gfx->setTextColor(btnState[index] ? RGB565_BLACK : kDim);
+  gfx->setCursor(static_cast<int16_t>(x + kBtnBox / 2 - 9), static_cast<int16_t>(y + kBtnBox / 2 - 12));
+  gfx->print(kLabels[index]);
+}
+
+constexpr int16_t kPotBarX = kMargin;
+constexpr int16_t kPotBarW = kScreenSize - 2 * kMargin;
+constexpr int16_t kPotBarH = 26;
+constexpr int16_t kPotBarTop = 340;
+constexpr int16_t kPotBarGap = 30;
+
+void drawPotBar(uint8_t index) {
+  const int16_t y = static_cast<int16_t>(kPotBarTop + index * (kPotBarH + kPotBarGap));
+  static const char *const kLabels[3] = {"POT 1 - VOLUME", "POT 2 - REVERB", "POT 3 - DELAY"};
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(kPotBarX, static_cast<int16_t>(y - 14));
+  gfx->print(kLabels[index]);
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%d", potValue[index]);
+  gfx->setCursor(static_cast<int16_t>(kPotBarX + kPotBarW - 28), static_cast<int16_t>(y - 14));
+  gfx->print(buf);
+
+  gfx->fillRect(kPotBarX, y, kPotBarW, kPotBarH, RGB565_BLACK);
+  gfx->drawRect(kPotBarX, y, kPotBarW, kPotBarH, kFaint);
+  const int16_t fillW = static_cast<int16_t>(static_cast<float>(potValue[index]) / 127.0f * (kPotBarW - 4));
+  if (fillW > 0) {
+    gfx->fillRect(static_cast<int16_t>(kPotBarX + 2), static_cast<int16_t>(y + 2), fillW,
+                  static_cast<int16_t>(kPotBarH - 4), kPalette[index % kPaletteCount]);
+  }
+}
+
+void drawControlsPage() {
+  drawSubHeader("CONTROLES", kPalette[0]);
+  for (uint8_t i = 0; i < 4; ++i) {
+    drawNavBox(i);
+  }
+  for (uint8_t i = 0; i < 4; ++i) {
+    drawBtnBox(i);
+  }
+  for (uint8_t i = 0; i < 3; ++i) {
+    drawPotBar(i);
   }
 }
 
@@ -481,10 +564,22 @@ constexpr int16_t kSeqDivY = kSeqTempoY + kSeqTempoH + 4;
 constexpr int16_t kSeqDivH = 20;
 
 bool seqStepOn[kSeqTrackCount][kSeqStepCount] = {};
+// Note par pas (voir NOTE: dans AZ2_Protocol.h -- porte de MicroDexed-touch,
+// demande le 2026-09-15 "prend le sequenceur du dexed touch"). Meme
+// defauts que seedDefaultNotes() cote Teensy tant que le NOTE: echo n'est
+// pas arrive.
+uint8_t seqStepNote[kSeqTrackCount][kSeqStepCount];
 uint8_t seqCurrentStep = 0;
 bool seqPlaying = false;
 float seqBpm = 120.0f;
 uint8_t seqStepsPerBeat = 4;
+
+// Dernier pas touche : la croix du Teensy (NAV:UP/DOWN, voir
+// handleTeensyLine()) transpose la note de CE pas -- pas besoin d'une
+// interface piano-roll complete, on reutilise le clavier physique qu'on
+// vient de cabler.
+int8_t selectedSeqTrack = -1;
+int8_t selectedSeqStep = -1;
 
 void seqCellRect(uint8_t track, uint8_t step, int16_t &x, int16_t &y) {
   x = static_cast<int16_t>(kSeqGridLeft + step * (kSeqCellW + kSeqGapX));
@@ -505,8 +600,28 @@ void drawSeqCell(uint8_t track, uint8_t step) {
   seqCellRect(track, step, x, y);
   const bool on = seqStepOn[track][step];
   const bool playhead = (step == seqCurrentStep);
+  const bool selected = (track == selectedSeqTrack && step == selectedSeqStep);
   gfx->fillRect(x, y, kSeqCellW, kSeqCellH, on ? kPalette[track % kPaletteCount] : seqBandColor(step));
-  gfx->drawRect(x, y, kSeqCellW, kSeqCellH, playhead ? RGB565_WHITE : kFaint);
+
+  uint16_t borderColor = kFaint;
+  if (playhead) {
+    borderColor = RGB565_WHITE;
+  } else if (selected) {
+    borderColor = kPalette[4 % kPaletteCount];  // accent distinct pour "pas selectionne" (croix transpose sa note)
+  }
+  gfx->drawRect(x, y, kSeqCellW, kSeqCellH, borderColor);
+
+  if (on) {
+    // Petit repere de hauteur = note du pas (voir seqStepNote[], NOTE:
+    // dans AZ2_Protocol.h) -- plus haut dans la case = note plus aigue.
+    // Plage d'affichage 36-84 (3 octaves autour du C4), bornee au-dela.
+    constexpr uint8_t kNoteVisualMin = 36;
+    constexpr uint8_t kNoteVisualMax = 84;
+    const uint8_t note = constrain(seqStepNote[track][step], kNoteVisualMin, kNoteVisualMax);
+    const float ratio = static_cast<float>(note - kNoteVisualMin) / static_cast<float>(kNoteVisualMax - kNoteVisualMin);
+    const int16_t notchY = static_cast<int16_t>(y + kSeqCellH - 3 - ratio * (kSeqCellH - 6));
+    gfx->drawFastHLine(static_cast<int16_t>(x + 2), notchY, static_cast<int16_t>(kSeqCellW - 4), RGB565_WHITE);
+  }
 }
 
 // Remplit chaque groupe de mesure sur toute la hauteur de la grille (y
@@ -766,7 +881,7 @@ void drawAboutPage() {
 void drawScreen(Screen s) {
   switch (s) {
     case Screen::Menu: drawMenu(); return;
-    case Screen::PadsLeds: drawPadsLedsPage(); return;
+    case Screen::Controls: drawControlsPage(); return;
     case Screen::Encoders: drawEncodersPage(); return;
     case Screen::Audio: drawAudioPage(); return;
     case Screen::Sequencer: drawSequencerPage(); return;
@@ -794,13 +909,75 @@ void handleTeensyLine(const String &line) {
   teensyLinked = true;
   pushLog(line);
 
-  if (line.startsWith("LED:") && line.length() >= 9) {
-    const uint8_t pad = static_cast<uint8_t>(line.substring(4, 6).toInt());
-    const bool on = line.endsWith("ON");
-    if (az2::validPad(pad)) {
-      ledState[pad] = on;
-      if (currentScreen == Screen::PadsLeds) {
-        drawPadCell(pad, on);
+  if (line.startsWith("NAV:")) {
+    const int firstColon = line.indexOf(':');
+    const int secondColon = line.indexOf(':', firstColon + 1);
+    if (firstColon >= 0 && secondColon >= 0) {
+      const String dir = line.substring(firstColon + 1, secondColon);
+      const bool pressed = line.endsWith("DOWN");
+      int8_t index = -1;
+      if (dir == "UP") index = 0;
+      else if (dir == "DOWN") index = 1;
+      else if (dir == "LEFT") index = 2;
+      else if (dir == "RIGHT") index = 3;
+
+      if (index >= 0) {
+        navState[index] = pressed;
+        if (currentScreen == Screen::Controls) {
+          drawNavBox(static_cast<uint8_t>(index));
+        }
+        // Sur la page SEQUENCEUR, HAUT/BAS transpose la note du dernier
+        // pas touche (voir selectedSeqTrack/Step) -- demande le
+        // 2026-09-15 ("prend le sequenceur du dexed touch"), reutilise
+        // la croix qu'on vient de cabler au lieu d'une interface
+        // piano-roll complete.
+        if (pressed && currentScreen == Screen::Sequencer &&
+            selectedSeqTrack >= 0 && selectedSeqStep >= 0 && (index == 0 || index == 1)) {
+          const uint8_t t = static_cast<uint8_t>(selectedSeqTrack);
+          const uint8_t s = static_cast<uint8_t>(selectedSeqStep);
+          const int newNote = constrain(static_cast<int>(seqStepNote[t][s]) + (index == 0 ? 1 : -1), 0, 127);
+          char msg[20];
+          snprintf(msg, sizeof(msg), "NOTE:%d:%d:%d", t, s, newNote);
+          sendToTeensy(msg);
+        }
+      }
+    }
+  } else if (line.startsWith("BTN:") && line.length() >= 6) {
+    const char letter = line.charAt(4);
+    const bool pressed = line.endsWith("DOWN");
+    const int8_t index = letter - 'A';
+    if (index >= 0 && index < 4) {
+      btnState[index] = pressed;
+      if (currentScreen == Screen::Controls) {
+        drawBtnBox(static_cast<uint8_t>(index));
+      }
+    }
+  } else if (line.startsWith("POT:")) {
+    const int firstColon = line.indexOf(':');
+    const int secondColon = line.indexOf(':', firstColon + 1);
+    if (firstColon >= 0 && secondColon >= 0) {
+      const uint8_t index = static_cast<uint8_t>(line.substring(firstColon + 1, secondColon).toInt());
+      const uint8_t value = static_cast<uint8_t>(line.substring(secondColon + 1).toInt());
+      if (index < 3) {
+        potValue[index] = value;
+        if (currentScreen == Screen::Controls) {
+          drawPotBar(index);
+        }
+      }
+    }
+  } else if (line.startsWith("NOTE:")) {
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    const int i3 = line.indexOf(':', i2 + 1);
+    if (i1 >= 0 && i2 >= 0 && i3 >= 0) {
+      const uint8_t track = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
+      const uint8_t step = static_cast<uint8_t>(line.substring(i2 + 1, i3).toInt());
+      const uint8_t note = static_cast<uint8_t>(line.substring(i3 + 1).toInt());
+      if (track < kSeqTrackCount && step < kSeqStepCount) {
+        seqStepNote[track][step] = note;
+        if (currentScreen == Screen::Sequencer) {
+          drawSeqCell(track, step);
+        }
       }
     }
   } else if (line.startsWith("MACRO:")) {
@@ -902,7 +1079,7 @@ void handleTeensyLine(const String &line) {
   if (currentScreen == Screen::Links) {
     drawLinksPage();
   }
-  if (currentScreen != Screen::PadsLeds && currentScreen != Screen::Encoders &&
+  if (currentScreen != Screen::Controls && currentScreen != Screen::Encoders &&
       currentScreen != Screen::Links) {
     drawLinkStatus();
   }
@@ -986,6 +1163,15 @@ void setup() {
   delay(300);
   Serial.println("AZ2:ROLE:ESP32_SCREEN_TEST");
 
+  // Memes valeurs par defaut que seedDefaultNotes() cote Teensy --
+  // corrige des le premier NOTE:/HELLO recu si jamais desynchronise.
+  static const uint8_t kDefaultNotes[kSeqTrackCount] = {48, 55, 60, 64};
+  for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
+    for (uint8_t s = 0; s < kSeqStepCount; ++s) {
+      seqStepNote[t][s] = kDefaultNotes[t];
+    }
+  }
+
   pinMode(kPinBacklight, OUTPUT);
   digitalWrite(kPinBacklight, HIGH);
 
@@ -1058,6 +1244,17 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       snprintf(msg, sizeof(msg), "DIV:%d", az2::kDivisionOptions[nextIdx].stepsPerBeat);
       sendToTeensy(msg);
     } else if (hitTestSeqCell(x, y, track, step)) {
+      // Selectionne ce pas pour la croix (HAUT/BAS transpose sa note,
+      // voir handleTeensyLine() -> NAV:) -- que le pas soit allume ou
+      // eteint par ce meme toucher.
+      const int8_t prevTrack = selectedSeqTrack;
+      const int8_t prevStep = selectedSeqStep;
+      selectedSeqTrack = static_cast<int8_t>(track);
+      selectedSeqStep = static_cast<int8_t>(step);
+      if (prevTrack >= 0 && prevStep >= 0 && (prevTrack != selectedSeqTrack || prevStep != selectedSeqStep)) {
+        drawSeqCell(static_cast<uint8_t>(prevTrack), static_cast<uint8_t>(prevStep));  // efface l'ancien surlignage
+      }
+
       const bool newState = !seqStepOn[track][step];
       seqStepOn[track][step] = newState;  // optimiste ; re-synchronise par l'echo STEP: du Teensy
       drawSeqCell(track, step);
