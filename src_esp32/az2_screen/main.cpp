@@ -30,6 +30,8 @@
 #include <AZ2_Protocol.h>
 #include <Wire.h>
 #include <math.h>
+#include <SPI.h>
+#include <SD.h>
 
 namespace {
 
@@ -42,6 +44,19 @@ constexpr int kTeensyRxPin = 20;
 constexpr int kTouchSdaPin = 40;
 constexpr int kTouchSclPin = 41;
 constexpr uint8_t kTouchI2cAddr = 0x38;
+
+// Carte SD (ROMs de jeux, voir AZ2_EMULATION_JEUX.md) -- broches
+// verifiees sur le depot officiel VIEWE (meme source que l'ecran).
+// ATTENTION : SD-CS (IO47) est le MEME GPIO que le bus SPI 3 fils de
+// commande de l'ecran (SPI-SDA) -- pas un vrai conflit dans la pratique
+// car l'ecran n'utilise ce bus QUE pendant gfx->begin() (init du
+// GC9503V), jamais apres (le rendu passe ensuite par le panneau RGB
+// parallele). Init SD faite APRES gfx->begin() dans setup(), jamais en
+// meme temps qu'une commande ecran.
+constexpr int kSdCsPin = 47;
+constexpr int kSdClkPin = 45;
+constexpr int kSdMisoPin = 46;
+constexpr int kSdMosiPin = 42;
 
 Arduino_DataBus *bus = new Arduino_SWSPI(
     GFX_NOT_DEFINED /* DC (inutilise, 3-wire) */, 39 /* CS */, 48 /* SCK */,
@@ -813,7 +828,11 @@ void drawAboutPage() {
 // (pas de sauvegarde flash/NVS -- revient a la valeur par defaut au
 // redemarrage, a ajouter plus tard si besoin).
 // ---------------------------------------------------------------------
-uint16_t screensaverTimeoutSec = 60;
+// 180 (au lieu de 60) depuis "l'ecran de veille saute tout le temps a la
+// figure" (2026-09-15) -- 1 minute est trop court pendant une session de
+// cablage/soudure avec de longues pauses sans toucher l'ecran. Reste
+// reglable en direct depuis cette page.
+uint16_t screensaverTimeoutSec = 180;
 constexpr uint16_t kScreensaverStepSec = 10;
 constexpr uint16_t kScreensaverMaxSec = 600;
 
@@ -896,9 +915,13 @@ void screensaverExit() {
   drawScreen(currentScreen);
 }
 
+// Rythme + couleurs adoucis le 2026-09-15 ("l'ecran de veille saute tout
+// le temps a la figure, faut le rendre moins present") -- plus lent
+// (110ms/pas au lieu de 60) et moins lumineux (plus de blanc pur en
+// tete de goutte).
 void screensaverStep() {
   const uint32_t now = millis();
-  if (now - matrixLastStepMs < 60) {
+  if (now - matrixLastStepMs < 110) {
     return;
   }
   matrixLastStepMs = now;
@@ -916,13 +939,13 @@ void screensaverStep() {
 
     const int16_t trailRow = static_cast<int16_t>(matrixDropRow[c] - 1);
     if (trailRow >= 0 && trailRow < kMatrixRows) {
-      gfx->setTextColor(RGB565(0, 160, 60));
+      gfx->setTextColor(RGB565(0, 90, 40));
       gfx->setCursor(x, static_cast<int16_t>(trailRow * kMatrixCharH));
       gfx->print(matrixRandomChar());
     }
 
     if (matrixDropRow[c] >= 0 && matrixDropRow[c] < kMatrixRows) {
-      gfx->setTextColor(RGB565(190, 255, 190));
+      gfx->setTextColor(RGB565(110, 200, 120));
       gfx->setCursor(x, static_cast<int16_t>(matrixDropRow[c] * kMatrixCharH));
       gfx->print(matrixRandomChar());
     }
@@ -1248,6 +1271,17 @@ void setup() {
   Wire.begin(kTouchSdaPin, kTouchSclPin);
   Wire.setClock(400000);  // I2C fast mode: tactile plus reactif
   Serial.println("TOUCH:FT6336U:READY");
+
+  // Init SD APRES l'ecran (voir commentaire sur kSdCsPin plus haut) --
+  // carte pas forcement presente, echec propre attendu tant qu'elle n'est
+  // pas inseree (voir AZ2_EMULATION_JEUX.md, ROMs GB/GBC).
+  SPI.begin(kSdClkPin, kSdMisoPin, kSdMosiPin, kSdCsPin);
+  if (SD.begin(kSdCsPin, SPI)) {
+    Serial.print("SD:READY:size_mb=");
+    Serial.println(static_cast<uint32_t>(SD.cardSize() / (1024 * 1024)));
+  } else {
+    Serial.println("SD:NOT_PRESENT");
+  }
 }
 
 void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {

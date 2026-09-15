@@ -156,7 +156,7 @@ ca marche, effet immediat.
 | Backlight | 38 |
 | SPI 3 fils (commandes ecran) | CS=39, CLK=48, SDA=47 |
 | Tactile I2C | SDA=40, SCL=41 (**confirme, multi-doigt**) |
-| SD card (pas encore cable, a reverifier) | CS=47, CLK=45, MOSI=42, MISO=46 |
+| SD card (integree a la carte VIEWE) | CS=47, CLK=45, MOSI=42, MISO=46 -- **CS partage avec SPI-SDA de l'ecran (IO47)**, confirme sur le depot officiel VIEWE ; sans risque car l'ecran n'utilise ce bus qu'a l'init (`gfx->begin()`), jamais apres. Firmware pret (`SD.begin()` apres l'ecran), teste sans carte inseree (echec propre, pas de blocage) |
 | UART vers Teensy | **19, 20** (confirme) |
 
 Source: README officiel VIEWE (voir [AZ2_ECRAN_FACADE.md](AZ2_ECRAN_FACADE.md)).
