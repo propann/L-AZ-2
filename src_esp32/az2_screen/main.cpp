@@ -633,6 +633,11 @@ uint8_t seqStepNote[kSeqTrackCount][kSeqStepCount];
 uint8_t seqStepPatch[kSeqTrackCount][kSeqStepCount];
 uint8_t seqStepFx[kSeqTrackCount][kSeqStepCount] = {};
 uint8_t seqStepFxVal[kSeqTrackCount][kSeqStepCount] = {};
+// Une couleur par effet (voir kPalette) -- reperage visuel rapide sur
+// la grille ET la vue detail, demande le 2026-09-15 ("on met de la
+// couleur, des effets"). kDim pour "aucun effet" (index 0). Doit rester
+// alignee avec StepFx cote Teensy (None/Arp/Cut/Retrig).
+const uint16_t kStepFxColors[] = {kDim, kPalette[1], kPalette[2], kPalette[3]};
 uint8_t seqCurrentStep = 0;
 bool seqPlaying = false;
 float seqBpm = 120.0f;
@@ -694,6 +699,14 @@ void drawSeqCell(uint8_t track, uint8_t step) {
     const float ratio = static_cast<float>(note - kNoteVisualMin) / static_cast<float>(kNoteVisualMax - kNoteVisualMin);
     const int16_t notchY = static_cast<int16_t>(y + kSeqCellH - 3 - ratio * (kSeqCellH - 6));
     gfx->drawFastHLine(static_cast<int16_t>(x + 2), notchY, static_cast<int16_t>(kSeqCellW - 4), RGB565_WHITE);
+
+    // Pastille = effet actif sur ce pas (voir kStepFxColors) -- visible
+    // sans ouvrir la vue detail, demande 2026-09-15 ("on met de la
+    // couleur, des effets").
+    const uint8_t fxId = seqStepFx[track][step];
+    if (fxId != 0) {
+      gfx->fillRect(static_cast<int16_t>(x + kSeqCellW - 5), static_cast<int16_t>(y + 1), 4, 4, kStepFxColors[fxId]);
+    }
   }
 }
 
@@ -861,22 +874,29 @@ void drawDetailRow(uint8_t step) {
   gfx->setCursor(static_cast<int16_t>(detailColX(2) + 2), static_cast<int16_t>(y + 6));
   gfx->print(buf);
 
-  // FX (colonne editable 2)
+  // FX (colonne editable 2) -- une couleur par effet (kStepFxColors),
+  // demande 2026-09-15 ("on met de la couleur, des effets").
+  const uint8_t fxId = seqStepFx[track][step];
   const bool fxSel = rowSelected && seqDetailCol == 2;
   if (fxSel) {
     gfx->fillRect(detailColX(3), y, kDetailFxW, kDetailRowH, accent);
+  } else if (on && fxId != 0) {
+    // Fond legerement teinte de la couleur de l'effet, meme quand la
+    // ligne n'est pas selectionnee -- repere visuel au premier coup
+    // d'oeil, pas besoin d'ouvrir chaque pas pour voir ce qui a un FX.
+    gfx->fillRect(detailColX(3), y, kDetailFxW, kDetailRowH, dimColor(kStepFxColors[fxId], 4));
   }
-  gfx->setTextColor(fxSel ? RGB565_BLACK : (on ? RGB565_WHITE : kFaint));
+  gfx->setTextColor(fxSel ? RGB565_BLACK : (on ? kStepFxColors[fxId] : kFaint));
   gfx->setCursor(static_cast<int16_t>(detailColX(3) + 2), static_cast<int16_t>(y + 6));
-  gfx->print(kStepFxNames[seqStepFx[track][step]]);
+  gfx->print(kStepFxNames[fxId]);
 
   // VAL (colonne editable 3) -- vide si pas d'effet actif
   const bool valSel = rowSelected && seqDetailCol == 3;
   if (valSel) {
     gfx->fillRect(detailColX(4), y, kDetailValW, kDetailRowH, accent);
   }
-  gfx->setTextColor(valSel ? RGB565_BLACK : (on ? RGB565_WHITE : kFaint));
-  if (seqStepFx[track][step] == 0) {
+  gfx->setTextColor(valSel ? RGB565_BLACK : (on ? kStepFxColors[fxId] : kFaint));
+  if (fxId == 0) {
     snprintf(buf, sizeof(buf), "--");
   } else {
     snprintf(buf, sizeof(buf), "%02X", seqStepFxVal[track][step]);
