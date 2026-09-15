@@ -1347,6 +1347,54 @@ constexpr uint16_t kScreensaverMaxSec = 600;
 constexpr int16_t kCfgRowY = 140;
 constexpr int16_t kCfgRowH = 50;
 constexpr int16_t kCfgBtnW = 60;
+constexpr int16_t kScaleRowY = kCfgRowY + kCfgRowH + 40;
+
+// Gammes (demande 2026-09-15, "on ajoute les gammes accord") --
+// verrouillage a la saisie : quand on transpose une note (croix HAUT/
+// BAS sur un pas, grille ou vue detail du sequenceur), on saute
+// directement a la prochaine note DANS LA GAMME au lieu d'un simple
+// demi-ton. CHROMATIQUE (toutes les notes, index 0) = comportement
+// d'origine, donc rien ne change tant qu'on n'a pas touche ce reglage.
+// Racine fixee a C pour cette premiere version (pas de transposition de
+// tonalite editable) -- juste le TYPE de gamme.
+const uint8_t kScaleChromatic[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+const uint8_t kScaleMajor[] = {0, 2, 4, 5, 7, 9, 11};
+const uint8_t kScaleMinor[] = {0, 2, 3, 5, 7, 8, 10};
+const uint8_t kScaleMajorPenta[] = {0, 2, 4, 7, 9};
+const uint8_t kScaleMinorPenta[] = {0, 3, 5, 7, 10};
+const uint8_t *const kScales[] = {kScaleChromatic, kScaleMajor, kScaleMinor, kScaleMajorPenta, kScaleMinorPenta};
+const uint8_t kScaleLens[] = {12, 7, 7, 5, 5};
+const char *const kScaleNames[] = {"CHROMATIQUE (C)", "MAJEUR (C)", "MINEUR (C)", "PENTA MAJ (C)", "PENTA MIN (C)"};
+constexpr uint8_t kScaleCount = sizeof(kScaleNames) / sizeof(kScaleNames[0]);
+uint8_t currentScaleIndex = 0;
+
+bool noteInScale(uint8_t note) {
+  const uint8_t pc = static_cast<uint8_t>(note % 12);
+  const uint8_t *scale = kScales[currentScaleIndex];
+  for (uint8_t i = 0; i < kScaleLens[currentScaleIndex]; ++i) {
+    if (scale[i] == pc) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Avance/recule (dir = +1/-1) jusqu'a la prochaine note DANS LA GAMME,
+// au maximum un tour chromatique complet (12 demi-tons) -- si rien
+// trouve avant d'atteindre une borne (0/127), garde la note de depart.
+uint8_t nextNoteInScale(uint8_t note, int8_t dir) {
+  int n = static_cast<int>(note);
+  for (uint8_t i = 0; i < 12; ++i) {
+    n += dir;
+    if (n < 0 || n > 127) {
+      break;
+    }
+    if (noteInScale(static_cast<uint8_t>(n))) {
+      return static_cast<uint8_t>(n);
+    }
+  }
+  return note;
+}
 
 void drawConfigPage() {
   drawSubHeader("CONFIGURATION", kPalette[3]);
@@ -1378,6 +1426,27 @@ void drawConfigPage() {
   gfx->setTextColor(kDim);
   gfx->setCursor(kMargin, static_cast<int16_t>(kCfgRowY - 20));
   gfx->print("ECRAN DE VEILLE (MATRIX) APRES");
+
+  // Gamme (voir noteInScale()/nextNoteInScale() -- demande 2026-09-15,
+  // "on ajoute les gammes accord"). CHROMATIQUE (index 0) = comportement
+  // d'origine (aucune restriction), donc rien ne change tant qu'on n'y
+  // touche pas.
+  gfx->fillRect(kMargin, kScaleRowY, kScreenSize - 2 * kMargin, kCfgRowH, RGB565_BLACK);
+  gfx->drawRect(minusX, kScaleRowY, kCfgBtnW, kCfgRowH, kFaint);
+  gfx->drawRect(plusX, kScaleRowY, kCfgBtnW, kCfgRowH, kFaint);
+  gfx->setTextSize(3);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(static_cast<int16_t>(minusX + 20), static_cast<int16_t>(kScaleRowY + 10));
+  gfx->print('-');
+  gfx->setCursor(static_cast<int16_t>(plusX + 20), static_cast<int16_t>(kScaleRowY + 10));
+  gfx->print('+');
+  gfx->setTextSize(2);
+  gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - 70), static_cast<int16_t>(kScaleRowY + 15));
+  gfx->print(kScaleNames[currentScaleIndex]);
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(kMargin, static_cast<int16_t>(kScaleRowY - 20));
+  gfx->print("GAMME (croix/pas du sequenceur en tonalite de C)");
 }
 
 bool hitTestCfgMinus(int16_t x, int16_t y) {
@@ -1385,6 +1454,13 @@ bool hitTestCfgMinus(int16_t x, int16_t y) {
 }
 bool hitTestCfgPlus(int16_t x, int16_t y) {
   return inBox(x, y, static_cast<int16_t>(kScreenSize - kMargin - kCfgBtnW), kCfgRowY, kCfgBtnW, kCfgRowH);
+}
+
+bool hitTestScaleMinus(int16_t x, int16_t y) {
+  return inBox(x, y, kMargin, kScaleRowY, kCfgBtnW, kCfgRowH);
+}
+bool hitTestScalePlus(int16_t x, int16_t y) {
+  return inBox(x, y, static_cast<int16_t>(kScreenSize - kMargin - kCfgBtnW), kScaleRowY, kCfgBtnW, kCfgRowH);
 }
 
 // ---------------------------------------------------------------------
@@ -1626,7 +1702,7 @@ void handleTeensyLine(const String &line) {
               char msg[24];
               switch (seqDetailCol) {
                 case 0: {
-                  const int newNote = constrain(static_cast<int>(seqStepNote[t][s]) + dir, 0, 127);
+                  const uint8_t newNote = nextNoteInScale(seqStepNote[t][s], static_cast<int8_t>(dir));
                   snprintf(msg, sizeof(msg), "NOTE:%d:%d:%d", t, s, newNote);
                   sendToTeensy(msg);
                   break;
@@ -1654,7 +1730,7 @@ void handleTeensyLine(const String &line) {
               }
             }
           } else if (index == 0 || index == 1) {
-            const int newNote = constrain(static_cast<int>(seqStepNote[t][s]) + (index == 0 ? 1 : -1), 0, 127);
+            const uint8_t newNote = nextNoteInScale(seqStepNote[t][s], index == 0 ? 1 : -1);
             char msg[20];
             snprintf(msg, sizeof(msg), "NOTE:%d:%d:%d", t, s, newNote);
             sendToTeensy(msg);
@@ -2293,6 +2369,12 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       drawConfigPage();
     } else if (hitTestCfgPlus(x, y)) {
       screensaverTimeoutSec = static_cast<uint16_t>(min<uint32_t>(screensaverTimeoutSec + kScreensaverStepSec, kScreensaverMaxSec));
+      drawConfigPage();
+    } else if (hitTestScaleMinus(x, y)) {
+      currentScaleIndex = static_cast<uint8_t>((currentScaleIndex + kScaleCount - 1) % kScaleCount);
+      drawConfigPage();
+    } else if (hitTestScalePlus(x, y)) {
+      currentScaleIndex = static_cast<uint8_t>((currentScaleIndex + 1) % kScaleCount);
       drawConfigPage();
     }
   } else if (currentScreen == Screen::Retro && !gbIsLoaded()) {
