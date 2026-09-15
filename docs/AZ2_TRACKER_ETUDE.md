@@ -94,6 +94,42 @@ declenchement, independant du reste).
 4. Chainage de patterns (song) -- **repousse a une etape suivante**,
    une fois le detail par pas solide et teste en reel.
 
+## Extension demandee le 2026-09-15 (suite a l'etude) : gammes/accords,
+## clavier live, projets
+
+Apres validation du plan ci-dessus, 3 ajouts explicites ("on ajoute les
+gammes/accords, que notre clavier tactile serve a editer en live les
+sons, qu'on puisse creer facilement un projet, le sauvegarder") :
+
+5. **Gammes/accords** : verrouillage de gamme a la saisie (courant chez
+   Polyend/Elektron -- "scale lock") -- une gamme choisie (majeure,
+   mineure, pentatonique, etc.) filtre/aligne les notes entrees sur la
+   page SEQUENCEUR (croix haut/bas) pour rester dans la tonalite, sans
+   empecher la saisie chromatique libre si on veut. Accords : poser
+   plusieurs notes sur le meme pas (deja possible via `kNotesPerTrack`
+   cote Teensy, 2 notes/piste -- juste pas exploitable depuis l'ecran
+   actuellement, colonne NOTE d'un pas a etendre a 2 notes).
+6. **Page AUDIO (clavier tactile 16 pads) comme editeur live** : au
+   lieu de juste "jouer" une voix live independante, taper un pad
+   pendant qu'un pas de sequenceur est selectionne doit pouvoir POSER
+   cette note sur le pas (au lieu de/en plus de croix haut/bas pour
+   transposer) -- plus rapide et plus musical pour composer que
+   incrementer/decrementer un demi-ton a la fois.
+7. **Projets : creer/sauvegarder** : serialiser tout l'etat compose
+   (BPM/division, moteur+patch par piste, contenu des pas -- note(s)/
+   instrument/effet, plus tard le chainage) dans un fichier sur une
+   carte SD (celle de l'ESP32, deja en place pour les ROM GB, ou celle
+   du Teensy une fois montee pour les samples -- a trancher a
+   l'implementation) et pouvoir le recharger. Gros morceau a part,
+   plutot une fois le detail par pas (etapes 1-3 plus haut) solide et
+   teste, pour ne pas serialiser un format qui va encore bouger.
+
+Ordre retenu : **1-2-3 (fondation tick + colonnes) d'abord**, puis 5-6
+(gammes/accords + clavier live, s'appuient directement sur les colonnes
+NOTE/INST) une fois la fondation testee, puis 7 (projets) une fois le
+format de donnees stabilise. 4 (chainage de patterns) et le reste de
+l'etude passent apres.
+
 ## Ce qu'on ne copie PAS (hors-sujet pour AZ-2)
 
 - Le systeme de **wave/synth Game Boy natif de LSDJ** (formes d'onde
