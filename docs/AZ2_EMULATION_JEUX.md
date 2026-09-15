@@ -118,11 +118,15 @@ Suite a "y'a rien dans jeux, c'est le moment de mettre l'emulateur" :
    `gbBlitLine()` (dans `main.cpp`, seul endroit qui connait `gfx`) qui
    fait un rendu a l'echelle x3 (160x144 -> 480x432, centre verticalement)
    via `draw16bitRGBBitmap()`.
-3. **[FAIT]** ROM cherchee dans `/games/*.gb`/`.gbc` sur la carte SD
-   (premier fichier trouve) -- chargee en entrant sur la page JEUX,
-   dechargee en la quittant (libere la PSRAM). Echec propre (pas de
-   crash) si pas de carte/dossier/fichier -- page d'attente avec le
-   message exact.
+3. **[FAIT]** ROM cherchee dans `/games/*.gb`/`.gbc` sur la carte SD --
+   `gbScanRoms()` liste TOUS les fichiers trouves (jusqu'a 16) en
+   entrant sur la page JEUX, `drawRetroPage()` affiche une liste
+   tactile (demande 2026-09-15 : "il nous faut un menu pour demarrer la
+   rom qu'on choisit dans une liste, pas uniquement un jeux") --
+   toucher une ligne appelle `gbLoadRom(nom)` pour cette ROM precise.
+   ROM dechargee en quittant la page (libere la PSRAM). Echec propre
+   (pas de crash) si pas de carte/dossier/fichier -- page d'attente
+   avec le message exact.
 4. **[FAIT]** Entrees mappees sur la croix + boutons A/B/C/D deja cables
    sur le Teensy (`NAV:`/`BTN:`, voir AZ2_CABLAGE_MASTER.md) : croix ->
    directions Game Boy, A/B -> A/B, C/D -> SELECT/START.
@@ -138,13 +142,20 @@ Suite a "y'a rien dans jeux, c'est le moment de mettre l'emulateur" :
    remis a plus tard, video seule pour l'instant.
 7. **PAS FAIT** : sauvegardes cart RAM persistees sur SD (actuellement
    perdues a l'extinction).
-8. **Reste a faire pour du vrai jeu** : une ROM GB/GBC **legale**
-   (homebrew ou domaine public -- pas de ROM commerciale fournie) sur
-   une carte SD formatee FAT32, dossier `/games/`. Sans ca, la page
-   affiche juste l'etat "pas de ROM" -- **rien de tout ce qui precede
-   n'a ete verifie en conditions de jeu reelles**, seulement compile et
-   flashe sans crash (voir le firmware, testable des que SD+ROM
-   existent).
+8. **[FAIT, 2026-09-15]** ROM legale testee en reel : *Tobu Tobu Girl*
+   (`tobu.gb`, homebrew, licence MIT/CC-BY-SA, cartouche MBC1+RAM+BATT --
+   type supporte) recuperee depuis archive.org (metadata JSON verifiee
+   directement, pas de fetch resume par IA -- voir la lecon "verification
+   directe" dans les autres docs), verifiee (`file` confirme un en-tete
+   GB valide), copiee sur la carte SD dans `/games/`. **Confirme par
+   l'utilisateur : la ROM demarre et tourne reellement sur le materiel**
+   -- premier succes reel du sous-systeme emulateur, video seule (pas de
+   son, voir point 6).
+
+Reste a faire : sauvegardes cart RAM persistees sur SD (point 7 ci-dessus),
+le son (point 6), et verifier la liste (point 3) en reel avec plusieurs
+ROM presentes en meme temps sur la carte -- teste jusqu'ici avec une
+seule ROM (`tobu.gb`).
 
 ## Sources consultees
 

@@ -768,11 +768,46 @@ void drawLinksPage() {
 // Page JEUX -- emulation Game Boy / Game Boy Color (Walnut-CGB, voir
 // gb_emulator.h/.cpp et docs/AZ2_EMULATION_JEUX.md). GBA ecarte du v0
 // (~20fps mesures sur ESP32-S3 avec les coeurs existants, pas fluide).
-// ROM cherchee dans /games sur la carte SD (premier .gb/.gbc trouve) --
-// chargee a l'entree sur la page (voir goTo()), dechargee en la
-// quittant. Sans SD/ROM, page d'attente honnete avec la raison exacte.
-// PAS DE SON pour l'instant (voir gb_emulator.cpp).
+// Liste des ROM /games/*.gb(c) rescannee en entrant sur la page (voir
+// goTo()) -- toucher une ligne la charge et demarre le jeu ; ROM
+// dechargee en quittant la page. PAS DE SON pour l'instant (voir
+// gb_emulator.cpp).
 // ---------------------------------------------------------------------
+char gbRomNames[kGbMaxRoms][kGbRomNameLen];
+uint8_t gbRomCount = 0;
+
+constexpr int16_t kRomRowTop = 90;
+constexpr int16_t kRomRowH = 40;
+
+void romRowRect(uint8_t index, int16_t &y) {
+  y = static_cast<int16_t>(kRomRowTop + index * kRomRowH);
+}
+
+void drawRomRow(uint8_t index) {
+  int16_t y;
+  romRowRect(index, y);
+  gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, kRomRowH - 6, RGB565_BLACK);
+  gfx->drawRect(kMargin, y, kScreenSize - 2 * kMargin, kRomRowH - 6, kPalette[index % kPaletteCount]);
+  gfx->setTextSize(2);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(static_cast<int16_t>(kMargin + 10), static_cast<int16_t>(y + 6));
+  gfx->print(gbRomNames[index]);
+}
+
+int8_t hitTestRomRow(int16_t x, int16_t y) {
+  if (x < kMargin || x > kScreenSize - kMargin) {
+    return -1;
+  }
+  for (uint8_t i = 0; i < gbRomCount; ++i) {
+    int16_t rowY;
+    romRowRect(i, rowY);
+    if (y >= rowY && y < rowY + (kRomRowH - 6)) {
+      return static_cast<int8_t>(i);
+    }
+  }
+  return -1;
+}
+
 void drawRetroPage() {
   if (gbIsLoaded()) {
     // Le rendu du jeu lui-meme vient de gbBlitLine(), appelee par
@@ -786,24 +821,32 @@ void drawRetroPage() {
     return;
   }
 
+  if (gbRomCount > 0) {
+    drawSubHeader("JEUX - choisis une ROM", kPalette[2]);
+    for (uint8_t i = 0; i < gbRomCount; ++i) {
+      drawRomRow(i);
+    }
+    return;
+  }
+
   drawSubHeader("JEUX", kPalette[2]);
   const char *lines[] = {
-      "Aucune ROM chargee.",
+      "Aucune ROM trouvee dans /games.",
       "",
       "Moteur : Walnut-CGB (GB/GBC, licence MIT).",
       "GBA ecarte : ~20fps mesures sur ESP32-S3,",
       "pas fluide avec les coeurs existants.",
       "",
       "Pour jouer : carte SD formatee FAT32,",
-      "dossier /games/, un fichier .gb ou .gbc",
-      "dedans (ROM homebrew/domaine public --",
-      "pas de ROM commerciale fournie).",
+      "dossier /games/, un ou plusieurs fichiers",
+      ".gb ou .gbc dedans (ROM homebrew/domaine",
+      "public -- pas de ROM commerciale fournie).",
       "",
       "Pas de son pour l'instant (voir",
       "docs/AZ2_EMULATION_JEUX.md).",
       "",
       "Retouche cette page pour reessayer",
-      "de charger une ROM.",
+      "de scanner la carte SD.",
   };
   gfx->setTextSize(1);
   gfx->setTextColor(RGB565_WHITE);
@@ -988,11 +1031,14 @@ void drawScreen(Screen s) {
 }
 
 void goTo(Screen s) {
-  // Charge/decharge la ROM GB en entrant/sortant de la page JEUX (voir
-  // gb_emulator.h) -- libere la PSRAM des qu'on quitte, evite de garder
-  // une ROM chargee inutilement sur les autres pages.
+  // Rescanne /games et decharge la ROM GB en entrant/sortant de la page
+  // JEUX (voir gb_emulator.h) -- libere la PSRAM des qu'on quitte, evite
+  // de garder une ROM chargee inutilement sur les autres pages. Le scan
+  // remplit gbRomNames[]/gbRomCount, affiches en liste par
+  // drawRetroPage() (demande 2026-09-15 : "il nous faut un menu ...
+  // dans une liste de rom pas uniquement un jeux").
   if (s == Screen::Retro && !gbIsLoaded()) {
-    gbLoadFirstRom();  // echec propre (message Serial) si pas de SD/ROM, gere par drawRetroPage()
+    gbRomCount = gbScanRoms(gbRomNames);
   } else if (s != Screen::Retro && gbIsLoaded()) {
     gbUnload();
   }
@@ -1441,10 +1487,22 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       drawConfigPage();
     }
   } else if (currentScreen == Screen::Retro && !gbIsLoaded()) {
-    // Touche n'importe ou sur la page d'attente pour reessayer de
-    // charger une ROM (utile si la carte SD vient d'etre inseree).
-    gbLoadFirstRom();
-    drawRetroPage();
+    if (gbRomCount > 0) {
+      // Liste de ROM affichee : toucher une ligne la charge et demarre
+      // le jeu (demande 2026-09-15, "une liste de rom pas uniquement
+      // un jeux").
+      const int8_t rowIndex = hitTestRomRow(x, y);
+      if (rowIndex >= 0) {
+        if (gbLoadRom(gbRomNames[rowIndex])) {
+          drawRetroPage();
+        }
+      }
+    } else {
+      // Aucune ROM trouvee : toucher n'importe ou rescanne /games (utile
+      // si la carte SD vient d'etre inseree).
+      gbRomCount = gbScanRoms(gbRomNames);
+      drawRetroPage();
+    }
   }
 }
 

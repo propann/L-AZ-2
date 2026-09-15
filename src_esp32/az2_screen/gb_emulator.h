@@ -12,12 +12,25 @@
 
 #include <Arduino.h>
 
-// Cherche un fichier .gb/.gbc dans /games sur la carte SD, le charge en
-// PSRAM et demarre l'emulation. Renvoie false (avec un message d'erreur
-// clair sur Serial) si aucune carte/ROM n'est trouvee -- pas de crash,
-// juste un echec propre (voir docs/AZ2_EMULATION_JEUX.md, "reste a
-// faire": pas de ROM legale ni de carte SD physiquement testee encore).
-bool gbLoadFirstRom();
+// Selecteur de ROM (demande le 2026-09-15, "il nous faut un menu pour
+// demarrer la rom qu'on choisit dans une liste"). Longueur de nom
+// generereuse (255.3 = format 8.3 le plus long en FAT court, mais les
+// vraies cartes exposent des noms longs -- 40 caracteres suffit pour
+// rester lisible a l'ecran de toute facon, tronque au-dela).
+constexpr uint8_t kGbRomNameLen = 40;
+constexpr uint8_t kGbMaxRoms = 16;
+
+// Scanne /games sur la carte SD pour les fichiers .gb/.gbc (jusqu'a
+// kGbMaxRoms), remplit `names` (kGbMaxRoms x kGbRomNameLen, deja
+// alloue par l'appelant) avec les noms de fichiers trouves. Renvoie le
+// nombre trouve (0 si pas de carte/dossier/fichier).
+uint8_t gbScanRoms(char names[][kGbRomNameLen]);
+
+// Charge et demarre le fichier /games/<filename> (nom tel que renvoye
+// par gbScanRoms()). Renvoie false (message Serial clair) en cas
+// d'echec (fichier illisible, cartouche non supportee, PSRAM
+// insuffisante...) -- pas de crash.
+bool gbLoadRom(const char *filename);
 
 // Renvoie true si une ROM est chargee et prete a tourner (gbRunFrame()
 // peut etre appelee).

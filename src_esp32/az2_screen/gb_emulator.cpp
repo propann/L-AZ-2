@@ -108,33 +108,50 @@ void gbUnload() {
   romTitle[0] = '\0';
 }
 
-bool gbLoadFirstRom() {
-  gbUnload();
+uint8_t gbScanRoms(char names[][kGbRomNameLen]) {
+  uint8_t count = 0;
 
   if (!SD.exists("/games")) {
     Serial.println("GB:NO_GAMES_DIR");
-    return false;
+    return 0;
   }
   File dir = SD.open("/games");
   if (!dir || !dir.isDirectory()) {
     Serial.println("GB:NO_GAMES_DIR");
-    return false;
+    return 0;
   }
 
-  File romFile;
-  for (File entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
+  for (File entry = dir.openNextFile(); entry && count < kGbMaxRoms; entry = dir.openNextFile()) {
     const String name = entry.name();
     if (!entry.isDirectory() && (name.endsWith(".gb") || name.endsWith(".gbc") ||
                                   name.endsWith(".GB") || name.endsWith(".GBC"))) {
-      romFile = entry;
-      break;
+      // entry.name() peut renvoyer le chemin complet ("/games/xxx.gb")
+      // selon la version de la lib SD -- ne garder que le nom de fichier.
+      const int slash = name.lastIndexOf('/');
+      const String base = (slash >= 0) ? name.substring(slash + 1) : name;
+      strncpy(names[count], base.c_str(), kGbRomNameLen - 1);
+      names[count][kGbRomNameLen - 1] = '\0';
+      ++count;
     }
     entry.close();
   }
   dir.close();
 
-  if (!romFile) {
+  if (count == 0) {
     Serial.println("GB:NO_ROM_FOUND");
+  }
+  return count;
+}
+
+bool gbLoadRom(const char *filename) {
+  gbUnload();
+
+  char path[64];
+  snprintf(path, sizeof(path), "/games/%s", filename);
+  File romFile = SD.open(path);
+  if (!romFile) {
+    Serial.print("GB:ROM_OPEN_ERROR:");
+    Serial.println(path);
     return false;
   }
 
