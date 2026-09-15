@@ -928,6 +928,45 @@ void handleFiltCommand(const String &line) {
   relayLine(line);
 }
 
+// ENV:<piste 0-7>:<attaque 0-127>:<chute 0-127>:<maintien 0-127>:
+// <relachement 0-127> -- ADSR editable, demande le 2026-09-15
+// ("modifiant les patch adsr"). S'applique a trackAnalogEnv[] : SEUL
+// moteur de la palette (Dexed/EPiano/Braids/Karplus/Analog) avec une
+// vraie enveloppe ADSR generique exposee ici -- les autres ont leur
+// propre comportement interne au patch (Dexed/EPiano) ou pas
+// d'enveloppe du tout (Braids/Karplus). Accepte quelle que soit la
+// piste (stocke dans l'objet AudioEffectEnvelope de la piste, utilise
+// des que/si la piste bascule sur ANALOG) -- pas besoin que le moteur
+// actif soit deja ANALOG pour regler l'enveloppe a l'avance.
+// Temps mappes en quadratique 0-2000ms (plus de resolution pres de 0,
+// utile pour une attaque tres courte) ; maintien lineaire 0.0-1.0.
+void handleEnvCommand(const String &line) {
+  const int idx1 = line.indexOf(':');
+  const int idx2 = line.indexOf(':', idx1 + 1);
+  const int idx3 = line.indexOf(':', idx2 + 1);
+  const int idx4 = line.indexOf(':', idx3 + 1);
+  const int idx5 = line.indexOf(':', idx4 + 1);
+  if (idx1 < 0 || idx2 < 0 || idx3 < 0 || idx4 < 0 || idx5 < 0) {
+    return;
+  }
+  const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+  if (track >= kTrackCount) {
+    return;
+  }
+  const int a = constrain(line.substring(idx2 + 1, idx3).toInt(), 0, 127);
+  const int d = constrain(line.substring(idx3 + 1, idx4).toInt(), 0, 127);
+  const int s = constrain(line.substring(idx4 + 1, idx5).toInt(), 0, 127);
+  const int r = constrain(line.substring(idx5 + 1).toInt(), 0, 127);
+
+  auto quadMs = [](int v) { return (static_cast<float>(v) / 127.0f) * (static_cast<float>(v) / 127.0f) * 2000.0f; };
+  trackAnalogEnv[track].attack(quadMs(a));
+  trackAnalogEnv[track].decay(quadMs(d));
+  trackAnalogEnv[track].sustain(static_cast<float>(s) / 127.0f);
+  trackAnalogEnv[track].release(quadMs(r));
+
+  relayLine(line);
+}
+
 // CPU? -- charge processeur et memoire audio reelles, demande le
 // 2026-09-14 ("cote performance on est comment") avant d'augmenter
 // pistes/moteurs. AudioProcessorUsage() = charge instantanee (%),
@@ -1284,6 +1323,11 @@ void handleCommand(const String &line) {
 
   if (line.startsWith("FILT:")) {
     handleFiltCommand(line);
+    return;
+  }
+
+  if (line.startsWith("ENV:")) {
+    handleEnvCommand(line);
     return;
   }
 
