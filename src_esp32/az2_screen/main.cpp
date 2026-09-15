@@ -196,7 +196,7 @@ bool inBox(int16_t x, int16_t y, int16_t bx, int16_t by, int16_t bw, int16_t bh)
 // ---------------------------------------------------------------------
 // Etat partage entre les pages / le lien Teensy
 // ---------------------------------------------------------------------
-enum class Screen : uint8_t { Menu, Controls, Audio, Sequencer, Engines, Retro, Config, Links, About };
+enum class Screen : uint8_t { Menu, Controls, Audio, Sequencer, Engines, Retro, Config, Links, About, Patch };
 Screen currentScreen = Screen::Menu;
 
 bool teensyLinked = false;
@@ -283,6 +283,7 @@ struct MenuItem {
 constexpr MenuItem kMenuItems[] = {
     {"SEQUENCEUR", "programmer les 16 pas", Screen::Sequencer, MenuCat::Musique},
     {"MOTEURS", "moteur + patch par piste", Screen::Engines, MenuCat::Musique},
+    {"PATCH", "filtre + ADSR + forme d'onde", Screen::Patch, MenuCat::Musique},
     {"AUDIO", "jouer le Teensy depuis l'ecran", Screen::Audio, MenuCat::Musique},
     {"JEUX", "Game Boy / GBC (ROM sur carte SD)", Screen::Retro, MenuCat::Jeux},
     {"CONFIGURATION", "ecran de veille, reglages", Screen::Config, MenuCat::Config},
@@ -1058,6 +1059,152 @@ int8_t hitTestEngRow(int16_t x, int16_t y, bool &isPatchSide) {
 }
 
 // ---------------------------------------------------------------------
+// Page PATCH -- filtre + ADSR + oscilloscope en direct, demande le
+// 2026-09-15 ("on fait en sorte que nos moteurs audio soient completement
+// configurables dans une fenetre ou on voit l'onde du son jouer evoluer
+// en modifiant le patch ... il faut tout un filtre"). Colonne de gauche =
+// coupure/resonance du filtre (FILT:, voir trackFilter[] cote Teensy),
+// ADSR (ENV:, s'applique au moteur ANALOG -- voir handleEnvCommand()
+// cote Teensy pour le pourquoi). Le tracer d'onde recoit les paquets
+// SCOPE (voir kScopePacketMagic dans AZ2_Protocol.h) de la piste
+// actuellement affichee -- envoie SCOPE:piste en entrant/changeant de
+// piste, SCOPE:OFF en quittant (voir goTo()).
+// ---------------------------------------------------------------------
+int8_t patchTrack = 0;
+// cutoff, resonance, attaque, chute, maintien, relachement -- tous 0-127,
+// memes defauts "neutres" que cote Teensy (grand ouvert / ADSR rapide).
+uint8_t patchParams[6] = {127, 0, 3, 20, 89, 38};
+const char *const kPatchLabels[6] = {"CUTOFF", "RESONANCE", "ATTACK", "DECAY", "SUSTAIN", "RELEASE"};
+
+uint8_t scopeSamples[az2::kScopeSamplesPerPacket] = {};
+bool scopeHasData = false;
+
+constexpr int16_t kPatchTrackRowY = 66;
+constexpr int16_t kPatchScopeTop = 96;
+constexpr int16_t kPatchScopeH = 90;
+constexpr int16_t kPatchRowTop = kPatchScopeTop + kPatchScopeH + 14;
+constexpr int16_t kPatchRowH = 34;
+constexpr int16_t kPatchBtnW = 36;
+
+void drawPatchTrackRow() {
+  gfx->fillRect(kMargin, kPatchTrackRowY, kScreenSize - 2 * kMargin, 22, RGB565_BLACK);
+  gfx->setTextSize(2);
+  gfx->setTextColor(kPalette[patchTrack % kPaletteCount]);
+  char buf[16];
+  snprintf(buf, sizeof(buf), "< PISTE %d >", patchTrack);
+  gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - 55), kPatchTrackRowY);
+  gfx->print(buf);
+}
+
+void drawPatchScope() {
+  gfx->fillRect(kMargin, kPatchScopeTop, kScreenSize - 2 * kMargin, kPatchScopeH, RGB565_BLACK);
+  gfx->drawRect(kMargin, kPatchScopeTop, kScreenSize - 2 * kMargin, kPatchScopeH, kFaint);
+  if (!scopeHasData) {
+    gfx->setTextSize(1);
+    gfx->setTextColor(kDim);
+    gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(kPatchScopeTop + kPatchScopeH / 2 - 4));
+    gfx->print("(silence -- joue une note sur cette piste)");
+    return;
+  }
+  const int16_t w = static_cast<int16_t>(kScreenSize - 2 * kMargin);
+  int16_t prevX = kMargin, prevY = static_cast<int16_t>(kPatchScopeTop + kPatchScopeH / 2);
+  const uint16_t traceColor = kPalette[patchTrack % kPaletteCount];
+  for (uint8_t i = 0; i < az2::kScopeSamplesPerPacket; ++i) {
+    const int16_t x = static_cast<int16_t>(kMargin + (i * w) / (az2::kScopeSamplesPerPacket - 1));
+    const int16_t y = static_cast<int16_t>(kPatchScopeTop + 1 +
+                                            ((255 - scopeSamples[i]) * (kPatchScopeH - 2)) / 255);
+    if (i > 0) {
+      gfx->drawLine(prevX, prevY, x, y, traceColor);
+    }
+    prevX = x;
+    prevY = y;
+  }
+}
+
+void patchRowRect(uint8_t i, int16_t &y) {
+  y = static_cast<int16_t>(kPatchRowTop + i * kPatchRowH);
+}
+
+void drawPatchRow(uint8_t i) {
+  int16_t y;
+  patchRowRect(i, y);
+  const int16_t rowH = static_cast<int16_t>(kPatchRowH - 4);
+  const int16_t minusX = static_cast<int16_t>(kScreenSize - kMargin - 2 * kPatchBtnW - 4);
+  const int16_t plusX = static_cast<int16_t>(kScreenSize - kMargin - kPatchBtnW);
+
+  gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, rowH, RGB565_BLACK);
+  gfx->drawRect(kMargin, y, kScreenSize - 2 * kMargin, rowH, kFaint);
+  gfx->drawRect(minusX, y, kPatchBtnW, rowH, kFaint);
+  gfx->drawRect(plusX, y, kPatchBtnW, rowH, kFaint);
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(static_cast<int16_t>(kMargin + 6), static_cast<int16_t>(y + 4));
+  gfx->print(kPatchLabels[i]);
+
+  char buf[6];
+  snprintf(buf, sizeof(buf), "%3d", patchParams[i]);
+  gfx->setTextSize(2);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(static_cast<int16_t>(kMargin + 130), static_cast<int16_t>(y + 2));
+  gfx->print(buf);
+
+  gfx->setCursor(static_cast<int16_t>(minusX + 12), static_cast<int16_t>(y + 4));
+  gfx->print('-');
+  gfx->setCursor(static_cast<int16_t>(plusX + 12), static_cast<int16_t>(y + 4));
+  gfx->print('+');
+}
+
+void sendPatchFilt() {
+  char msg[24];
+  snprintf(msg, sizeof(msg), "FILT:%d:%d:%d", patchTrack, patchParams[0], patchParams[1]);
+  sendToTeensy(msg);
+}
+
+void sendPatchEnv() {
+  char msg[24];
+  snprintf(msg, sizeof(msg), "ENV:%d:%d:%d:%d:%d", patchTrack, patchParams[2], patchParams[3], patchParams[4],
+           patchParams[5]);
+  sendToTeensy(msg);
+}
+
+void drawPatchPage() {
+  drawSubHeader("PATCH", kPalette[4]);
+  drawPatchTrackRow();
+  drawPatchScope();
+  for (uint8_t i = 0; i < 6; ++i) {
+    drawPatchRow(i);
+  }
+}
+
+bool hitTestPatchTrackPrev(int16_t x, int16_t y) {
+  return inBox(x, y, kMargin, kPatchTrackRowY, kScreenSize / 2 - kMargin, 22);
+}
+bool hitTestPatchTrackNext(int16_t x, int16_t y) {
+  return inBox(x, y, kScreenSize / 2, kPatchTrackRowY, kScreenSize / 2 - kMargin, 22);
+}
+
+// Renvoie -1 (aucun), sinon l'index de ligne (0-5) ; isPlusSide indique -/+.
+int8_t hitTestPatchRow(int16_t x, int16_t y, bool &isPlusSide) {
+  for (uint8_t i = 0; i < 6; ++i) {
+    int16_t rowY;
+    patchRowRect(i, rowY);
+    const int16_t rowH = static_cast<int16_t>(kPatchRowH - 4);
+    const int16_t minusX = static_cast<int16_t>(kScreenSize - kMargin - 2 * kPatchBtnW - 4);
+    const int16_t plusX = static_cast<int16_t>(kScreenSize - kMargin - kPatchBtnW);
+    if (inBox(x, y, minusX, rowY, kPatchBtnW, rowH)) {
+      isPlusSide = false;
+      return static_cast<int8_t>(i);
+    }
+    if (inBox(x, y, plusX, rowY, kPatchBtnW, rowH)) {
+      isPlusSide = true;
+      return static_cast<int8_t>(i);
+    }
+  }
+  return -1;
+}
+
+// ---------------------------------------------------------------------
 // Page LIENS SERIE -- journal des dernieres lignes Teensy
 // ---------------------------------------------------------------------
 void drawLinksPage() {
@@ -1333,6 +1480,7 @@ void drawScreen(Screen s) {
     case Screen::Config: drawConfigPage(); return;
     case Screen::Links: drawLinksPage(); return;
     case Screen::About: drawAboutPage(); return;
+    case Screen::Patch: drawPatchPage(); return;
   }
 }
 
@@ -1361,6 +1509,18 @@ void goTo(Screen s) {
   // au milieu d'une vue detail perimee (meme logique que le menu).
   if (s != Screen::Sequencer) {
     seqDetailMode = false;
+  }
+
+  // Page PATCH : l'oscilloscope (voir kScopePacketMagic) ne doit tourner
+  // QUE quand cette page est affichee -- cout CPU nul cote Teensy sinon
+  // (voir scopeQueue.end() dans handleScopeCommand()).
+  if (s == Screen::Patch) {
+    char msg[12];
+    snprintf(msg, sizeof(msg), "SCOPE:%d", patchTrack);
+    sendToTeensy(msg);
+    scopeHasData = false;
+  } else if (currentScreen == Screen::Patch) {
+    sendToTeensy("SCOPE:OFF");
   }
 
   currentScreen = s;
@@ -1767,9 +1927,61 @@ void handleTeensyLine(const String &line) {
   }
 }
 
+// Etat de reception binaire (paquets oscilloscope, voir
+// kScopePacketMagic) -- mele au flux texte habituel sur Serial1, meme
+// principe que le son GB cote Teensy (voir AudioRxState dans
+// src_teensy/az2_audio/main.cpp) mais dans l'autre sens.
+struct ScopeRxState {
+  bool inPacket = false;
+  bool haveLen = false;
+  uint8_t len = 0;
+  uint8_t pos = 0;
+  uint8_t buf[255];
+};
+ScopeRxState scopeRx;
+
+// Paquet binaire recu du Teensy (voir kScopePacketMagic dans
+// AZ2_Protocol.h) -- met a jour le tracer d'onde si la page PATCH est
+// affichee.
+void handleScopePacket(const uint8_t *data, uint8_t len) {
+  const uint8_t n = min(len, az2::kScopeSamplesPerPacket);
+  for (uint8_t i = 0; i < n; ++i) {
+    scopeSamples[i] = data[i];
+  }
+  scopeHasData = true;
+  if (currentScreen == Screen::Patch && !screensaverActive) {
+    drawPatchScope();
+  }
+}
+
 void readTeensyStatus() {
   while (Serial1.available() > 0) {
-    const char c = static_cast<char>(Serial1.read());
+    const uint8_t b = static_cast<uint8_t>(Serial1.read());
+
+    if (scopeRx.inPacket) {
+      if (!scopeRx.haveLen) {
+        scopeRx.len = b;
+        scopeRx.pos = 0;
+        scopeRx.haveLen = true;
+        if (scopeRx.len == 0) {
+          scopeRx.inPacket = false;
+        }
+        continue;
+      }
+      scopeRx.buf[scopeRx.pos++] = b;
+      if (scopeRx.pos >= scopeRx.len) {
+        handleScopePacket(scopeRx.buf, scopeRx.len);
+        scopeRx.inPacket = false;
+      }
+      continue;
+    }
+    if (b == az2::kScopePacketMagic) {
+      scopeRx.inPacket = true;
+      scopeRx.haveLen = false;
+      continue;
+    }
+
+    const char c = static_cast<char>(b);
     if (c == '\r') continue;
     if (c == '\n') {
       teensyLine.trim();
@@ -2051,6 +2263,29 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
         snprintf(msg, sizeof(msg), "PATCH:%d:%d", track, nextPatch);
       }
       sendToTeensy(msg);
+    }
+  } else if (currentScreen == Screen::Patch) {
+    if (hitTestPatchTrackPrev(x, y) || hitTestPatchTrackNext(x, y)) {
+      patchTrack = static_cast<int8_t>((patchTrack + (hitTestPatchTrackNext(x, y) ? 1 : kSeqTrackCount - 1)) %
+                                        kSeqTrackCount);
+      scopeHasData = false;
+      char msg[12];
+      snprintf(msg, sizeof(msg), "SCOPE:%d", patchTrack);
+      sendToTeensy(msg);
+      drawPatchPage();
+    } else {
+      bool isPlusSide = false;
+      const int8_t row = hitTestPatchRow(x, y, isPlusSide);
+      if (row >= 0) {
+        const int delta = isPlusSide ? 1 : -1;
+        patchParams[row] = static_cast<uint8_t>(constrain(static_cast<int>(patchParams[row]) + delta, 0, 127));
+        drawPatchRow(static_cast<uint8_t>(row));
+        if (row < 2) {
+          sendPatchFilt();
+        } else {
+          sendPatchEnv();
+        }
+      }
     }
   } else if (currentScreen == Screen::Config) {
     if (hitTestCfgMinus(x, y)) {
