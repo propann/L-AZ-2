@@ -184,9 +184,16 @@ inline void printDivision(Print &out, uint8_t stepsPerBeat) {
 constexpr uint8_t kEngineDexed = 0;
 constexpr uint8_t kEngineEPiano = 1;
 constexpr uint8_t kEngineBraids = 2;
-constexpr uint8_t kEngineCount = 3;
+// Ajoutes le 2026-09-15 ("on voit si on peut ajouter des moteurs audio")
+// -- objets STANDARD de la lib Audio Teensy (AudioSynthKarplusStrong,
+// AudioSynthWaveform+AudioEffectEnvelope), zero vendoring supplementaire,
+// choisis pour couvrir 2 familles de synthese totalement differentes des
+// 3 premiers moteurs (physique/corde pincee, et analogique/soustractif).
+constexpr uint8_t kEngineKarplus = 3;
+constexpr uint8_t kEngineAnalog = 4;
+constexpr uint8_t kEngineCount = 5;
 
-constexpr const char *kEngineNames[kEngineCount] = {"DEXED", "EPIANO", "BRAIDS"};
+constexpr const char *kEngineNames[kEngineCount] = {"DEXED", "EPIANO", "BRAIDS", "KARPLUS", "ANALOG"};
 
 constexpr uint8_t kDexedPatchCount = 8;
 constexpr const char *kDexedPatchNames[kDexedPatchCount] = {
@@ -205,11 +212,27 @@ constexpr const char *kBraidsPatchNames[kBraidsPatchCount] = {
     "Vosim", "FM", "Plucked", "Saw Swarm",
 };
 
+// AudioSynthKarplusStrong n'expose aucun parametre de forme (juste
+// noteOn(freq,vel)/noteOff()) -- un seul "patch" possible avec cet objet.
+constexpr uint8_t kKarplusPatchCount = 1;
+constexpr const char *kKarplusPatchNames[kKarplusPatchCount] = {"Corde pincee"};
+
+// AudioSynthWaveform : la forme d'onde EST le patch (WAVEFORM_* dans
+// synth_waveform.h) -- ordre choisi pour couvrir les classiques
+// analogiques (sinus/dent de scie/carre/triangle), voir applyTrackPatch()
+// cote Teensy pour la correspondance avec les constantes WAVEFORM_*.
+constexpr uint8_t kAnalogPatchCount = 4;
+constexpr const char *kAnalogPatchNames[kAnalogPatchCount] = {
+    "Sinus", "Dent de scie", "Carre", "Triangle",
+};
+
 inline uint8_t enginePatchCount(uint8_t engine) {
   switch (engine) {
     case kEngineDexed: return kDexedPatchCount;
     case kEngineEPiano: return kEPianoPatchCount;
     case kEngineBraids: return kBraidsPatchCount;
+    case kEngineKarplus: return kKarplusPatchCount;
+    case kEngineAnalog: return kAnalogPatchCount;
     default: return 1;
   }
 }
@@ -219,6 +242,8 @@ inline const char *enginePatchName(uint8_t engine, uint8_t patch) {
     case kEngineDexed: return patch < kDexedPatchCount ? kDexedPatchNames[patch] : "?";
     case kEngineEPiano: return patch < kEPianoPatchCount ? kEPianoPatchNames[patch] : "?";
     case kEngineBraids: return patch < kBraidsPatchCount ? kBraidsPatchNames[patch] : "?";
+    case kEngineKarplus: return patch < kKarplusPatchCount ? kKarplusPatchNames[patch] : "?";
+    case kEngineAnalog: return patch < kAnalogPatchCount ? kAnalogPatchNames[patch] : "?";
     default: return "?";
   }
 }

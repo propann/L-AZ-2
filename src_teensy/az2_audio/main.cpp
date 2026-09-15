@@ -68,9 +68,26 @@ AudioSynthEPiano trackEPianoEngine[kTrackCount] = {
     AudioSynthEPiano(kNotesPerTrack), AudioSynthEPiano(kNotesPerTrack),
 };
 AudioSynthBraids trackBraidsEngine[kTrackCount];  // pas de parametre de constructeur
+AudioSynthKarplusStrong trackKarplusEngine[kTrackCount];  // corde pincee, pas de parametre non plus
+// Moteur "Analogique" = oscillateur continu (comme Braids) + enveloppe
+// ADSR standard -- 2 objets chaines en permanence par piste (le "moteur"
+// selectionnable, cote patchTrackIn[], c'est la SORTIE de l'enveloppe,
+// pas l'oscillateur directement).
+AudioSynthWaveform trackAnalogWave[kTrackCount];
+AudioEffectEnvelope trackAnalogEnv[kTrackCount];
+AudioConnection patchAnalogEnv[kTrackCount] = {
+    AudioConnection(trackAnalogWave[0], 0, trackAnalogEnv[0], 0), AudioConnection(trackAnalogWave[1], 0, trackAnalogEnv[1], 0),
+    AudioConnection(trackAnalogWave[2], 0, trackAnalogEnv[2], 0), AudioConnection(trackAnalogWave[3], 0, trackAnalogEnv[3], 0),
+    AudioConnection(trackAnalogWave[4], 0, trackAnalogEnv[4], 0), AudioConnection(trackAnalogWave[5], 0, trackAnalogEnv[5], 0),
+    AudioConnection(trackAnalogWave[6], 0, trackAnalogEnv[6], 0), AudioConnection(trackAnalogWave[7], 0, trackAnalogEnv[7], 0),
+};
 AudioSynthDexed liveVoice(kLiveNotes, SAMPLE_RATE);   // voix live (pads/ecran), pas concernee par le choix de moteur
 
 constexpr float kBraidsActiveGain = 0.5f;  // meme niveau que les autres pistes
+
+float midiNoteToFreq(uint8_t note) {
+  return 440.0f * powf(2.0f, (static_cast<float>(note) - 69.0f) / 12.0f);
+}
 
 // AudioMixer4 n'a que 4 entrees : avec 8 pistes il en faut 2 (groupe A =
 // pistes 0-3, groupe B = pistes 4-7), combinees dans mixFinal avec la
@@ -216,6 +233,11 @@ const uint8_t kDexedPatchBank[8][128] PROGMEM = {
 // GARDER LE MEME ORDRE que az2::kBraidsPatchNames.
 const int16_t kBraidsShapeValues[8] = {0, 2, 9, 16, 21, 25, 28, 14};
 
+// Formes AudioSynthWaveform choisies pour le moteur ANALOG (voir
+// synth_waveform.h: WAVEFORM_*) -- GARDER LE MEME ORDRE que
+// az2::kAnalogPatchNames (AZ2_Protocol.h).
+const short kAnalogWaveformValues[4] = {WAVEFORM_SINE, WAVEFORM_SAWTOOTH, WAVEFORM_SQUARE, WAVEFORM_TRIANGLE};
+
 // Charge le patch courant (trackPatch[track]) dans le moteur actuellement
 // actif de la piste (trackEngine[track]). Partagee avec liveVoice (voir
 // setup()) qui n'a pas de "piste" mais profite des memes patchs nommes.
@@ -238,6 +260,11 @@ void applyTrackPatch(uint8_t track) {
       break;
     case az2::kEngineBraids:
       trackBraidsEngine[track].set_braids_shape(kBraidsShapeValues[patch % az2::kBraidsPatchCount]);
+      break;
+    case az2::kEngineKarplus:
+      break;  // AudioSynthKarplusStrong n'a pas de parametre de forme, rien a faire
+    case az2::kEngineAnalog:
+      trackAnalogWave[track].begin(kAnalogWaveformValues[patch % az2::kAnalogPatchCount]);
       break;
   }
 }
@@ -273,6 +300,15 @@ void setTrackEngine(uint8_t track, uint8_t engine) {
       break;
     case az2::kEngineBraids:
       patchTrackIn[track].connect(trackBraidsEngine[track], 0, group, channel);
+      break;
+    case az2::kEngineKarplus:
+      patchTrackIn[track].connect(trackKarplusEngine[track], 0, group, channel);
+      break;
+    case az2::kEngineAnalog:
+      // Le point de connexion "moteur" est la SORTIE de l'enveloppe, pas
+      // l'oscillateur directement (voir trackAnalogEnv[]/patchAnalogEnv[]
+      // plus haut, chaine en permanence).
+      patchTrackIn[track].connect(trackAnalogEnv[track], 0, group, channel);
       break;
   }
 
@@ -421,6 +457,14 @@ void trackNoteOn(uint8_t track, uint8_t note, uint8_t velocity) {
       trackBraidsEngine[track].set_braids_pitch(static_cast<int16_t>(note) << 7);
       trackGroupMixer(track).gain(trackGroupChannel(track), kBraidsActiveGain);
       break;
+    case az2::kEngineKarplus:
+      trackKarplusEngine[track].noteOn(midiNoteToFreq(note), static_cast<float>(velocity) / 127.0f);
+      break;
+    case az2::kEngineAnalog:
+      trackAnalogWave[track].frequency(midiNoteToFreq(note));
+      trackAnalogWave[track].amplitude(0.8f);
+      trackAnalogEnv[track].noteOn();
+      break;
   }
 }
 
@@ -429,6 +473,8 @@ void trackNoteOff(uint8_t track, uint8_t note) {
     case az2::kEngineDexed: trackDexedEngine[track].keyup(note); break;
     case az2::kEngineEPiano: trackEPianoEngine[track].noteOff(note); break;
     case az2::kEngineBraids: trackGroupMixer(track).gain(trackGroupChannel(track), 0.0f); break;
+    case az2::kEngineKarplus: trackKarplusEngine[track].noteOff(1.0f); break;
+    case az2::kEngineAnalog: trackAnalogEnv[track].noteOff(); break;
   }
 }
 
@@ -998,6 +1044,14 @@ void setup() {
   // sinon une piste basculee sur Braids plus tard partirait non initialisee.
   for (uint8_t t = 0; t < kTrackCount; ++t) {
     trackBraidsEngine[t].init_braids();
+  }
+  // Enveloppe ADSR par defaut du moteur ANALOG (attaque/chute rapides,
+  // maintien franc -- profil "synthe" standard, pas percussif).
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    trackAnalogEnv[t].attack(5.0f);
+    trackAnalogEnv[t].decay(50.0f);
+    trackAnalogEnv[t].sustain(0.7f);
+    trackAnalogEnv[t].release(150.0f);
   }
   loadDexedPatch(liveVoice, 0);  // "FM-Rhodes" plutot qu'un init_voice vide
 

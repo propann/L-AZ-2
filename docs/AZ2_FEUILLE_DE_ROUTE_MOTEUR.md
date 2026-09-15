@@ -78,8 +78,9 @@ abrupt, coherent avec son usage typique.
    suite a la demande explicite ("les moteurs audio ne sont pas
    selectionnables ni reglables ... sans patch ca va pas, faut faire un
    truc propre") -- avance depuis l'etape 5 initialement prevue plus tard :
-   - Chaque piste a ses 3 instances de moteur (Dexed/EPiano/Braids)
-     toujours creees, une seule branchee au mixeur a la fois via
+   - Chaque piste a ses instances de moteur (a l'origine
+     Dexed/EPiano/Braids, **5 moteurs depuis le 2026-09-15**, voir plus
+     bas) toujours creees, une seule branchee au mixeur a la fois via
      `AudioConnection::connect()`/`disconnect()` (API officielle de patch
      runtime de la lib Audio) -- un moteur non selectionne ne consomme
      AUCUN CPU (la lib ne fait tourner `update()` que sur les objets
@@ -90,6 +91,16 @@ abrupt, coherent avec son usage typique.
      Mini-Moog, Moog Strings), 5 programmes mda ePiano (Default, Bright,
      Mellow, Autopan, Tremolo), 8 formes Braids (CSAW, Saw/Square, Triple
      Saw, Toy, Vosim, FM, Plucked, Saw Swarm).
+   - **[FAIT, 2026-09-15]** 2 moteurs de plus, suite a "on voit si on
+     peut ajouter des moteurs audio si oui lesquels" : **KARPLUS**
+     (`AudioSynthKarplusStrong`, corde pincee physique, 1 seul patch --
+     l'objet n'expose aucun parametre de forme) et **ANALOG**
+     (`AudioSynthWaveform` + `AudioEffectEnvelope` chaines en
+     permanence, patch = forme d'onde : Sinus/Dent de scie/Carre/
+     Triangle). Les deux sont des objets STANDARD de la lib Audio
+     Teensy, zero vendoring supplementaire. CPU mesure apres ajout :
+     toujours ~8% de pic (voir "performance reelle" plus bas), tres
+     large marge pour en ajouter encore si besoin.
    - Protocole `ENGINE:piste:moteur` / `PATCH:piste:patch`, table de noms
      partagee ESP32/Teensy/Pico dans AZ2_Protocol.h (`kEngineNames`,
      `k*PatchNames`, `enginePatchCount()`/`enginePatchName()`) -- l'index
