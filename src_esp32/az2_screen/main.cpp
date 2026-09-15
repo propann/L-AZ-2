@@ -828,11 +828,11 @@ void drawAboutPage() {
 // (pas de sauvegarde flash/NVS -- revient a la valeur par defaut au
 // redemarrage, a ajouter plus tard si besoin).
 // ---------------------------------------------------------------------
-// 180 (au lieu de 60) depuis "l'ecran de veille saute tout le temps a la
-// figure" (2026-09-15) -- 1 minute est trop court pendant une session de
-// cablage/soudure avec de longues pauses sans toucher l'ecran. Reste
-// reglable en direct depuis cette page.
-uint16_t screensaverTimeoutSec = 180;
+// Remis a 60 (1 minute, demande explicitement) -- le vrai probleme
+// n'etait pas la duree mais un bug qui relancait la veille juste apres
+// l'avoir quittee (voir le commentaire pres de "nowForIdle" dans loop()).
+// Reste reglable en direct depuis cette page.
+uint16_t screensaverTimeoutSec = 60;
 constexpr uint16_t kScreensaverStepSec = 10;
 constexpr uint16_t kScreensaverMaxSec = 600;
 
@@ -1430,9 +1430,18 @@ void loop() {
   }
 
   // Ecran de veille "Matrix" (voir docs, page CONFIGURATION) : s'active
-  // apres screensaverTimeoutSec sans activite (0 = desactive).
+  // apres screensaverTimeoutSec sans activite (0 = desactive). BUG
+  // CORRIGE le 2026-09-15 ("quand je reveille l'ecran ca remet en mode
+  // veille") : ce test utilisait le "now" fige en haut de loop(), mais
+  // noteActivity() (appelee juste au-dessus sur un reveil) remet
+  // lastActivityMs a une lecture PLUS RECENTE de millis() -- "now"
+  // devenait alors plus petit que lastActivityMs, et la soustraction
+  // non signee "now - lastActivityMs" debordait vers un nombre enorme,
+  // redeclenchant la veille instantanement dans le MEME tour de boucle.
+  // Fix : relire millis() ici, apres tout traitement d'activite.
+  const uint32_t nowForIdle = millis();
   if (!screensaverActive && screensaverTimeoutSec > 0 &&
-      (now - lastActivityMs) >= static_cast<uint32_t>(screensaverTimeoutSec) * 1000UL) {
+      (nowForIdle - lastActivityMs) >= static_cast<uint32_t>(screensaverTimeoutSec) * 1000UL) {
     screensaverEnter();
   }
   if (screensaverActive) {
