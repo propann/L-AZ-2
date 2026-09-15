@@ -176,6 +176,14 @@ bool gbLoadFirstRom() {
 
   gb_init_lcd(&gb, lcdDrawLine);
   gb.direct.joypad = 0xFF;  // rien de presse (voir gbSetButton() -- 0=presse, 1=relache)
+  // frame_skip=true : le coeur continue d'emuler CHAQUE frame a vitesse
+  // normale (logique/timing du jeu corrects), mais n'appelle
+  // lcd_draw_line() qu'une frame sur deux -- demande le 2026-09-15
+  // ("on a des sauts d'images, on peut stabiliser") : le rendu (appels
+  // vers le bus RGB parallele, voir gbBlitLine() dans main.cpp) est le
+  // gros cout, pas l'emulation CPU -- diviser son volume par 2 stabilise
+  // la cadence sans ralentir le jeu.
+  gb.direct.frame_skip = true;
 
   gb_get_rom_name(&gb, romTitle);
   romLoaded = true;

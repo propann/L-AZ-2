@@ -1281,18 +1281,25 @@ constexpr int16_t kGbScaledW = 160 * 3;
 constexpr int16_t kGbScaledH = 144 * 3;
 constexpr int16_t kGbScreenTop = (kScreenSize - kGbScaledH) / 2;
 
+// Un SEUL draw16bitRGBBitmap() par ligne source (480x3 d'un coup) au
+// lieu de 3 -- demande le 2026-09-15 ("on a des sauts d'images, on peut
+// stabiliser"), moins d'appels = moins de surcharge par appel vers le
+// bus RGB parallele.
 void gbBlitLine(int line, const uint16_t *row) {
-  static uint16_t scaledRow[kGbScaledW];
+  static uint16_t scaledBlock[kGbScaledW * 3];
   for (int x = 0; x < 160; ++x) {
     const uint16_t c = row[x];
-    scaledRow[x * 3] = c;
-    scaledRow[x * 3 + 1] = c;
-    scaledRow[x * 3 + 2] = c;
+    const int16_t base = static_cast<int16_t>(x * 3);
+    scaledBlock[base] = c;
+    scaledBlock[base + 1] = c;
+    scaledBlock[base + 2] = c;
   }
+  // Les 2 autres rangees de sortie sont identiques a la premiere.
+  memcpy(scaledBlock + kGbScaledW, scaledBlock, kGbScaledW * sizeof(uint16_t));
+  memcpy(scaledBlock + kGbScaledW * 2, scaledBlock, kGbScaledW * sizeof(uint16_t));
+
   const int16_t y = static_cast<int16_t>(kGbScreenTop + line * 3);
-  gfx->draw16bitRGBBitmap(0, y, scaledRow, kGbScaledW, 1);
-  gfx->draw16bitRGBBitmap(0, static_cast<int16_t>(y + 1), scaledRow, kGbScaledW, 1);
-  gfx->draw16bitRGBBitmap(0, static_cast<int16_t>(y + 2), scaledRow, kGbScaledW, 1);
+  gfx->draw16bitRGBBitmap(0, y, scaledBlock, kGbScaledW, 3);
 }
 
 void setup() {
