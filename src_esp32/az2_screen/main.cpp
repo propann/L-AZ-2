@@ -183,7 +183,7 @@ bool inBox(int16_t x, int16_t y, int16_t bx, int16_t by, int16_t bw, int16_t bh)
 // ---------------------------------------------------------------------
 // Etat partage entre les pages / le lien Teensy
 // ---------------------------------------------------------------------
-enum class Screen : uint8_t { Menu, Controls, Encoders, Audio, Sequencer, Engines, Retro, Links, About };
+enum class Screen : uint8_t { Menu, Controls, Encoders, Audio, Sequencer, Engines, Retro, Config, Links, About };
 Screen currentScreen = Screen::Menu;
 
 int32_t macroValue[4] = {};
@@ -254,6 +254,7 @@ constexpr MenuItem kMenuItems[] = {
     {"ENCODEURS", "verifier les 4 rotatifs", Screen::Encoders},
     {"AUDIO", "jouer le Teensy depuis l'ecran", Screen::Audio},
     {"JEUX", "NES (en construction, voir doc)", Screen::Retro},
+    {"CONFIGURATION", "ecran de veille, reglages", Screen::Config},
     {"LIENS SERIE", "journal ESP32 / Teensy", Screen::Links},
     {"A PROPOS", "version, roles, build", Screen::About},
 };
@@ -261,22 +262,22 @@ constexpr uint8_t kMenuItemCount = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
 
 constexpr int16_t kMenuLeft = 48;
 constexpr int16_t kMenuTop = 130;
-// 39 (au lieu de 42) depuis l'ajout de JEUX -- 8 entrees doivent tenir
-// avant la barre d'etat en bas d'ecran (kStatusY).
-constexpr int16_t kMenuRowH = 39;
+// 34 (au lieu de 39) depuis l'ajout de CONFIGURATION -- 9 entrees doivent
+// tenir avant la barre d'etat en bas d'ecran (kStatusY).
+constexpr int16_t kMenuRowH = 34;
 constexpr int16_t kMenuWidth = kScreenSize - 2 * kMenuLeft;
 
 void drawMenuRow(uint8_t index) {
   const int16_t y = kMenuTop + index * kMenuRowH;
   const uint16_t accent = kPalette[index % kPaletteCount];
-  gfx->drawRect(kMenuLeft, y, kMenuWidth, kMenuRowH - 8, accent);
+  gfx->drawRect(kMenuLeft, y, kMenuWidth, kMenuRowH - 6, accent);
   gfx->setTextColor(RGB565_WHITE);
   gfx->setTextSize(2);
-  gfx->setCursor(kMenuLeft + 14, y + 3);
+  gfx->setCursor(kMenuLeft + 14, y + 2);
   gfx->print(kMenuItems[index].label);
   gfx->setTextSize(1);
   gfx->setTextColor(kDim);
-  gfx->setCursor(kMenuLeft + 14, y + 22);
+  gfx->setCursor(kMenuLeft + 14, y + 20);
   gfx->print(kMenuItems[index].hint);
 }
 
@@ -303,7 +304,7 @@ int8_t hitTestMenuRow(int16_t x, int16_t y) {
   }
   for (uint8_t i = 0; i < kMenuItemCount; ++i) {
     const int16_t rowTop = kMenuTop + i * kMenuRowH;
-    if (y >= rowTop && y < rowTop + (kMenuRowH - 8)) {
+    if (y >= rowTop && y < rowTop + (kMenuRowH - 6)) {
       return static_cast<int8_t>(i);
     }
   }
@@ -866,9 +867,9 @@ void drawAboutPage() {
       "AZ-2 groovebox",
       "Ecran: VIEWE UEDX48480040E-WB (GC9503V)",
       "Tactile: FT6336U",
-      "Audio: Teensy 4.1 + Synth_Dexed + PCM5102A",
-      "Clavier: Pico (matrice 4x4 + mux LED RGB + 4 enc.)",
-      "Build: screen_esp, 2026-09-13",
+      "Audio: Teensy 4.1, 5 moteurs, 8 pistes, FX maitre",
+      "Controle: croix + 4 boutons + 3 potards (Teensy)",
+      "Build: screen_esp, 2026-09-15",
   };
   gfx->setTextSize(1);
   gfx->setTextColor(RGB565_WHITE);
@@ -876,6 +877,137 @@ void drawAboutPage() {
     gfx->setCursor(kMargin, static_cast<int16_t>(90 + i * 22));
     gfx->print(lines[i]);
   }
+}
+
+// ---------------------------------------------------------------------
+// Page CONFIGURATION -- reglage de l'ecran de veille "Matrix" (demande le
+// 2026-09-15). 0 = desactive. Reglage en RAM uniquement pour l'instant
+// (pas de sauvegarde flash/NVS -- revient a la valeur par defaut au
+// redemarrage, a ajouter plus tard si besoin).
+// ---------------------------------------------------------------------
+uint16_t screensaverTimeoutSec = 60;
+constexpr uint16_t kScreensaverStepSec = 10;
+constexpr uint16_t kScreensaverMaxSec = 600;
+
+constexpr int16_t kCfgRowY = 140;
+constexpr int16_t kCfgRowH = 50;
+constexpr int16_t kCfgBtnW = 60;
+
+void drawConfigPage() {
+  drawSubHeader("CONFIGURATION", kPalette[3]);
+
+  const int16_t minusX = kMargin;
+  const int16_t plusX = static_cast<int16_t>(kScreenSize - kMargin - kCfgBtnW);
+
+  gfx->fillRect(kMargin, kCfgRowY, kScreenSize - 2 * kMargin, kCfgRowH, RGB565_BLACK);
+  gfx->drawRect(minusX, kCfgRowY, kCfgBtnW, kCfgRowH, kFaint);
+  gfx->drawRect(plusX, kCfgRowY, kCfgBtnW, kCfgRowH, kFaint);
+  gfx->setTextSize(3);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(static_cast<int16_t>(minusX + 20), static_cast<int16_t>(kCfgRowY + 10));
+  gfx->print('-');
+  gfx->setCursor(static_cast<int16_t>(plusX + 20), static_cast<int16_t>(kCfgRowY + 10));
+  gfx->print('+');
+
+  char buf[24];
+  if (screensaverTimeoutSec == 0) {
+    snprintf(buf, sizeof(buf), "DESACTIVE");
+  } else {
+    snprintf(buf, sizeof(buf), "%u s", screensaverTimeoutSec);
+  }
+  gfx->setTextSize(2);
+  gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - 50), static_cast<int16_t>(kCfgRowY + 15));
+  gfx->print(buf);
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(kMargin, static_cast<int16_t>(kCfgRowY - 20));
+  gfx->print("ECRAN DE VEILLE (MATRIX) APRES");
+}
+
+bool hitTestCfgMinus(int16_t x, int16_t y) {
+  return inBox(x, y, kMargin, kCfgRowY, kCfgBtnW, kCfgRowH);
+}
+bool hitTestCfgPlus(int16_t x, int16_t y) {
+  return inBox(x, y, static_cast<int16_t>(kScreenSize - kMargin - kCfgBtnW), kCfgRowY, kCfgBtnW, kCfgRowH);
+}
+
+// ---------------------------------------------------------------------
+// Ecran de veille "Matrix" -- s'active apres screensaverTimeoutSec sans
+// activite (toucher ecran OU NAV:/BTN: du Teensy, voir loop()/
+// handleTeensyLine()). Demande le 2026-09-15, reprend l'esthetique
+// "pixel art / synthwave / matrice" du projet depuis le debut.
+// ---------------------------------------------------------------------
+constexpr int16_t kMatrixCharW = 12;
+constexpr int16_t kMatrixCharH = 16;
+constexpr uint8_t kMatrixCols = kScreenSize / kMatrixCharW;
+constexpr int16_t kMatrixRows = kScreenSize / kMatrixCharH;
+constexpr uint8_t kMatrixTrailLen = 10;
+
+bool screensaverActive = false;
+uint32_t lastActivityMs = 0;
+int16_t matrixDropRow[kMatrixCols];
+uint32_t matrixLastStepMs = 0;
+
+char matrixRandomChar() {
+  return static_cast<char>(random(33, 126));
+}
+
+void screensaverEnter() {
+  screensaverActive = true;
+  gfx->fillScreen(RGB565_BLACK);
+  for (uint8_t c = 0; c < kMatrixCols; ++c) {
+    matrixDropRow[c] = static_cast<int16_t>(-random(0, kMatrixRows));
+  }
+}
+
+void drawScreen(Screen s);  // definie plus bas, utilisee ici
+
+void screensaverExit() {
+  screensaverActive = false;
+  drawScreen(currentScreen);
+}
+
+void screensaverStep() {
+  const uint32_t now = millis();
+  if (now - matrixLastStepMs < 60) {
+    return;
+  }
+  matrixLastStepMs = now;
+
+  gfx->setTextSize(2);
+  for (uint8_t c = 0; c < kMatrixCols; ++c) {
+    const int16_t x = static_cast<int16_t>(c * kMatrixCharW);
+
+    const int16_t tailRow = static_cast<int16_t>(matrixDropRow[c] - kMatrixTrailLen);
+    if (tailRow >= 0 && tailRow < kMatrixRows) {
+      gfx->setTextColor(RGB565_BLACK);
+      gfx->setCursor(x, static_cast<int16_t>(tailRow * kMatrixCharH));
+      gfx->print(matrixRandomChar());
+    }
+
+    const int16_t trailRow = static_cast<int16_t>(matrixDropRow[c] - 1);
+    if (trailRow >= 0 && trailRow < kMatrixRows) {
+      gfx->setTextColor(RGB565(0, 160, 60));
+      gfx->setCursor(x, static_cast<int16_t>(trailRow * kMatrixCharH));
+      gfx->print(matrixRandomChar());
+    }
+
+    if (matrixDropRow[c] >= 0 && matrixDropRow[c] < kMatrixRows) {
+      gfx->setTextColor(RGB565(190, 255, 190));
+      gfx->setCursor(x, static_cast<int16_t>(matrixDropRow[c] * kMatrixCharH));
+      gfx->print(matrixRandomChar());
+    }
+
+    ++matrixDropRow[c];
+    if (matrixDropRow[c] - kMatrixTrailLen > kMatrixRows) {
+      matrixDropRow[c] = static_cast<int16_t>(-random(0, kMatrixRows));
+    }
+  }
+}
+
+void noteActivity() {
+  lastActivityMs = millis();
 }
 
 void drawScreen(Screen s) {
@@ -887,6 +1019,7 @@ void drawScreen(Screen s) {
     case Screen::Sequencer: drawSequencerPage(); return;
     case Screen::Engines: drawEnginesPage(); return;
     case Screen::Retro: drawRetroPage(); return;
+    case Screen::Config: drawConfigPage(); return;
     case Screen::Links: drawLinksPage(); return;
     case Screen::About: drawAboutPage(); return;
   }
@@ -915,6 +1048,12 @@ void handleTeensyLine(const String &line) {
     if (firstColon >= 0 && secondColon >= 0) {
       const String dir = line.substring(firstColon + 1, secondColon);
       const bool pressed = line.endsWith("DOWN");
+      if (pressed) {
+        noteActivity();
+        if (screensaverActive) {
+          screensaverExit();
+        }
+      }
       int8_t index = -1;
       if (dir == "UP") index = 0;
       else if (dir == "DOWN") index = 1;
@@ -923,7 +1062,7 @@ void handleTeensyLine(const String &line) {
 
       if (index >= 0) {
         navState[index] = pressed;
-        if (currentScreen == Screen::Controls) {
+        if (currentScreen == Screen::Controls && !screensaverActive) {
           drawNavBox(static_cast<uint8_t>(index));
         }
         // Sur la page SEQUENCEUR, HAUT/BAS transpose la note du dernier
@@ -945,10 +1084,16 @@ void handleTeensyLine(const String &line) {
   } else if (line.startsWith("BTN:") && line.length() >= 6) {
     const char letter = line.charAt(4);
     const bool pressed = line.endsWith("DOWN");
+    if (pressed) {
+      noteActivity();
+      if (screensaverActive) {
+        screensaverExit();
+      }
+    }
     const int8_t index = letter - 'A';
     if (index >= 0 && index < 4) {
       btnState[index] = pressed;
-      if (currentScreen == Screen::Controls) {
+      if (currentScreen == Screen::Controls && !screensaverActive) {
         drawBtnBox(static_cast<uint8_t>(index));
       }
     }
@@ -960,7 +1105,7 @@ void handleTeensyLine(const String &line) {
       const uint8_t value = static_cast<uint8_t>(line.substring(secondColon + 1).toInt());
       if (index < 3) {
         potValue[index] = value;
-        if (currentScreen == Screen::Controls) {
+        if (currentScreen == Screen::Controls && !screensaverActive) {
           drawPotBar(index);
         }
       }
@@ -975,7 +1120,7 @@ void handleTeensyLine(const String &line) {
       const uint8_t note = static_cast<uint8_t>(line.substring(i3 + 1).toInt());
       if (track < kSeqTrackCount && step < kSeqStepCount) {
         seqStepNote[track][step] = note;
-        if (currentScreen == Screen::Sequencer) {
+        if (currentScreen == Screen::Sequencer && !screensaverActive) {
           drawSeqCell(track, step);
         }
       }
@@ -1003,7 +1148,7 @@ void handleTeensyLine(const String &line) {
       const bool on = line.substring(i3 + 1).toInt() != 0;
       if (track < kSeqTrackCount && step < kSeqStepCount) {
         seqStepOn[track][step] = on;
-        if (currentScreen == Screen::Sequencer) {
+        if (currentScreen == Screen::Sequencer && !screensaverActive) {
           drawSeqCell(track, step);
         }
       }
@@ -1015,7 +1160,7 @@ void handleTeensyLine(const String &line) {
       if (newStep < kSeqStepCount && newStep != seqCurrentStep) {
         const uint8_t oldStep = seqCurrentStep;
         seqCurrentStep = newStep;
-        if (currentScreen == Screen::Sequencer) {
+        if (currentScreen == Screen::Sequencer && !screensaverActive) {
           for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
             drawSeqCell(t, oldStep);
             drawSeqCell(t, seqCurrentStep);
@@ -1027,7 +1172,7 @@ void handleTeensyLine(const String &line) {
     const bool nowPlaying = line.endsWith("PLAYING");
     if (nowPlaying != seqPlaying) {
       seqPlaying = nowPlaying;
-      if (currentScreen == Screen::Sequencer) {
+      if (currentScreen == Screen::Sequencer && !screensaverActive) {
         drawSeqTransport();
       }
     }
@@ -1035,7 +1180,7 @@ void handleTeensyLine(const String &line) {
     const float value = line.substring(4).toFloat();
     if (value > 0.0f) {
       seqBpm = value;
-      if (currentScreen == Screen::Sequencer) {
+      if (currentScreen == Screen::Sequencer && !screensaverActive) {
         drawSeqTempo();
       }
     }
@@ -1043,7 +1188,7 @@ void handleTeensyLine(const String &line) {
     const uint8_t value = static_cast<uint8_t>(line.substring(4).toInt());
     if (value > 0) {
       seqStepsPerBeat = value;
-      if (currentScreen == Screen::Sequencer) {
+      if (currentScreen == Screen::Sequencer && !screensaverActive) {
         drawSeqDivision();
         drawSeqGrid();  // les bandes de mesure suivent le regroupement (voir drawSeqBeatBands())
       }
@@ -1277,6 +1422,14 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       }
       sendToTeensy(msg);
     }
+  } else if (currentScreen == Screen::Config) {
+    if (hitTestCfgMinus(x, y)) {
+      screensaverTimeoutSec = screensaverTimeoutSec >= kScreensaverStepSec ? screensaverTimeoutSec - kScreensaverStepSec : 0;
+      drawConfigPage();
+    } else if (hitTestCfgPlus(x, y)) {
+      screensaverTimeoutSec = static_cast<uint16_t>(min<uint32_t>(screensaverTimeoutSec + kScreensaverStepSec, kScreensaverMaxSec));
+      drawConfigPage();
+    }
   }
 }
 
@@ -1303,11 +1456,28 @@ void loop() {
   for (uint8_t slot = 0; slot < 2; ++slot) {
     const bool active = touches[slot].active;
     if (active && !wasActive[slot]) {
-      handleTouchDown(slot, touches[slot].x, touches[slot].y);
+      noteActivity();
+      if (screensaverActive) {
+        screensaverExit();
+      } else {
+        handleTouchDown(slot, touches[slot].x, touches[slot].y);
+      }
     } else if (!active && wasActive[slot]) {
-      handleTouchUp(slot);
+      if (!screensaverActive) {
+        handleTouchUp(slot);
+      }
     }
     wasActive[slot] = active;
+  }
+
+  // Ecran de veille "Matrix" (voir docs, page CONFIGURATION) : s'active
+  // apres screensaverTimeoutSec sans activite (0 = desactive).
+  if (!screensaverActive && screensaverTimeoutSec > 0 &&
+      (now - lastActivityMs) >= static_cast<uint32_t>(screensaverTimeoutSec) * 1000UL) {
+    screensaverEnter();
+  }
+  if (screensaverActive) {
+    screensaverStep();
   }
 
   if (now - lastHeartbeatMs >= 1000) {
