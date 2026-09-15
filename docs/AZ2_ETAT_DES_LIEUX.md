@@ -121,6 +121,18 @@ du temps a chasser -- voir plus bas) :
    gel. Cote ESP32 : page PATCH (selecteur de piste, tracer d'onde,
    6 reglages CUTOFF/RESONANCE/ATTACK/DECAY/SUSTAIN/RELEASE) codee et
    compilee, **jamais vue a l'ecran** (ESP32 pas flashe).
+5. **[FAIT]** Gammes (verrouillage a la saisie) : 5 gammes (chromatique/
+   majeur/mineur/pentatoniques, racine C fixe), reglage sur la page
+   CONFIGURATION. `nextNoteInScale()` remplace le "+/-1 demi-ton" sur
+   la croix (grille ET vue detail du sequenceur) -- saute a la
+   prochaine note dans la gamme. Chromatique = comportement d'origine,
+   retro-compatible par defaut. Cote ESP32 uniquement, rien cote
+   Teensy. Compile, pas vu en reel.
+
+Verification finale (fin de nuit) : `pio run -e master_teensy -e
+screen_esp` -- les deux compilent ensemble sans erreur. Teensy
+reinterroge une derniere fois : `CPU?` -> usage=9.4%/max=9.5%, memoire
+132-144/200 blocs -- stable sur toute la nuit de tests.
 
 ## Etat au reveil -- ce qui reste
 
@@ -128,8 +140,8 @@ du temps a chasser -- voir plus bas) :
   physique). Tout ce qui est cote ecran depuis "Tracker : ticks
   internes..." (voir git log) n'a ete verifie qu'a la compilation :
   fix 8 pistes, vue detail tracker, couleurs d'effets, son GB au DAC
-  (partie ESP32 qui envoie), page PATCH + oscilloscope. **Rien de tout
-  ca n'a ete vu a l'oeil ni entendu.**
+  (partie ESP32 qui envoie), page PATCH + oscilloscope, gammes. **Rien
+  de tout ca n'a ete vu a l'oeil ni entendu.**
 - **Teensy a jour et verifie en reel** pour tout : tick rewrite, filtre,
   ADSR, oscilloscope (bug corrige).
 - Prochaine chose utile au reveil : mode boot manuel sur l'ESP32
