@@ -121,7 +121,11 @@ abrupt, coherent avec son usage typique.
    AZ2_PORTAGE_MICRODEXED_TOUCH.md) -- PSRAM deja confirmee (16 Mo,
    lecture/ecriture OK, teste le 2026-09-13), donc le stockage temporaire
    de samples est pret techniquement des que des fichiers audio existent.
-7. Mode JEUX -- **decision revue le 2026-09-14** (voir
+7. Mode JEUX -- **implemente le 2026-09-15** (voir
+   [AZ2_EMULATION_JEUX.md](AZ2_EMULATION_JEUX.md) pour le detail : coeur
+   vendore, callbacks/rendu/entrees ecrits, compile et flashe sans
+   crash -- pas encore joue en reel faute de ROM legale sur une carte
+   SD). Decision revue le 2026-09-14 (voir
    [AZ2_EMULATION_JEUX.md](AZ2_EMULATION_JEUX.md)) : Retro-Go (vendored
    dans `src_esp32/retro-go-master`) etudie et ECARTE pour la v0, car
    ESP-IDF natif + ecrans SPI seulement -- incompatible avec notre

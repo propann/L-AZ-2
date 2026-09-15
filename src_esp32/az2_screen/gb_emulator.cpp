@@ -1,0 +1,223 @@
+// AZ-2 - Pont entre le coeur Walnut-CGB (walnut_cgb/walnut_cgb.h,
+// callbacks purs, licence MIT) et notre materiel : ROM chargee depuis la
+// carte SD vers la PSRAM du module ESP32-S3 (8 Mo, meme puce que
+// l'ecran -- voir platformio.ini "qio_opi"/"module WROOM-1 N16R8"), puis
+// affichee via gbBlitLine() (implementee dans main.cpp, seul endroit qui
+// connait `gfx`).
+//
+// Son : PAS FAIT dans cette premiere version (ENABLE_SOUND=0) -- notre
+// architecture audio est centree sur le Teensy (voir
+// src_teensy/az2_audio), brancher le son GB dessus demanderait de
+// streamer les echantillons APU par l'UART existant (230400 bauds, pas
+// concu pour de l'audio temps reel) ou un vrai DAC/ampli sur l'ESP32
+// lui-meme -- a designer plus tard, note dans AZ2_EMULATION_JEUX.md.
+// Video seule pour l'instant, comme un GB muet.
+
+#include "gb_emulator.h"
+
+#define ENABLE_LCD 1
+#define ENABLE_SOUND 0
+#include "walnut_cgb/walnut_cgb.h"
+
+#include <Arduino_GFX_Library.h>  // pour la macro RGB565() (palette DMG)
+#include <SD.h>
+#include <esp_heap_caps.h>
+
+namespace {
+
+struct gb_s gb;
+bool romLoaded = false;
+uint8_t *romData = nullptr;
+uint32_t romSize = 0;
+uint8_t *cartRam = nullptr;
+uint32_t cartRamSize = 0;
+char romTitle[17] = {0};
+
+uint8_t romRead(struct gb_s *, const uint_fast32_t addr) {
+  return (addr < romSize) ? romData[addr] : 0xFF;
+}
+
+uint16_t romRead16(struct gb_s *, const uint_fast32_t addr) {
+  if (addr + 1 >= romSize) return 0xFFFF;
+  return static_cast<uint16_t>(romData[addr]) | (static_cast<uint16_t>(romData[addr + 1]) << 8);
+}
+
+uint32_t romRead32(struct gb_s *, const uint_fast32_t addr) {
+  if (addr + 3 >= romSize) return 0xFFFFFFFF;
+  return static_cast<uint32_t>(romData[addr]) | (static_cast<uint32_t>(romData[addr + 1]) << 8) |
+         (static_cast<uint32_t>(romData[addr + 2]) << 16) | (static_cast<uint32_t>(romData[addr + 3]) << 24);
+}
+
+uint8_t cartRamRead(struct gb_s *, const uint_fast32_t addr) {
+  return (addr < cartRamSize) ? cartRam[addr] : 0xFF;
+}
+
+void cartRamWrite(struct gb_s *, const uint_fast32_t addr, const uint8_t val) {
+  if (addr < cartRamSize) {
+    cartRam[addr] = val;
+  }
+}
+
+void gbErrorCallback(struct gb_s *, const enum gb_error_e err, const uint16_t addr) {
+  Serial.print("GB:ERROR:code=");
+  Serial.print(static_cast<int>(err));
+  Serial.print(":addr=0x");
+  Serial.println(addr, HEX);
+}
+
+// Palette DMG (jeux noir et blanc, pas de vraie couleur) -- vert
+// classique d'ecran Game Boy original, 4 teintes du plus clair (0) au
+// plus fonce (3).
+constexpr uint16_t kDmgPalette[4] = {
+    RGB565(224, 248, 208), RGB565(136, 192, 112), RGB565(52, 104, 86), RGB565(8, 24, 32),
+};
+
+// lcd_draw_line du coeur : convertit les 160 pixels de la ligne en RGB565
+// (CGB : index direct dans gb->cgb.fixPalette deja converti par le coeur
+// ; DMG : 2 bits de teinte -> kDmgPalette) et transmet a gbBlitLine()
+// (main.cpp) qui fait le rendu a l'ecran.
+void lcdDrawLine(struct gb_s *pgb, const uint8_t *pixels, const uint_fast8_t line) {
+  static uint16_t row[160];
+  const bool cgbMode = pgb->cgb.cgbMode != 0;
+  for (uint8_t x = 0; x < 160; ++x) {
+    if (cgbMode) {
+      row[x] = pgb->cgb.fixPalette[pixels[x] & 0x3F];
+    } else {
+      row[x] = kDmgPalette[pixels[x] & 0x03];
+    }
+  }
+  gbBlitLine(line, row);
+}
+
+}  // namespace
+
+bool gbIsLoaded() {
+  return romLoaded;
+}
+
+void gbUnload() {
+  if (romData != nullptr) {
+    heap_caps_free(romData);
+    romData = nullptr;
+  }
+  if (cartRam != nullptr) {
+    heap_caps_free(cartRam);
+    cartRam = nullptr;
+  }
+  romLoaded = false;
+  romTitle[0] = '\0';
+}
+
+bool gbLoadFirstRom() {
+  gbUnload();
+
+  if (!SD.exists("/games")) {
+    Serial.println("GB:NO_GAMES_DIR");
+    return false;
+  }
+  File dir = SD.open("/games");
+  if (!dir || !dir.isDirectory()) {
+    Serial.println("GB:NO_GAMES_DIR");
+    return false;
+  }
+
+  File romFile;
+  for (File entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
+    const String name = entry.name();
+    if (!entry.isDirectory() && (name.endsWith(".gb") || name.endsWith(".gbc") ||
+                                  name.endsWith(".GB") || name.endsWith(".GBC"))) {
+      romFile = entry;
+      break;
+    }
+    entry.close();
+  }
+  dir.close();
+
+  if (!romFile) {
+    Serial.println("GB:NO_ROM_FOUND");
+    return false;
+  }
+
+  romSize = romFile.size();
+  romData = static_cast<uint8_t *>(heap_caps_malloc(romSize, MALLOC_CAP_SPIRAM));
+  if (romData == nullptr) {
+    Serial.println("GB:ROM_TOO_BIG_FOR_PSRAM");
+    romFile.close();
+    return false;
+  }
+  const size_t readBytes = romFile.read(romData, romSize);
+  romFile.close();
+  if (readBytes != romSize) {
+    Serial.println("GB:ROM_READ_ERROR");
+    heap_caps_free(romData);
+    romData = nullptr;
+    return false;
+  }
+
+  const enum gb_init_error_e initErr =
+      gb_init(&gb, romRead, romRead16, romRead32, cartRamRead, cartRamWrite, gbErrorCallback, nullptr);
+  if (initErr != GB_INIT_NO_ERROR) {
+    Serial.print("GB:INIT_ERROR:code=");
+    Serial.println(static_cast<int>(initErr));
+    heap_caps_free(romData);
+    romData = nullptr;
+    return false;
+  }
+
+  cartRamSize = static_cast<uint32_t>(gb.num_ram_banks) * CRAM_BANK_SIZE;
+  if (cartRamSize > 0) {
+    cartRam = static_cast<uint8_t *>(heap_caps_malloc(cartRamSize, MALLOC_CAP_SPIRAM));
+    if (cartRam != nullptr) {
+      memset(cartRam, 0xFF, cartRamSize);
+    } else {
+      cartRamSize = 0;  // pas de sauvegarde possible, mais on continue sans planter
+    }
+  }
+
+  gb_init_lcd(&gb, lcdDrawLine);
+  gb.direct.joypad = 0xFF;  // rien de presse (voir gbSetButton() -- 0=presse, 1=relache)
+
+  gb_get_rom_name(&gb, romTitle);
+  romLoaded = true;
+
+  Serial.print("GB:LOADED:title=");
+  Serial.print(romTitle);
+  Serial.print(":size_kb=");
+  Serial.print(romSize / 1024);
+  Serial.print(":ram_banks=");
+  Serial.println(gb.num_ram_banks);
+  return true;
+}
+
+void gbRunFrame() {
+  if (romLoaded) {
+    gb_run_frame(&gb);
+  }
+}
+
+void gbSetButton(GbButton button, bool pressed) {
+  if (!romLoaded) {
+    return;
+  }
+  uint8_t mask = 0;
+  switch (button) {
+    case GbButton::Up: mask = JOYPAD_UP; break;
+    case GbButton::Down: mask = JOYPAD_DOWN; break;
+    case GbButton::Left: mask = JOYPAD_LEFT; break;
+    case GbButton::Right: mask = JOYPAD_RIGHT; break;
+    case GbButton::A: mask = JOYPAD_A; break;
+    case GbButton::B: mask = JOYPAD_B; break;
+    case GbButton::Select: mask = JOYPAD_SELECT; break;
+    case GbButton::Start: mask = JOYPAD_START; break;
+  }
+  // Registre joypad Game Boy actif-bas : 0 = presse, 1 = relache.
+  if (pressed) {
+    gb.direct.joypad &= static_cast<uint8_t>(~mask);
+  } else {
+    gb.direct.joypad |= mask;
+  }
+}
+
+const char *gbRomTitle() {
+  return romTitle;
+}

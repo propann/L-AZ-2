@@ -32,6 +32,7 @@
 #include <math.h>
 #include <SPI.h>
 #include <SD.h>
+#include "gb_emulator.h"
 
 namespace {
 
@@ -263,7 +264,7 @@ constexpr MenuItem kMenuItems[] = {
     {"MOTEURS", "moteur + patch par piste", Screen::Engines},
     {"CONTROLES", "croix + boutons + potards (Teensy)", Screen::Controls},
     {"AUDIO", "jouer le Teensy depuis l'ecran", Screen::Audio},
-    {"JEUX", "NES (en construction, voir doc)", Screen::Retro},
+    {"JEUX", "Game Boy / GBC (ROM sur carte SD)", Screen::Retro},
     {"CONFIGURATION", "ecran de veille, reglages", Screen::Config},
     {"LIENS SERIE", "journal ESP32 / Teensy", Screen::Links},
     {"A PROPOS", "version, roles, build", Screen::About},
@@ -764,34 +765,45 @@ void drawLinksPage() {
 }
 
 // ---------------------------------------------------------------------
-// Page JEUX -- mode emulation NES, demande le 2026-09-14. PAS ENCORE
-// FONCTIONNELLE : simple page d'attente honnete tant que le portage n'est
-// pas fait (voir docs/AZ2_EMULATION_JEUX.md pour la decision technique
-// complete -- Retro-Go ecarte car ESP-IDF + ecrans SPI seulement,
-// incompatible avec notre ecran RGB parallele sans double demarrage ;
-// Anemoia-ESP32 retenu a la place, portable en simple page ici via son
-// acces framebuffer brut, mais pas encore vendore/adapte -- il manque
-// aussi une ROM legale et une carte SD pour la charger).
+// Page JEUX -- emulation Game Boy / Game Boy Color (Walnut-CGB, voir
+// gb_emulator.h/.cpp et docs/AZ2_EMULATION_JEUX.md). GBA ecarte du v0
+// (~20fps mesures sur ESP32-S3 avec les coeurs existants, pas fluide).
+// ROM cherchee dans /games sur la carte SD (premier .gb/.gbc trouve) --
+// chargee a l'entree sur la page (voir goTo()), dechargee en la
+// quittant. Sans SD/ROM, page d'attente honnete avec la raison exacte.
+// PAS DE SON pour l'instant (voir gb_emulator.cpp).
 // ---------------------------------------------------------------------
 void drawRetroPage() {
+  if (gbIsLoaded()) {
+    // Le rendu du jeu lui-meme vient de gbBlitLine(), appelee par
+    // gbRunFrame() depuis loop() -- ici on affiche juste le cadre/titre
+    // une fois, le jeu se dessine par-dessus a chaque frame.
+    gfx->fillScreen(RGB565_BLACK);
+    gfx->setTextSize(1);
+    gfx->setTextColor(kDim);
+    gfx->setCursor(kMargin, 4);
+    gfx->print(gbRomTitle());
+    return;
+  }
+
   drawSubHeader("JEUX", kPalette[2]);
   const char *lines[] = {
-      "Emulateur Game Boy / GBC en preparation.",
+      "Aucune ROM chargee.",
       "",
-      "Moteur retenu : Walnut-CGB",
-      "(callbacks purs, licence MIT, deja",
-      " demontre sur ESP32-S3 -- pas de",
-      " double demarrage requis).",
+      "Moteur : Walnut-CGB (GB/GBC, licence MIT).",
+      "GBA ecarte : ~20fps mesures sur ESP32-S3,",
+      "pas fluide avec les coeurs existants.",
       "",
-      "GBA ecarte du v0 : ~20fps mesures",
-      "sur ESP32-S3, pas fluide.",
+      "Pour jouer : carte SD formatee FAT32,",
+      "dossier /games/, un fichier .gb ou .gbc",
+      "dedans (ROM homebrew/domaine public --",
+      "pas de ROM commerciale fournie).",
       "",
-      "Reste a faire : vendorer le coeur,",
-      "brancher lcd_draw_line() sur",
-      "Arduino_GFX, mapper les entrees,",
-      "trouver une ROM legale.",
+      "Pas de son pour l'instant (voir",
+      "docs/AZ2_EMULATION_JEUX.md).",
       "",
-      "Detail : docs/AZ2_EMULATION_JEUX.md",
+      "Retouche cette page pour reessayer",
+      "de charger une ROM.",
   };
   gfx->setTextSize(1);
   gfx->setTextColor(RGB565_WHITE);
@@ -976,6 +988,15 @@ void drawScreen(Screen s) {
 }
 
 void goTo(Screen s) {
+  // Charge/decharge la ROM GB en entrant/sortant de la page JEUX (voir
+  // gb_emulator.h) -- libere la PSRAM des qu'on quitte, evite de garder
+  // une ROM chargee inutilement sur les autres pages.
+  if (s == Screen::Retro && !gbIsLoaded()) {
+    gbLoadFirstRom();  // echec propre (message Serial) si pas de SD/ROM, gere par drawRetroPage()
+  } else if (s != Screen::Retro && gbIsLoaded()) {
+    gbUnload();
+  }
+
   currentScreen = s;
   drawScreen(s);
 }
@@ -1015,6 +1036,12 @@ void handleTeensyLine(const String &line) {
         if (currentScreen == Screen::Controls && !screensaverActive) {
           drawNavBox(static_cast<uint8_t>(index));
         }
+        // Page JEUX : la croix pilote directement le Game Boy (voir
+        // gb_emulator.h -- GbButton::Up/Down/Left/Right sont dans le
+        // meme ordre que index ici, 0-3).
+        if (currentScreen == Screen::Retro) {
+          gbSetButton(static_cast<GbButton>(index), pressed);
+        }
         // Sur la page SEQUENCEUR, HAUT/BAS transpose la note du dernier
         // pas touche (voir selectedSeqTrack/Step) -- demande le
         // 2026-09-15 ("prend le sequenceur du dexed touch"), reutilise
@@ -1045,6 +1072,11 @@ void handleTeensyLine(const String &line) {
       btnState[index] = pressed;
       if (currentScreen == Screen::Controls && !screensaverActive) {
         drawBtnBox(static_cast<uint8_t>(index));
+      }
+      // Page JEUX : A/B/C/D -> boutons Game Boy A/B/SELECT/START.
+      if (currentScreen == Screen::Retro) {
+        static const GbButton kGbMap[4] = {GbButton::A, GbButton::B, GbButton::Select, GbButton::Start};
+        gbSetButton(kGbMap[index], pressed);
       }
     }
   } else if (line.startsWith("POT:")) {
@@ -1239,6 +1271,30 @@ void runIntro() {
 
 }  // namespace
 
+// Rendu Game Boy (voir gb_emulator.h/.cpp) : hors namespace anonyme pour
+// avoir un lien externe (appelee depuis gb_emulator.cpp, autre unite de
+// compilation) tout en gardant acces a `gfx`/`kScreenSize` (recherche de
+// nom non qualifiee, valide pour le reste du fichier apres la fermeture
+// du namespace). 160x144 -> mise a l'echelle x3 = 480x432, centree
+// verticalement (24px de marge haut/bas).
+constexpr int16_t kGbScaledW = 160 * 3;
+constexpr int16_t kGbScaledH = 144 * 3;
+constexpr int16_t kGbScreenTop = (kScreenSize - kGbScaledH) / 2;
+
+void gbBlitLine(int line, const uint16_t *row) {
+  static uint16_t scaledRow[kGbScaledW];
+  for (int x = 0; x < 160; ++x) {
+    const uint16_t c = row[x];
+    scaledRow[x * 3] = c;
+    scaledRow[x * 3 + 1] = c;
+    scaledRow[x * 3 + 2] = c;
+  }
+  const int16_t y = static_cast<int16_t>(kGbScreenTop + line * 3);
+  gfx->draw16bitRGBBitmap(0, y, scaledRow, kGbScaledW, 1);
+  gfx->draw16bitRGBBitmap(0, static_cast<int16_t>(y + 1), scaledRow, kGbScaledW, 1);
+  gfx->draw16bitRGBBitmap(0, static_cast<int16_t>(y + 2), scaledRow, kGbScaledW, 1);
+}
+
 void setup() {
   Serial.begin(230400);
   delay(300);
@@ -1377,6 +1433,11 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       screensaverTimeoutSec = static_cast<uint16_t>(min<uint32_t>(screensaverTimeoutSec + kScreensaverStepSec, kScreensaverMaxSec));
       drawConfigPage();
     }
+  } else if (currentScreen == Screen::Retro && !gbIsLoaded()) {
+    // Touche n'importe ou sur la page d'attente pour reessayer de
+    // charger une ROM (utile si la carte SD vient d'etre inseree).
+    gbLoadFirstRom();
+    drawRetroPage();
   }
 }
 
@@ -1446,6 +1507,19 @@ void loop() {
   }
   if (screensaverActive) {
     screensaverStep();
+  }
+
+  // Emulateur Game Boy (page JEUX, voir gb_emulator.h) : cadence a
+  // ~59,7 images/s (periode Game Boy reelle) tant qu'une ROM est chargee
+  // et que cette page est affichee -- pas de garantie que l'ESP32-S3
+  // tienne cette cadence en pratique (pas encore mesure faute de ROM
+  // disponible pour tester), c'est juste la cible, pas un benchmark.
+  static uint32_t lastGbFrameMs = 0;
+  if (currentScreen == Screen::Retro && gbIsLoaded() && !screensaverActive) {
+    if (now - lastGbFrameMs >= 17) {
+      lastGbFrameMs = now;
+      gbRunFrame();
+    }
   }
 
   if (now - lastHeartbeatMs >= 1000) {

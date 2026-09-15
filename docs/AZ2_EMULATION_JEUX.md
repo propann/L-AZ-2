@@ -98,30 +98,53 @@ c'est plutot GB/GBA/GBC, ca suffira" -- la NES n'est plus la priorite.
   demarrage) restent des options pour APRES, si on veut elargir une fois
   GB/GBC solides -- rien a jeter, juste pas la priorite.
 
-## Ce qu'il reste a faire (rien fait ci-dessous, hardware debranche)
+## Etat 2026-09-15 : implemente, pas encore joue en reel
 
-1. Choisir/obtenir une ROM GB/GBC **legale** pour les tests (homebrew ou
-   domaine public -- pas de ROM commerciale dans le depot/le firmware).
-   Walnut-CGB permet un stockage flash interne (pas besoin de carte SD
-   pour un premier test avec une petite ROM).
-2. Vendorer Walnut-CGB (header(s) C99, licence MIT a conserver/citer)
-   dans le depot, verifier sa compatibilite avec notre toolchain
-   PlatformIO/Arduino-ESP32 core 3.x (pioarduino).
-3. Ecrire l'implementation des callbacks hote : `gb_rom_read`,
-   `gb_cart_ram_read/write` (lecture flash/PSRAM), et surtout
-   `lcd_draw_line` -> conversion palette/couleur -> `Arduino_GFX`
-   (par ligne, ou accumulation dans un framebuffer puis
-   `draw16bitRGBBitmap()` d'un coup -- a comparer en vrai pour la
-   fluidite une fois flashable).
-4. Mapper les entrees : pads Pico (matrice 4x4) ou tactile ecran vers les
-   8 boutons Game Boy (croix directionnelle + A/B/Start/Select).
-5. Sauvegardes (cart RAM) : voir ou stocker (flash interne au debut,
-   carte SD plus tard, voir AZ2_FEUILLE_DE_ROUTE_MOTEUR.md etape 8).
-6. Nouvelle entree menu "JEUX" dans `kMenuItems[]`, page dediee
-   (`Screen::Retro`, deja ajoutee le 2026-09-14 comme page d'attente --
-   a remplacer par la vraie emulation une fois les points 1-4 faits).
-7. Tester en reel une fois le hardware rebranche -- rien ci-dessus n'est
-   flashe/verifie, uniquement de la recherche/architecture.
+Suite a "y'a rien dans jeux, c'est le moment de mettre l'emulateur" :
+
+1. **[FAIT]** Walnut-CGB vendore dans
+   `src_esp32/az2_screen/walnut_cgb/walnut_cgb.h` (header C99 unique,
+   ~9900 lignes, licence MIT verifiee directement dans le fichier --
+   compile avec notre toolchain pioarduino/Arduino-ESP32 core 3.x sans
+   probleme.
+2. **[FAIT]** Callbacks hote dans `gb_emulator.cpp` : `gb_rom_read`/
+   `_16bit`/`_32bit` lisent directement une ROM chargee en PSRAM (module
+   ESP32-S3 WROOM-1 N16R8, 8 Mo -- meme puce que l'ecran) ; cart RAM
+   (sauvegardes) allouee dynamiquement selon `gb->num_ram_banks`, aussi
+   en PSRAM, mais **pas encore persistee sur SD** (perdue a l'extinction
+   -- a faire plus tard). `lcd_draw_line` convertit chaque ligne (CGB :
+   index direct dans `gb->cgb.fixPalette`, deja en RGB565 ; DMG : 2 bits
+   de teinte vers une palette verte classique Game Boy) et appelle
+   `gbBlitLine()` (dans `main.cpp`, seul endroit qui connait `gfx`) qui
+   fait un rendu a l'echelle x3 (160x144 -> 480x432, centre verticalement)
+   via `draw16bitRGBBitmap()`.
+3. **[FAIT]** ROM cherchee dans `/games/*.gb`/`.gbc` sur la carte SD
+   (premier fichier trouve) -- chargee en entrant sur la page JEUX,
+   dechargee en la quittant (libere la PSRAM). Echec propre (pas de
+   crash) si pas de carte/dossier/fichier -- page d'attente avec le
+   message exact.
+4. **[FAIT]** Entrees mappees sur la croix + boutons A/B/C/D deja cables
+   sur le Teensy (`NAV:`/`BTN:`, voir AZ2_CABLAGE_MASTER.md) : croix ->
+   directions Game Boy, A/B -> A/B, C/D -> SELECT/START.
+5. **[FAIT]** Page JEUX (`Screen::Retro`) mise a jour : affiche le jeu
+   si une ROM est chargee (`gbRunFrame()` appelee depuis `loop()`,
+   cadencee a ~59,7 images/s -- cible theorique, PAS mesuree en reel
+   faute de ROM disponible), sinon la raison exacte de l'echec + "touche
+   pour reessayer" (utile apres avoir insere une carte SD).
+6. **PAS FAIT** : le son (`ENABLE_SOUND=0` dans `gb_emulator.cpp`) --
+   notre architecture audio est centree sur le Teensy, brancher l'APU
+   Game Boy dessus demande de reflechir a un chemin (streamer par l'UART
+   existant, pas concu pour ca, ou un DAC/ampli propre a l'ESP32) --
+   remis a plus tard, video seule pour l'instant.
+7. **PAS FAIT** : sauvegardes cart RAM persistees sur SD (actuellement
+   perdues a l'extinction).
+8. **Reste a faire pour du vrai jeu** : une ROM GB/GBC **legale**
+   (homebrew ou domaine public -- pas de ROM commerciale fournie) sur
+   une carte SD formatee FAT32, dossier `/games/`. Sans ca, la page
+   affiche juste l'etat "pas de ROM" -- **rien de tout ce qui precede
+   n'a ete verifie en conditions de jeu reelles**, seulement compile et
+   flashe sans crash (voir le firmware, testable des que SD+ROM
+   existent).
 
 ## Sources consultees
 
