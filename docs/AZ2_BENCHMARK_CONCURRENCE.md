@@ -197,3 +197,49 @@ concurrents cites.
 
 AZ-2 doit devenir une machine ou l'on voit tout, ou l'on peut tout reparer, et ou chaque fonction a une place nette. Les concurrents brillent par finition. Nous devons briller par intelligence d'architecture, rapidite de workflow et liberte.
 
+## Mise a jour 2026-09-16 -- nouvelle recherche + etat reel vs marche
+
+Recherche demandee ("on fait une recherche sur nos concurrents, liste
+des ameliorations indispensables") -- 2 machines ajoutees au comparatif,
+les autres reverifiees. Sources en bas de section.
+
+| Machine | Etat 2026 | Lecon pour AZ-2 |
+| --- | --- | --- |
+| **Teenage Engineering OP-XY** (nouveau, $2299, remise a $1699 en promo) | 8 pistes, 8 moteurs synth + 3 sampleurs, 24 voix, ecran 480x222, gyroscope pour macro-controle par inclinaison, "Brain" auto-transpose selon la tonalite du morceau, CV/Gate + MIDI + Bluetooth | Le prix confirme que la lisibilite/l'ecran + le controle direct (pas juste des menus) sont ce qui justifie un tarif eleve -- AZ-2 doit rester lisible SANS ce budget. "Brain" (auto-transpose) est une bonne idee a retenir une fois nos gammes/accords en place |
+| **nanoloop (Game Boy)** (mono/one, toujours vendu en cartouche) | Synthetiseur+sequenceur MINIMALISTE tournant sur le vrai chip son GB (carre/carre/onde 4 bits/bruit), interface reduite a une grille, sync analogique + transfert de fichiers par jack | C'est litteralement notre idee de "sampler la Game Boy" mais dans l'autre sens (composer AVEC le chip GB) -- confirme que le public pour "faire de la musique avec/depuis une Game Boy" existe et est actif. AZ-2 peut aller plus loin : ECHANTILLONNER un vrai jeu GB (musique/bruitages) puis les rejouer sur nos 5 moteurs, pas juste piloter le chip |
+| **Dirtywave M8 Model:02** (maj $790, ecran 3.5" IPS, 12h batterie) | Micro integre pour echantillonner, sampleur mono/stereo 8/16/24 bits, USB-C, 64 Go de carte SD fournie avec demos/presets | Le micro integre pour sampler a la volee est une fonction tres appreciee -- notre "sampler la Game Boy" est un axe proche (source audio captive au lieu du micro) mais on pourrait aussi envisager un micro plus tard |
+| **Polyend Tracker Mini** (maj) | Devenu quasi poche, batterie, micro integre, sample stereo (nouveaute vs l'original), 12 pistes audio USB-C, 48 instruments/256 patterns/128 pas par projet | Confirme stereo + micro comme standard attendu desormais chez un tracker portable ; notre pattern 8 pistes/16 pas reste modeste en comparaison -- a garder simple pour l'instant (deja plus complexe que prevu ce mois-ci) mais noter que 16 pas est petit face a 128 |
+
+Sources additionnelles : [Teenage Engineering OP-XY](https://teenage.engineering/products/op-xy), [Sound on Sound OP-XY](https://www.soundonsound.com/reviews/teenage-engineering-op-xy), [nanoloop one](http://www.nanoloop.com/one/), [CDM -- nanoloop reborn](https://cdm.link/nanoloop-game-boy-hardware/), [Dirtywave M8 Model:02](https://dirtywave.com/products/m8-tracker-model-02), [Gearnews M8 Model:02](https://www.gearnews.com/dirtywave-m8-tracker-model-02/), [Sound on Sound Polyend Tracker Mini](https://www.soundonsound.com/reviews/polyend-tracker-mini), [AltWire Polyend Tracker Mini](https://altwire.net/polyend-tracker-mini-review/).
+
+### Etat reel AZ-2 au 2026-09-16 (vs le topo du 2026-09-15)
+
+Beaucoup avance depuis le dernier topo concurrence : tracker colonnes
+NOTE/INST/FX/VAL (vue unique, plus de grille), 8 patterns + chainage
+song basique, gammes (verrouillage a la saisie), filtre resonant +
+ADSR **reellement editables par piste** (pas juste prevus), oscilloscope
+temps reel, sauvegarde/chargement de patch (slots sur SD), reglages
+propres au moteur Dexed (algo/feedback DX7). Voir
+[AZ2_ETAT_DES_LIEUX.md](AZ2_ETAT_DES_LIEUX.md) pour le detail verifie
+en reel vs seulement compile.
+
+### Liste des ameliorations indispensables (priorisee)
+
+Recoupe le tableau "ce qui manque le plus" du 2026-09-15 (toujours
+valable dans l'ensemble) avec la recherche fraiche ci-dessus :
+
+| # | Amelioration | Pourquoi indispensable | Effort estime |
+| ---: | --- | --- | --- |
+| 1 | **Mute/solo par piste** | Present chez TOUS les concurrents cites, y compris les moins chers (Circuit Tracks) ; sans ca on ne peut pas "jouer" en scene, juste programmer | Faible -- gain a 0 par piste, mapping bouton a definir (C/D libres, voir "gachette") |
+| 2 | **Sauvegarde/chargement de PROJET complet** (pas juste un patch) | Tous les concurrents survivent a une coupure ; on a la sauvegarde de patch (2026-09-16) mais pas patterns+song+BPM+scale en un fichier | Moyen -- meme mecanique que savePatchSlot()/loadPatchSlot(), format a etendre (JSON ou texte simple sur SD) |
+| 3 | **Swing/groove** | Present chez quasi tous (Polyend, LSDJ "groove screen", M8) ; sans lui le sequenceur sonne mecanique | Faible -- decalage de timing dans advanceTick(), un seul parametre global pour commencer |
+| 4 | **Volume/pan par piste** | Tous les concurrents, y compris les moins chers | Moyen -- deja identifie feuille de route etape 4, pas encore fait |
+| 5 | **Micro/sampler integre** (ou a defaut, sampler-depuis-GB deja prevu) | M8, Polyend Tracker Mini, Blackbox, EP-133 -- tous orientes sample en 2026 | Eleve -- bloque par la carte SD Teensy (preparee le 2026-09-16, FAT32, a inserer et verifier), + nouveau moteur `AudioPlaySdWav`/`AudioPlaySdRaw` |
+| 6 | **MIDI (sync/notes in-out)** | Quasi tous les concurrents cites | Moyen-eleve -- USB MIDI natif deja dispo sur le Teensy (classe audio+MIDI, `USB_MIDI_SERIAL` deja dans platformio.ini) |
+| 7 | **Accords / plusieurs notes par pas** | LSDJ/M8 le permettent en partie, demande deja documentee (AZ2_TRACKER_ETUDE.md etape 5) | Faible-moyen -- `kNotesPerTrack=2` deja present cote Teensy, juste pas exploitable depuis l'ecran |
+| 8 | **Clavier tactile comme editeur live** (poser une note sur le pas selectionne en tapant un pad) | Aucun concurrent direct ne fait exactement ca, mais c'est un gain de vitesse d'edition documente (etape 6 de l'etude tracker) | Moyen -- routage a ecrire cote ESP32 (pad -> NOTE: au lieu de -> PAD: quand un pas est selectionne) |
+
+Le classement change peu depuis le 2026-09-15 : mute/solo et sauvegarde
+de projet restent les 2 trous les plus visibles face a n'importe quel
+concurrent, meme un low-cost.
+

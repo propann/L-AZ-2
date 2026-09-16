@@ -193,4 +193,64 @@ sauvegarder les patchs ... un sampleur ... a integrer") :
   `BUILTIN_SDCARD` du Teensy (dernier statut connu : `SDTEENSY:
   NOT_PRESENT`) -- aucun fichier son n'existe encore, et un nouveau
   type de moteur (`AudioPlaySdWav`/`AudioPlaySdRaw`) + protocole de
-  selection d'echantillon restent a concevoir.
+  selection d'echantillon restent a concevoir. **Carte micro SD 58 Go
+  preparee en FAT32 le 2026-09-16** (label `AZ2SAMPLES`, dossier
+  `/samples/`) -- reste a l'inserer physiquement dans le lecteur du
+  Teensy et confirmer `SDTEENSY:READY`.
+
+## Journee du 2026-09-16 -- audit + recherche (utilisateur absent)
+
+Demande : "tu as la journee pour faire des recherches sur nos
+concurrents, liste des ameliorations indispensables, etat des lieux
+logiciel/firmware, on optimise vitesse, on ameliore l'affichage, on
+fait un job sur tout code mort, audit de code, mise a jour du GitHub,
+presentation du projet et documentation". Boards absents (ni Teensy ni
+ESP32 sur le bus USB de cette machine) -- tout ce qui suit est
+**compile-verifie uniquement**, rien vu/entendu sur le vrai materiel
+aujourd'hui.
+
+- **Audit de code mort** : supprime `src_pico/` (Pico abandonne,
+  cablage deja documente en prose ailleurs), `src_esp32/
+  Launcher_lvgl-master/` (75 Mo vendores d'un exemple fournisseur,
+  jamais reference dans le build), les stubs vides `src_esp32/main.cpp`
+  et `src_teensy/main.cpp`, et `kHelloKeypad` (protocole) devenu
+  orphelin. Verifie par grep avant suppression a chaque fois (rien
+  d'autre ne referencait ces fichiers), et recompilation des 3
+  environnements (`master_teensy`, `screen_esp`, `ui_esp`) apres coup.
+  `src_esp32/az2_control/` (env `ui_esp`) et le gros dossier `src_teensy/
+  microdexed-touch/` sont volontairement GARDES (reference active/
+  bring-up isole documente comme tel, pas du code mort au meme sens que
+  le Pico).
+- **Petit bug UX corrige** : page MOTEURS, un toucher tactile ne
+  deplacait pas le curseur croix -- desynchronisation possible entre
+  tactile et croix. Corrige + recompile.
+- **Recherche concurrence** : 2 machines ajoutees au comparatif
+  (Teenage Engineering OP-XY, nanoloop) + 2 reverifiees (M8 Model:02,
+  Polyend Tracker Mini) -- voir AZ2_BENCHMARK_CONCURRENCE.md pour le
+  detail et les sources. Liste d'ameliorations indispensables priorisee
+  ajoutee (mute/solo, sauvegarde de projet complet, swing, volume/pan
+  par piste, sampler, MIDI, accords, clavier live).
+- **Feuille de route** : ajout d'une "Phase 8" qui reprend cette liste
+  priorisee, plus un tableau qui fait correspondre les vieilles phases
+  0-7 (matrice/Pico/Retro-Go, plus d'actualite) a ce qui existe
+  reellement aujourd'hui.
+- **README.md** : entierement reecrit -- decrivait encore la matrice
+  SparkFun 4x4 et le Pico comme actifs, en anglais, sans lien vers la
+  moitie des docs recentes (tracker, etat des lieux, cablage master).
+- **Performance** : revue du code (Teensy hot-path, boucles de dessin
+  ESP32) -- pas de probleme flagrant trouve. Les redessins sont deja
+  partiels (ligne par ligne sur MOTEURS/PATCH/sequenceur, tracer
+  d'oscilloscope decime+limite en frequence). Usage de `String` pour le
+  parsing des commandes serie (cote Teensy et ESP32) : design deja en
+  place depuis le debut du projet, fonctionne dans la marge CPU/memoire
+  mesuree (~9-10%, 130-144/200 blocs audio) -- **pas touche** sans
+  materiel pour verifier un changement aussi central sans risque de
+  regression invisible tant que personne ne peut tester en reel.
+- **GitHub** : **bloque**. Le remote `origin` (github.com/propann/
+  L-AZ-2) est configure mais aucune methode d'authentification
+  disponible sur cette machine (pas de `gh auth login`, pas de jeton
+  `GH_TOKEN`, pas de credential helper git) -- `git push` echoue avec
+  "could not read Username". La branche `az2-screen-engines-sequencer`
+  est 33+ commits devant `origin/main`, jamais poussee. Necessite une
+  action de l'utilisateur (`gh auth login` ou jeton personnel) pour
+  debloquer.

@@ -145,3 +145,50 @@ Critere de sortie: mode Game Boy separable, jamais prioritaire sur l'instrument.
 - Tout ce qui touche au son doit rester testable sans UI.
 - Tout ce qui touche a l'UI doit rester testable sans moteur audio complet.
 - Les docs suivent le cablage reel au fur et a mesure.
+
+## Mise a jour 2026-09-16 -- ou en est reellement AZ-2
+
+Les phases 0-7 ci-dessus datent du tout debut du projet (matrice
+SparkFun 4x4, Pico controleur, portage MicroDexed encore a faire,
+Retro-Go). **Tout ca a change en pratique** (matrice+Pico abandonnes le
+2026-09-14, portage MicroDexed fait autrement -- moteur Dexed/EPiano/
+Braids/Karplus/Analog directement dans `src_teensy/az2_audio/`, Retro-Go
+ecarte au profit de Walnut-CGB). Statut reel condense :
+
+| Phase historique | Statut reel aujourd'hui |
+| --- | --- |
+| 0-2 (fondations, cablage minimal, dialogue ESP32<->Teensy) | **Fait**, mais sur une architecture differente (croix+4 boutons+3 encodeurs directs sur Teensy, pas de matrice/Pico) |
+| 3 (matrice SparkFun 4x4) | **Abandonnee** -- voir AZ2_CABLAGE_PICO.md, remplacee par croix+boutons+encodeurs |
+| 4 (ecran ESP32 480x480) | **Fait et tres etendu** -- ecran reel VIEWE UEDX48480040E-WB (pas ESP32-4848S040C_I suppose au debut), menu 4 categories, tracker, page PATCH+oscilloscope, page SONG, emulateur GB |
+| 5 (SD et Wi-Fi) | **SD fait** (roms GB + patches). **Wi-Fi jamais commence** (pas prioritaire, personne ne l'a redemande depuis) |
+| 6 (portage MicroDexed-touch) | **Fait autrement** -- moteur Dexed integre directement (pas de portage "boite noire"), + 4 autres moteurs ajoutes en plus (pas prevu au depart) |
+| 7 (Retro-Go / Game Boy) | **Fait, mais avec Walnut-CGB pas Retro-Go** (Retro-Go etudie et ecarte le 2026-09-14, ESP-IDF natif incompatible avec notre ecran RGB parallele) -- emulateur GB/GBC fonctionnel, son du jeu route vers le DAC Teensy |
+
+Voir [AZ2_ETAT_DES_LIEUX.md](AZ2_ETAT_DES_LIEUX.md) pour le detail
+verifie-en-reel vs seulement-compile, et
+[AZ2_BENCHMARK_CONCURRENCE.md](AZ2_BENCHMARK_CONCURRENCE.md) pour la
+liste d'ameliorations indispensables priorisee (mute/solo, sauvegarde
+de projet complet, swing, volume/pan par piste, sampler, MIDI, accords,
+clavier live comme editeur).
+
+## Phase 8 (nouvelle) -- combler les trous face au marche
+
+Reprend la liste priorisee du benchmark concurrence, dans le meme
+ordre :
+
+| Priorite | Tache | Bloque par |
+| ---: | --- | --- |
+| 1 | Mute/solo par piste | Rien -- pret a faire, juste choisir le mapping bouton |
+| 2 | Sauvegarde/chargement de projet complet (patterns+song+BPM+scale) | Rien -- meme mecanique que la sauvegarde de patch (2026-09-16), juste plus de champs |
+| 3 | Swing/groove global | Rien -- un parametre dans `advanceTick()` |
+| 4 | Volume/pan par piste | Rien -- meme famille que FILT:/ENV: deja en place |
+| 5 | Accords (plusieurs notes par pas depuis l'ecran) | Rien cote Teensy (`kNotesPerTrack=2` deja la) -- juste l'UI colonne NOTE a etendre |
+| 6 | Clavier tactile comme editeur live de note | Rien -- routage a ecrire (pad -> NOTE: si un pas est selectionne) |
+| 7 | Sampler (moteur audio a partir d'echantillons) | Carte SD Teensy preparee le 2026-09-16 (FAT32) -- reste a l'inserer physiquement et confirmer `SDTEENSY:READY`, puis ecrire le moteur `AudioPlaySdWav`/`AudioPlaySdRaw` |
+| 8 | MIDI in/out | Rien de bloquant technique (USB_MIDI_SERIAL deja dans platformio.ini) -- juste pas encore cable au sequenceur |
+| 9 | Wi-Fi (config web, transfert fichiers) | Rien de bloquant, jamais redemande depuis la Phase 5 -- rester bas dans la pile tant que le musical n'est pas complet |
+
+Critere de sortie de cette phase : AZ-2 n'a plus aucun "trou" flagrant
+par rapport a une groovebox d'entree de gamme (mute/solo + sauvegarde +
+swing sont les 3 attendus partout, meme sur les machines les moins
+cheres etudiees).
