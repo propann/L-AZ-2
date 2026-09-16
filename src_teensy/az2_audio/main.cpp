@@ -405,9 +405,11 @@ uint32_t lastStatusMs = 0;
 bool playing = false;
 
 // Gamme chromatique sur les 16 pads (voix live): pad 0 = kPadBaseNote
-// (MIDI), pad 15 = kPadBaseNote+15. 48 = C3. Transpose ajustable par
-// MACRO:1 (venait de l'encodeur 1 du Pico ; source actuelle a redefinir
-// maintenant que le Pico est abandonne -- voir AZ2_TODO_PICO.md).
+// (MIDI), pad 15 = kPadBaseNote+15. 48 = C3. Transpose ajustable via
+// MACRO: (protocole toujours la, voir handleMacroCommand()) mais plus
+// aucune source ne l'envoie depuis l'abandon du Pico (2026-09-14) --
+// reste a 0 tant qu'un futur controle (encodeur/gachette C-D) n'est pas
+// branche dessus. Voir AZ2_ETAT_DES_LIEUX.md / feuille de route.
 constexpr uint8_t kPadBaseNote = 48;
 int8_t transposeSemitones = 0;
 

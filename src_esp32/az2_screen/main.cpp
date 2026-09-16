@@ -2874,6 +2874,20 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
     bool isPatchSide = false;
     const int8_t track = hitTestEngRow(x, y, isPatchSide);
     if (track >= 0) {
+      // Un toucher deplace aussi le curseur croix sur la ligne/colonne
+      // touchee -- sinon tactile et croix restent desynchronises (on
+      // pouvait toucher la piste 5 puis un appui croix modifiait encore
+      // la piste 0). Meme reflexe que le tracker (tap = select + edit).
+      const int8_t previousTrack = selectedEngineTrack;
+      const bool previousCol = engineColPatch;
+      selectedEngineTrack = track;
+      engineColPatch = isPatchSide;
+      if (previousTrack != track) {
+        drawEngRow(static_cast<uint8_t>(previousTrack));
+      } else if (previousCol != engineColPatch) {
+        drawEngRow(static_cast<uint8_t>(track));
+      }
+
       char msg[16];
       if (!isPatchSide) {
         const uint8_t nextEngine = static_cast<uint8_t>((trackEngine[track] + 1) % az2::kEngineCount);
