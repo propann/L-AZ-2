@@ -152,3 +152,45 @@ reinterroge une derniere fois : `CPU?` -> usage=9.4%/max=9.5%, memoire
   sauvegarde/chargement de projet (etapes 5-7 de
   `AZ2_TRACKER_ETUDE.md`), colonne INST reellement appliquee au son,
   chainage de patterns, role "gachette" pour C/D.
+
+## Mise a jour 2026-09-16
+
+Suite reflex demandee sur le panneau lateral du sequenceur ("on a acces
+aux reglages du patch ? ... un bouton pour agrandir ... on doit pouvoir
+sauvegarder les patchs ... un sampleur ... a integrer") :
+
+- **Panneau "patch actif"** (`drawTrkSidePanel()`) : affiche desormais
+  CUTOFF/RESONANCE + ADSR (ou ALGO/FEEDBACK pour une piste DEXED, voir
+  plus bas) de la piste selectionnee, avec un bouton **AGRANDIR** qui
+  ouvre la page PATCH complete pour cette piste.
+- **Sauvegarde/chargement de patch** : page PATCH, ligne SLOT (0-7) +
+  boutons SAVE/LOAD. Ecrit sur la carte SD de l'ESP32 dans
+  `/patches/N.txt` (moteur, patch, cutoff, reso, ADSR, + algo/feedback
+  Dexed). LOAD renvoie ENGINE:/PATCH:/FILT:/ENV:/DXP: au Teensy.
+  **ESP32 reflashe et boot verifie propre en reel** (lien Teensy
+  toujours vivant) ; **pas teste manuellement** (SAVE/LOAD pas encore
+  touches a l'ecran par un humain).
+- **Reglages propres a DEXED** (`DXP:`, demande "on n'a pas de reglages
+  dans la fenetre dexed du tracker") : ADSR generique n'a jamais eu
+  d'effet sur ce moteur (sa propre EG DX7 la remplace) -- page PATCH
+  affiche maintenant ALGORITHME (1-32) et FEEDBACK (0-7) a la place pour
+  une piste Dexed, lignes 4-5 grisees ("sans effet sur ce moteur").
+  **Cote Teensy (`handleDexedParamCommand`) compile mais PAS FLASHE** --
+  le Teensy n'etait pas accessible en USB depuis cette machine au
+  moment du dev (relie a l'ESP32 par l'UART Serial1 seulement, ce qui
+  explique le lien "TEENSY_AUDIO:READY" toujours vu au reboot ESP32).
+  Tant que ce flash n'est pas fait, les commandes DXP: envoyees par
+  l'ESP32 sont silencieusement ignorees par le Teensy (prefixe inconnu),
+  sans consequence audio -- juste pas encore audible.
+- **Page MOTEURS, navigation croix** (demande "j'ai pas le controle
+  joystick pour choisir et regler les moteurs") : HAUT/BAS choisissent
+  la piste (surlignage blanc), GAUCHE/DROITE changent la valeur de la
+  colonne au focus, BTN:A bascule le focus MOTEUR/PATCH. **ESP32
+  reflashe, boot verifie propre**, comportement du tactile inchange
+  (toujours utilisable en parallele).
+- **Sampleur (moteur audio)** : PAS commence. Bloque tant qu'on n'a pas
+  confirme une carte SD reellement presente dans le lecteur
+  `BUILTIN_SDCARD` du Teensy (dernier statut connu : `SDTEENSY:
+  NOT_PRESENT`) -- aucun fichier son n'existe encore, et un nouveau
+  type de moteur (`AudioPlaySdWav`/`AudioPlaySdRaw`) + protocole de
+  selection d'echantillon restent a concevoir.

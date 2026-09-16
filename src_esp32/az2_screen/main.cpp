@@ -895,40 +895,85 @@ bool hitTestTrkDiv(int16_t x, int16_t y) {
 // plus bas dans ce fichier, voir la declaration anticipee ci-dessous).
 extern uint8_t trackEngine[kSeqTrackCount];
 extern uint8_t trackPatch[kSeqTrackCount];
+extern uint8_t trackCutoff[kSeqTrackCount];
+extern uint8_t trackReso[kSeqTrackCount];
+extern uint8_t trackAttack[kSeqTrackCount];
+extern uint8_t trackDecay[kSeqTrackCount];
+extern uint8_t trackSustain[kSeqTrackCount];
+extern uint8_t trackRelease[kSeqTrackCount];
+extern uint8_t trackAlgo[kSeqTrackCount];
+extern uint8_t trackFeedback[kSeqTrackCount];
 
 constexpr int16_t kTrkSideGap = 8;
 constexpr int16_t kTrkSideX = kDetailLeft + kDetailStepW + kDetailNoteW + kDetailInstW + kDetailFxW + kDetailValW +
                                kTrkSideGap;
 constexpr int16_t kTrkSideW = kSeqRightEdge - kTrkSideX;
 
+constexpr int16_t kTrkSideH = kSeqStepCount * (kDetailRowH + kDetailRowGap);
+constexpr int16_t kTrkExpandH = 26;
+constexpr int16_t kTrkExpandY = kDetailTop + kTrkSideH - kTrkExpandH;
+
 void drawTrkSidePanel() {
-  const int16_t h = static_cast<int16_t>(kSeqStepCount * (kDetailRowH + kDetailRowGap));
+  const uint8_t t = static_cast<uint8_t>(selectedSeqTrack);
   const uint16_t accent = kPalette[selectedSeqTrack % kPaletteCount];
 
-  gfx->fillRect(kTrkSideX, kDetailTop, kTrkSideW, h, RGB565_BLACK);
-  gfx->drawRect(kTrkSideX, kDetailTop, kTrkSideW, h, accent);
+  gfx->fillRect(kTrkSideX, kDetailTop, kTrkSideW, kTrkSideH, RGB565_BLACK);
+  gfx->drawRect(kTrkSideX, kDetailTop, kTrkSideW, kTrkSideH, accent);
 
   gfx->setTextSize(1);
   gfx->setTextColor(kDim);
-  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 6));
+  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 4));
   gfx->print("PATCH ACTIF");
 
   gfx->setTextSize(2);
   gfx->setTextColor(accent);
-  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 22));
-  gfx->print(az2::engineName(trackEngine[selectedSeqTrack]));
+  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 18));
+  gfx->print(az2::engineName(trackEngine[t]));
 
   gfx->setTextSize(1);
   gfx->setTextColor(RGB565_WHITE);
-  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 46));
-  gfx->print(az2::enginePatchName(trackEngine[selectedSeqTrack], trackPatch[selectedSeqTrack]));
+  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 40));
+  gfx->print(az2::enginePatchName(trackEngine[t], trackPatch[t]));
 
-  gfx->setTextSize(1);
+  // Reglages de base (voir patchParamRef()) -- demande 2026-09-16 ("on
+  // affiche les reglages [de patch] du cote droit"). Controle complet
+  // (encore) uniquement sur la page PATCH, voir le bouton AGRANDIR.
+  char buf[20];
   gfx->setTextColor(kDim);
+  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 58));
+  snprintf(buf, sizeof(buf), "CUTOFF %3d", trackCutoff[t]);
+  gfx->print(buf);
   gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 70));
-  gfx->print("(reglages filtre/ADSR");
-  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 82));
-  gfx->print("sur la page PATCH)");
+  snprintf(buf, sizeof(buf), "RESO   %3d", trackReso[t]);
+  gfx->print(buf);
+  // ADSR generique n'a aucun effet sur Dexed (voir patchRowActive()) --
+  // montrer ALGO/FEEDBACK a la place ici aussi, sinon le panneau
+  // afficherait un reglage qui ne sert a rien pour ce moteur.
+  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 84));
+  if (trackEngine[t] == az2::kEngineDexed) {
+    gfx->print("ALGO/FDBK");
+    gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 96));
+    snprintf(buf, sizeof(buf), "%d / %d", trackAlgo[t] + 1, trackFeedback[t]);
+  } else {
+    gfx->print("ADSR");
+    gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 96));
+    snprintf(buf, sizeof(buf), "%d/%d/%d/%d", trackAttack[t], trackDecay[t], trackSustain[t], trackRelease[t]);
+  }
+  gfx->print(buf);
+
+  // Bouton AGRANDIR -- ouvre la page PATCH complete (filtre/ADSR
+  // editables + oscilloscope) pour CETTE piste (demande : "un bouton
+  // pour agrandir et avoir le controle total du patch").
+  gfx->fillRect(static_cast<int16_t>(kTrkSideX + 1), kTrkExpandY, static_cast<int16_t>(kTrkSideW - 2),
+                kTrkExpandH, accent);
+  gfx->setTextSize(1);
+  gfx->setTextColor(RGB565_BLACK);
+  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 12), static_cast<int16_t>(kTrkExpandY + 8));
+  gfx->print("AGRANDIR >");
+}
+
+bool hitTestTrkExpand(int16_t x, int16_t y) {
+  return inBox(x, y, kTrkSideX, kTrkExpandY, kTrkSideW, kTrkExpandH);
 }
 
 void drawSeqDetailPage() {
@@ -995,6 +1040,17 @@ uint8_t trackEngine[kSeqTrackCount] = {az2::kEngineDexed, az2::kEngineDexed, az2
                                         az2::kEngineDexed, az2::kEngineDexed, az2::kEngineEPiano, az2::kEngineBraids};
 uint8_t trackPatch[kSeqTrackCount] = {0, 0, 0, 0, 0, 0, 0, 0};
 
+// Navigation croix sur la page MOTEURS -- demande 2026-09-16 ("dans la
+// fenetre des moteurs j'ai pas le controle joystick pour choisir et
+// regler les moteurs"). HAUT/BAS deplacent la piste selectionnee,
+// GAUCHE/DROITE changent la valeur de la colonne actuellement au focus
+// (moteur ou patch), BTN:A bascule le focus entre les deux colonnes --
+// meme esprit que seqDetailCol sur le sequenceur (GAUCHE/DROITE = quelle
+// colonne, HAUT/BAS = valeur), adapte ici car HAUT/BAS sert a choisir la
+// piste (8 lignes, pas de "curseur de pas" a deplacer separement).
+int8_t selectedEngineTrack = 0;
+bool engineColPatch = false;
+
 constexpr int16_t kEngRowTop = 90;
 // Retreci (etait 70/10) pour que 8 pistes tiennent -- voir le meme fix
 // que kSeqCellH/kSeqGapY plus haut (kSeqTrackCount 4 -> 8, 2026-09-15).
@@ -1012,9 +1068,16 @@ void drawEngRow(uint8_t track) {
   int16_t y;
   engRowRect(track, y);
   const uint16_t accent = kPalette[track % kPaletteCount];
+  const bool selected = (track == selectedEngineTrack);
 
   gfx->fillRect(kEngLeft, y, kEngWidth, kEngRowH - kEngRowGap, RGB565_BLACK);
   gfx->drawRect(kEngLeft, y, kEngWidth, kEngRowH - kEngRowGap, accent);
+  if (selected) {
+    // Piste selectionnee (croix) : contour double pour rester visible
+    // meme quand la couleur d'accent est deja vive.
+    gfx->drawRect(static_cast<int16_t>(kEngLeft + 1), static_cast<int16_t>(y + 1), kEngWidth - 2,
+                  kEngRowH - kEngRowGap - 2, RGB565_WHITE);
+  }
   gfx->drawFastVLine(kEngSplitX, y, kEngRowH - kEngRowGap, kFaint);
 
   char title[12];
@@ -1028,6 +1091,12 @@ void drawEngRow(uint8_t track) {
   gfx->setTextColor(RGB565_WHITE);
   gfx->setCursor(static_cast<int16_t>(kEngLeft + 6), static_cast<int16_t>(y + 16));
   gfx->print(az2::engineName(trackEngine[track]));
+  // Colonne au focus (croix GAUCHE/DROITE + BTN:A pour basculer) :
+  // soulignee, uniquement sur la piste selectionnee.
+  if (selected && !engineColPatch) {
+    gfx->drawFastHLine(static_cast<int16_t>(kEngLeft + 6), static_cast<int16_t>(y + 32),
+                        static_cast<int16_t>(kEngSplitX - kEngLeft - 12), RGB565_WHITE);
+  }
 
   gfx->setTextSize(1);
   gfx->setTextColor(kDim);
@@ -1037,6 +1106,10 @@ void drawEngRow(uint8_t track) {
   gfx->setTextColor(accent);
   gfx->setCursor(static_cast<int16_t>(kEngSplitX + 6), static_cast<int16_t>(y + 16));
   gfx->print(az2::enginePatchName(trackEngine[track], trackPatch[track]));
+  if (selected && engineColPatch) {
+    gfx->drawFastHLine(static_cast<int16_t>(kEngSplitX + 6), static_cast<int16_t>(y + 32),
+                        static_cast<int16_t>(kEngLeft + kEngWidth - kEngSplitX - 12), RGB565_WHITE);
+  }
 }
 
 void drawEnginesPage() {
@@ -1075,8 +1148,77 @@ int8_t hitTestEngRow(int16_t x, int16_t y, bool &isPatchSide) {
 int8_t patchTrack = 0;
 // cutoff, resonance, attaque, chute, maintien, relachement -- tous 0-127,
 // memes defauts "neutres" que cote Teensy (grand ouvert / ADSR rapide).
-uint8_t patchParams[6] = {127, 0, 3, 20, 89, 38};
+// PAR PISTE (pas juste un etat transitoire de la page PATCH) -- demande
+// 2026-09-16 ("on affiche les reglages [de patch] du cote droit [du
+// sequenceur]") : il faut connaitre les vraies valeurs de N'IMPORTE
+// QUELLE piste pour les montrer dans le panneau lateral du sequenceur
+// (voir drawTrkSidePanel()), pas seulement celle actuellement ouverte
+// sur la page PATCH (patchTrack). Mises a jour par les echos FILT:/
+// ENV: du Teensy (voir handleTeensyLine()), pas seulement par les
+// boutons -/+ de cette page.
+uint8_t trackCutoff[kSeqTrackCount];
+uint8_t trackReso[kSeqTrackCount];
+uint8_t trackAttack[kSeqTrackCount];
+uint8_t trackDecay[kSeqTrackCount];
+uint8_t trackSustain[kSeqTrackCount];
+uint8_t trackRelease[kSeqTrackCount];
+// Reglages propres au moteur DEXED (DXP:, voir handleDexedParamCommand()
+// cote Teensy) -- demande 2026-09-16 ("il faut des reglages, on a pas de
+// reglages dans la fenetre dexed du tracker") : l'ADSR generique
+// (ENV:) n'est PAS ecoutee par Dexed (sa propre EG interne au patch DX7
+// la remplace), une piste Dexed n'avait donc aucun reglage utile sur la
+// page PATCH avant ca. Algorithme stocke brut 0-31 (affiche +1, cf.
+// convention DX7 1-32), feedback 0-7.
+uint8_t trackAlgo[kSeqTrackCount] = {};
+uint8_t trackFeedback[kSeqTrackCount] = {};
 const char *const kPatchLabels[6] = {"CUTOFF", "RESONANCE", "ATTACK", "DECAY", "SUSTAIN", "RELEASE"};
+const char *const kPatchLabelsDexed[6] = {"CUTOFF", "RESONANCE", "ALGO (DX7)", "FEEDBACK", "--", "--"};
+
+// Lignes 2-5 de la page PATCH dependent du moteur de la piste : ADSR
+// generique pour tout le monde SAUF Dexed (rows 4-5 sans effet chez lui,
+// voir le commentaire au-dessus de trackAlgo[]).
+bool patchRowActive(uint8_t track, uint8_t row) {
+  return !(trackEngine[track] == az2::kEngineDexed && row >= 4);
+}
+
+const char *patchRowLabel(uint8_t track, uint8_t row) {
+  return (trackEngine[track] == az2::kEngineDexed) ? kPatchLabelsDexed[row] : kPatchLabels[row];
+}
+
+uint8_t patchRowMax(uint8_t track, uint8_t row) {
+  if (trackEngine[track] == az2::kEngineDexed) {
+    if (row == 2) return 31;  // ALGO : 32 algorithmes DX7 (0-31)
+    if (row == 3) return 7;   // FEEDBACK : 0-7
+  }
+  return 127;
+}
+
+// Reference directe dans le tableau du bon parametre pour une piste
+// donnee -- evite de dupliquer un switch partout ou un reglage est
+// lu/ecrit (page PATCH ET panneau lateral du sequenceur). Rows 4-5 sur
+// une piste Dexed renvoient un stockage inerte (trackSustain/Release,
+// jamais envoyes -- voir patchRowActive(), la page ne dessine ni
+// n'autorise le toucher dessus).
+uint8_t &patchParamRef(uint8_t track, uint8_t row) {
+  if (trackEngine[track] == az2::kEngineDexed) {
+    switch (row) {
+      case 0: return trackCutoff[track];
+      case 1: return trackReso[track];
+      case 2: return trackAlgo[track];
+      case 3: return trackFeedback[track];
+      case 4: return trackSustain[track];
+      default: return trackRelease[track];
+    }
+  }
+  switch (row) {
+    case 0: return trackCutoff[track];
+    case 1: return trackReso[track];
+    case 2: return trackAttack[track];
+    case 3: return trackDecay[track];
+    case 4: return trackSustain[track];
+    default: return trackRelease[track];
+  }
+}
 
 uint8_t scopeSamples[az2::kScopeSamplesPerPacket] = {};
 bool scopeHasData = false;
@@ -1138,10 +1280,25 @@ void drawPatchRow(uint8_t i) {
   int16_t y;
   patchRowRect(i, y);
   const int16_t rowH = static_cast<int16_t>(kPatchRowH - 4);
+  const uint8_t track = static_cast<uint8_t>(patchTrack);
+
+  gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, rowH, RGB565_BLACK);
+
+  if (!patchRowActive(track, i)) {
+    // Piste DEXED : lignes 4-5 sans effet (ADSR generique non ecoutee,
+    // voir patchRowActive()) -- grisees plutot que des +/- qui ne
+    // feraient rien.
+    gfx->drawRect(kMargin, y, kScreenSize - 2 * kMargin, rowH, kFaint);
+    gfx->setTextSize(1);
+    gfx->setTextColor(kFaint);
+    gfx->setCursor(static_cast<int16_t>(kMargin + 6), static_cast<int16_t>(y + 4));
+    gfx->print("(sans effet sur ce moteur)");
+    return;
+  }
+
   const int16_t minusX = static_cast<int16_t>(kScreenSize - kMargin - 2 * kPatchBtnW - 4);
   const int16_t plusX = static_cast<int16_t>(kScreenSize - kMargin - kPatchBtnW);
 
-  gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, rowH, RGB565_BLACK);
   gfx->drawRect(kMargin, y, kScreenSize - 2 * kMargin, rowH, kFaint);
   gfx->drawRect(minusX, y, kPatchBtnW, rowH, kFaint);
   gfx->drawRect(plusX, y, kPatchBtnW, rowH, kFaint);
@@ -1149,10 +1306,13 @@ void drawPatchRow(uint8_t i) {
   gfx->setTextSize(1);
   gfx->setTextColor(kDim);
   gfx->setCursor(static_cast<int16_t>(kMargin + 6), static_cast<int16_t>(y + 4));
-  gfx->print(kPatchLabels[i]);
+  gfx->print(patchRowLabel(track, i));
 
+  // ALGO (Dexed) affiche 1-32 (convention DX7), stocke 0-31 en interne.
+  const bool isDexedAlgo = (trackEngine[track] == az2::kEngineDexed && i == 2);
+  const uint8_t raw = patchParamRef(track, i);
   char buf[6];
-  snprintf(buf, sizeof(buf), "%3d", patchParams[i]);
+  snprintf(buf, sizeof(buf), "%3d", isDexedAlgo ? raw + 1 : raw);
   gfx->setTextSize(2);
   gfx->setTextColor(RGB565_WHITE);
   gfx->setCursor(static_cast<int16_t>(kMargin + 130), static_cast<int16_t>(y + 2));
@@ -1165,16 +1325,155 @@ void drawPatchRow(uint8_t i) {
 }
 
 void sendPatchFilt() {
+  const uint8_t t = static_cast<uint8_t>(patchTrack);
   char msg[24];
-  snprintf(msg, sizeof(msg), "FILT:%d:%d:%d", patchTrack, patchParams[0], patchParams[1]);
+  snprintf(msg, sizeof(msg), "FILT:%d:%d:%d", patchTrack, trackCutoff[t], trackReso[t]);
   sendToTeensy(msg);
 }
 
 void sendPatchEnv() {
+  const uint8_t t = static_cast<uint8_t>(patchTrack);
   char msg[24];
-  snprintf(msg, sizeof(msg), "ENV:%d:%d:%d:%d:%d", patchTrack, patchParams[2], patchParams[3], patchParams[4],
-           patchParams[5]);
+  snprintf(msg, sizeof(msg), "ENV:%d:%d:%d:%d:%d", patchTrack, trackAttack[t], trackDecay[t], trackSustain[t],
+           trackRelease[t]);
   sendToTeensy(msg);
+}
+
+// index : 0=algorithme, 1=feedback -- voir handleDexedParamCommand()
+// cote Teensy.
+void sendPatchDxp(uint8_t index) {
+  const uint8_t t = static_cast<uint8_t>(patchTrack);
+  char msg[24];
+  snprintf(msg, sizeof(msg), "DXP:%d:%d:%d", t, index, index == 0 ? trackAlgo[t] : trackFeedback[t]);
+  sendToTeensy(msg);
+}
+
+// Sauvegarde/chargement de patch (demande 2026-09-16 : "on doit
+// pouvoir sauvegarder les patch") -- un "patch" ici = moteur + patch
+// integre + filtre + ADSR de la piste affichee (patchTrack), ecrit sur
+// la carte SD de l'ESP32 (deja utilisee pour les ROM GB) dans
+// /patches/N.txt, format simple "moteur,patch,cutoff,reso,a,d,s,r".
+// 8 emplacements numerotes, comme les patterns.
+constexpr uint8_t kPatchSlotCount = 8;
+uint8_t patchSlot = 0;
+constexpr int16_t kPatchSlotY = kPatchRowTop + 6 * kPatchRowH + 6;
+constexpr int16_t kPatchSlotH = 32;
+constexpr int16_t kPatchSlotBtnW = (kScreenSize - 2 * kMargin) / 3;
+
+void drawPatchSlotRow() {
+  const int16_t saveX = static_cast<int16_t>(kMargin + kPatchSlotBtnW);
+  const int16_t loadX = static_cast<int16_t>(kMargin + 2 * kPatchSlotBtnW);
+  gfx->fillRect(kMargin, kPatchSlotY, kScreenSize - 2 * kMargin, kPatchSlotH, RGB565_BLACK);
+  gfx->drawRect(kMargin, kPatchSlotY, kPatchSlotBtnW, kPatchSlotH, kFaint);
+  gfx->drawRect(saveX, kPatchSlotY, kPatchSlotBtnW, kPatchSlotH, kFaint);
+  gfx->drawRect(loadX, kPatchSlotY, kPatchSlotBtnW, kPatchSlotH, kFaint);
+
+  gfx->setTextSize(2);
+  gfx->setTextColor(RGB565_WHITE);
+  char buf[12];
+  snprintf(buf, sizeof(buf), "SLOT %d", patchSlot);
+  gfx->setCursor(static_cast<int16_t>(kMargin + 6), static_cast<int16_t>(kPatchSlotY + 8));
+  gfx->print(buf);
+
+  gfx->setTextColor(kPalette[1 % kPaletteCount]);
+  gfx->setCursor(static_cast<int16_t>(saveX + 14), static_cast<int16_t>(kPatchSlotY + 8));
+  gfx->print("SAVE");
+
+  gfx->setTextColor(kPalette[2 % kPaletteCount]);
+  gfx->setCursor(static_cast<int16_t>(loadX + 14), static_cast<int16_t>(kPatchSlotY + 8));
+  gfx->print("LOAD");
+}
+
+bool hitTestPatchSlotNum(int16_t x, int16_t y) {
+  return inBox(x, y, kMargin, kPatchSlotY, kPatchSlotBtnW, kPatchSlotH);
+}
+bool hitTestPatchSlotSave(int16_t x, int16_t y) {
+  return inBox(x, y, static_cast<int16_t>(kMargin + kPatchSlotBtnW), kPatchSlotY, kPatchSlotBtnW, kPatchSlotH);
+}
+bool hitTestPatchSlotLoad(int16_t x, int16_t y) {
+  return inBox(x, y, static_cast<int16_t>(kMargin + 2 * kPatchSlotBtnW), kPatchSlotY, kPatchSlotBtnW, kPatchSlotH);
+}
+
+// Ecrit tel quel (pas d'ajout) -- SD.remove() d'abord pour eviter tout
+// risque d'ancien contenu residuel si FILE_WRITE ouvrait en ajout sur
+// cette version de la lib (pas verifie, prudence peu couteuse ici).
+void savePatchSlot(uint8_t slot) {
+  const uint8_t t = static_cast<uint8_t>(patchTrack);
+  SD.mkdir("/patches");
+  char path[24];
+  snprintf(path, sizeof(path), "/patches/%d.txt", slot);
+  SD.remove(path);
+  File f = SD.open(path, FILE_WRITE);
+  if (!f) {
+    Serial.print("PATCH_SAVE_ERROR:");
+    Serial.println(path);
+    return;
+  }
+  // 10 champs depuis l'ajout DXP (algo/feedback Dexed, sinon perdus au
+  // rechargement -- PATCH: recharge tout le voice data DX7 depuis la
+  // banque, voir loadDexedPatch() cote Teensy). Fichiers a 8 champs
+  // (avant DXP) restent lisibles, voir loadPatchSlot().
+  f.printf("%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", trackEngine[t], trackPatch[t], trackCutoff[t], trackReso[t],
+            trackAttack[t], trackDecay[t], trackSustain[t], trackRelease[t], trackAlgo[t], trackFeedback[t]);
+  f.close();
+  Serial.print("PATCH_SAVED:");
+  Serial.println(path);
+}
+
+// Charge le slot et APPLIQUE au Teensy (ENGINE:/PATCH:/FILT:/ENV:) --
+// les tableaux locaux (trackEngine[] etc.) sont mis a jour par les
+// echos normaux du Teensy une fois les commandes traitees, pas ici.
+void loadPatchSlot(uint8_t slot) {
+  char path[24];
+  snprintf(path, sizeof(path), "/patches/%d.txt", slot);
+  File f = SD.open(path);
+  if (!f) {
+    Serial.print("PATCH_LOAD_EMPTY:");
+    Serial.println(path);
+    return;
+  }
+  const String line = f.readStringUntil('\n');
+  f.close();
+
+  int vals[10] = {};
+  int idx = 0;
+  int start = 0;
+  for (int i = 0; i <= line.length() && idx < 10; ++i) {
+    if (i == line.length() || line.charAt(i) == ',') {
+      vals[idx++] = line.substring(start, i).toInt();
+      start = i + 1;
+    }
+  }
+  if (idx < 8) {
+    Serial.print("PATCH_LOAD_BADFILE:");
+    Serial.println(path);
+    return;
+  }
+  // Fichier a 8 champs (avant l'ajout DXP) : algo/feedback pas stockes,
+  // laisse la banque de patch Dexed les fixer (comportement d'avant).
+  const bool hasDxp = (idx >= 10);
+
+  const uint8_t t = static_cast<uint8_t>(patchTrack);
+  char msg[24];
+  snprintf(msg, sizeof(msg), "ENGINE:%d:%d", t, vals[0]);
+  sendToTeensy(msg);
+  snprintf(msg, sizeof(msg), "PATCH:%d:%d", t, vals[1]);
+  sendToTeensy(msg);
+  snprintf(msg, sizeof(msg), "FILT:%d:%d:%d", t, vals[2], vals[3]);
+  sendToTeensy(msg);
+  snprintf(msg, sizeof(msg), "ENV:%d:%d:%d:%d:%d", t, vals[4], vals[5], vals[6], vals[7]);
+  sendToTeensy(msg);
+  if (hasDxp) {
+    // Envoyes APRES PATCH: expres -- PATCH: recharge tout le voice data
+    // DX7 depuis la banque (voir loadDexedPatch()), qui ecraserait ces
+    // deux octets s'ils partaient avant.
+    snprintf(msg, sizeof(msg), "DXP:%d:0:%d", t, vals[8]);
+    sendToTeensy(msg);
+    snprintf(msg, sizeof(msg), "DXP:%d:1:%d", t, vals[9]);
+    sendToTeensy(msg);
+  }
+  Serial.print("PATCH_LOADED:");
+  Serial.println(path);
 }
 
 void drawPatchPage() {
@@ -1188,6 +1487,7 @@ void drawPatchPage() {
   for (uint8_t i = 0; i < 6; ++i) {
     drawPatchRow(i);
   }
+  drawPatchSlotRow();
 }
 
 bool hitTestPatchTrackPrev(int16_t x, int16_t y) {
@@ -1802,6 +2102,31 @@ void handleTeensyLine(const String &line) {
             drawMenu();
           }
         }
+        // Page MOTEURS : voir le commentaire de selectedEngineTrack plus
+        // haut. HAUT/BAS changent la piste, GAUCHE/DROITE la valeur de la
+        // colonne au focus (moteur ou patch).
+        if (pressed && currentScreen == Screen::Engines) {
+          if (index == 0 || index == 1) {
+            const int8_t previous = selectedEngineTrack;
+            selectedEngineTrack = static_cast<int8_t>((selectedEngineTrack + (index == 1 ? 1 : kSeqTrackCount - 1)) %
+                                                        kSeqTrackCount);
+            drawEngRow(static_cast<uint8_t>(previous));
+            drawEngRow(static_cast<uint8_t>(selectedEngineTrack));
+          } else if (index == 2 || index == 3) {
+            const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
+            const int dir = (index == 3) ? 1 : -1;
+            char msg[16];
+            if (!engineColPatch) {
+              const uint8_t nextEngine = static_cast<uint8_t>((trackEngine[t] + dir + az2::kEngineCount) % az2::kEngineCount);
+              snprintf(msg, sizeof(msg), "ENGINE:%d:%d", t, nextEngine);
+            } else {
+              const uint8_t count = az2::enginePatchCount(trackEngine[t]);
+              const uint8_t nextPatch = static_cast<uint8_t>((trackPatch[t] + dir + count) % count);
+              snprintf(msg, sizeof(msg), "PATCH:%d:%d", t, nextPatch);
+            }
+            sendToTeensy(msg);
+          }
+        }
         // Sur la page SEQUENCEUR (vue tracker, voir seqDetailMode plus
         // haut), la croix edite le pas selectionne -- demande le
         // 2026-09-14 ("prend le sequenceur du dexed touch"), etendue le
@@ -1895,6 +2220,12 @@ void handleTeensyLine(const String &line) {
             goTo(kMenuItems[items[menuSelected]].target);
           }
         }
+      }
+      // Page MOTEURS : A bascule le focus croix entre la colonne MOTEUR
+      // et la colonne PATCH (voir engineColPatch plus haut).
+      if (pressed && letter == 'A' && currentScreen == Screen::Engines) {
+        engineColPatch = !engineColPatch;
+        drawEngRow(static_cast<uint8_t>(selectedEngineTrack));
       }
       // Dans une sous-liste du menu : B revient a la grille de
       // categories (pas besoin de ressortir de Screen::Menu).
@@ -2107,6 +2438,10 @@ void handleTeensyLine(const String &line) {
         trackEngine[track] = engine;
         if (currentScreen == Screen::Engines) {
           drawEngRow(track);
+        } else if (currentScreen == Screen::Patch && track == patchTrack && !screensaverActive) {
+          // Les lignes 2-5 changent de sens selon le moteur (ADSR vs
+          // ALGO/FEEDBACK Dexed, voir patchRowLabel()) -- tout redessiner.
+          drawPatchPage();
         } else if (currentScreen == Screen::Sequencer && track == selectedSeqTrack && !screensaverActive) {
           drawTrkSidePanel();
         }
@@ -2122,6 +2457,83 @@ void handleTeensyLine(const String &line) {
         trackPatch[track] = patch;
         if (currentScreen == Screen::Engines) {
           drawEngRow(track);
+        } else if (currentScreen == Screen::Sequencer && track == selectedSeqTrack && !screensaverActive) {
+          drawTrkSidePanel();
+        }
+      }
+    }
+  } else if (line.startsWith("FILT:")) {
+    // Echo du filtre par piste (voir handleFiltCommand() cote Teensy) --
+    // tient trackCutoff[]/trackReso[] a jour pour la page PATCH ET le
+    // panneau lateral du sequenceur (voir drawTrkSidePanel()).
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    const int i3 = line.indexOf(':', i2 + 1);
+    if (i1 >= 0 && i2 >= 0 && i3 >= 0) {
+      const uint8_t track = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
+      const uint8_t cutoff = static_cast<uint8_t>(line.substring(i2 + 1, i3).toInt());
+      const uint8_t reso = static_cast<uint8_t>(line.substring(i3 + 1).toInt());
+      if (track < kSeqTrackCount) {
+        trackCutoff[track] = cutoff;
+        trackReso[track] = reso;
+        if (currentScreen == Screen::Patch && track == patchTrack && !screensaverActive) {
+          drawPatchRow(0);
+          drawPatchRow(1);
+        } else if (currentScreen == Screen::Sequencer && track == selectedSeqTrack && !screensaverActive) {
+          drawTrkSidePanel();
+        }
+      }
+    }
+  } else if (line.startsWith("ENV:")) {
+    // Echo de l'ADSR par piste (voir handleEnvCommand() cote Teensy).
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    const int i3 = line.indexOf(':', i2 + 1);
+    const int i4 = line.indexOf(':', i3 + 1);
+    const int i5 = line.indexOf(':', i4 + 1);
+    if (i1 >= 0 && i2 >= 0 && i3 >= 0 && i4 >= 0 && i5 >= 0) {
+      const uint8_t track = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
+      const uint8_t a = static_cast<uint8_t>(line.substring(i2 + 1, i3).toInt());
+      const uint8_t d = static_cast<uint8_t>(line.substring(i3 + 1, i4).toInt());
+      const uint8_t s = static_cast<uint8_t>(line.substring(i4 + 1, i5).toInt());
+      const uint8_t r = static_cast<uint8_t>(line.substring(i5 + 1).toInt());
+      if (track < kSeqTrackCount) {
+        trackAttack[track] = a;
+        trackDecay[track] = d;
+        trackSustain[track] = s;
+        trackRelease[track] = r;
+        if (currentScreen == Screen::Patch && track == patchTrack && !screensaverActive) {
+          for (uint8_t row = 2; row < 6; ++row) {
+            drawPatchRow(row);
+          }
+        } else if (currentScreen == Screen::Sequencer && track == selectedSeqTrack && !screensaverActive) {
+          drawTrkSidePanel();
+        }
+      }
+    }
+  } else if (line.startsWith("DXP:")) {
+    // Echo des reglages Dexed (voir handleDexedParamCommand() cote
+    // Teensy et le commentaire de trackAlgo[] plus haut) -- arrive apres
+    // un +/- sur la page PATCH ET apres tout changement de patch/moteur
+    // (announceDexedParams() cote Teensy), donc garde l'affichage a jour
+    // meme quand l'algo/feedback changent parce que le PATCH a change,
+    // pas juste par ce reglage-la.
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    const int i3 = line.indexOf(':', i2 + 1);
+    if (i1 >= 0 && i2 >= 0 && i3 >= 0) {
+      const uint8_t track = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
+      const uint8_t index = static_cast<uint8_t>(line.substring(i2 + 1, i3).toInt());
+      const uint8_t value = static_cast<uint8_t>(line.substring(i3 + 1).toInt());
+      if (track < kSeqTrackCount) {
+        if (index == 0) {
+          trackAlgo[track] = value;
+        } else if (index == 1) {
+          trackFeedback[track] = value;
+        }
+        if (currentScreen == Screen::Patch && track == patchTrack && !screensaverActive) {
+          drawPatchRow(2);
+          drawPatchRow(3);
         } else if (currentScreen == Screen::Sequencer && track == selectedSeqTrack && !screensaverActive) {
           drawTrkSidePanel();
         }
@@ -2310,6 +2722,17 @@ void setup() {
       }
     }
   }
+  // Memes defauts "neutres" que cote Teensy pour le filtre/ADSR de
+  // chaque piste (grand ouvert / ADSR rapide) -- voir trackFilter[]/
+  // trackAnalogEnv[] dans setup() cote Teensy.
+  for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
+    trackCutoff[t] = 127;
+    trackReso[t] = 0;
+    trackAttack[t] = 3;
+    trackDecay[t] = 20;
+    trackSustain[t] = 89;
+    trackRelease[t] = 38;
+  }
 
   pinMode(kPinBacklight, OUTPUT);
   digitalWrite(kPinBacklight, HIGH);
@@ -2399,6 +2822,13 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
           (selectedSeqTrack + (hitTestTrkTrackNext(x, y) ? 1 : kSeqTrackCount - 1)) % kSeqTrackCount);
       selectedSeqStep = 0;
       drawSeqDetailPage();
+    } else if (hitTestTrkExpand(x, y)) {
+      // "AGRANDIR" -- ouvre la page PATCH complete pour la piste
+      // actuellement affichee (demande : "un bouton pour agrandir et
+      // avoir le controle total du patch des parametres").
+      patchTrack = selectedSeqTrack;
+      scopeHasData = false;
+      goTo(Screen::Patch);
     } else if (hitTestTrkPlay(x, y)) {
       sendToTeensy(seqPlaying ? az2::kStop : az2::kPlay);
     } else if (hitTestTrkBpm(x, y) >= 0) {
@@ -2467,15 +2897,26 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
     } else {
       bool isPlusSide = false;
       const int8_t row = hitTestPatchRow(x, y, isPlusSide);
-      if (row >= 0) {
+      const uint8_t t = static_cast<uint8_t>(patchTrack);
+      if (row >= 0 && patchRowActive(t, static_cast<uint8_t>(row))) {
         const int delta = isPlusSide ? 1 : -1;
-        patchParams[row] = static_cast<uint8_t>(constrain(static_cast<int>(patchParams[row]) + delta, 0, 127));
+        uint8_t &param = patchParamRef(t, static_cast<uint8_t>(row));
+        param = static_cast<uint8_t>(constrain(static_cast<int>(param) + delta, 0, static_cast<int>(patchRowMax(t, static_cast<uint8_t>(row)))));
         drawPatchRow(static_cast<uint8_t>(row));
         if (row < 2) {
           sendPatchFilt();
+        } else if (trackEngine[t] == az2::kEngineDexed) {
+          sendPatchDxp(static_cast<uint8_t>(row - 2));  // row 2->index 0 (algo), row 3->index 1 (feedback)
         } else {
           sendPatchEnv();
         }
+      } else if (hitTestPatchSlotNum(x, y)) {
+        patchSlot = static_cast<uint8_t>((patchSlot + 1) % kPatchSlotCount);
+        drawPatchSlotRow();
+      } else if (hitTestPatchSlotSave(x, y)) {
+        savePatchSlot(patchSlot);
+      } else if (hitTestPatchSlotLoad(x, y)) {
+        loadPatchSlot(patchSlot);
       }
     }
   } else if (currentScreen == Screen::Song) {

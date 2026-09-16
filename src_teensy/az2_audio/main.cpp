@@ -293,6 +293,8 @@ const short kAnalogWaveformValues[4] = {WAVEFORM_SINE, WAVEFORM_SAWTOOTH, WAVEFO
 // Charge le patch courant (trackPatch[track]) dans le moteur actuellement
 // actif de la piste (trackEngine[track]). Partagee avec liveVoice (voir
 // setup()) qui n'a pas de "piste" mais profite des memes patchs nommes.
+void relayLine(const String &line);  // definie plus bas, voir son commentaire
+
 void loadDexedPatch(AudioSynthDexed &engine, uint8_t patch) {
   uint8_t packed[128];
   memcpy_P(packed, kDexedPatchBank[patch % az2::kDexedPatchCount], sizeof(packed));
@@ -301,11 +303,27 @@ void loadDexedPatch(AudioSynthDexed &engine, uint8_t patch) {
   engine.loadVoiceParameters(unpacked);
 }
 
+// Previens l'UI ESP32 de l'algo/feedback DX7 embarques dans CE patch --
+// sans ca, apres un changement de patch/moteur, la page PATCH afficherait
+// un algo/feedback perimes (ceux du reglage DXP: precedent) tant que
+// l'utilisateur n'a pas manuellement retouche les +/-. Meme esprit que
+// printPatchSelect() apres setTrackEngine().
+void announceDexedParams(uint8_t track) {
+  char msg[24];
+  snprintf(msg, sizeof(msg), "DXP:%d:0:%d", track,
+           trackDexedEngine[track].getVoiceDataElement(DEXED_VOICE_OFFSET + DEXED_ALGORITHM));
+  relayLine(String(msg));
+  snprintf(msg, sizeof(msg), "DXP:%d:1:%d", track,
+           trackDexedEngine[track].getVoiceDataElement(DEXED_VOICE_OFFSET + DEXED_FEEDBACK));
+  relayLine(String(msg));
+}
+
 void applyTrackPatch(uint8_t track) {
   const uint8_t patch = trackPatch[track];
   switch (trackEngine[track]) {
     case az2::kEngineDexed:
       loadDexedPatch(trackDexedEngine[track], patch);
+      announceDexedParams(track);
       break;
     case az2::kEngineEPiano:
       trackEPianoEngine[track].setProgram(patch % az2::kEPianoPatchCount);
@@ -1101,6 +1119,46 @@ void handleEnvCommand(const String &line) {
   relayLine(line);
 }
 
+// DXP:<piste 0-7>:<index 0=algo,1=feedback>:<valeur> -- reglages
+// propres au moteur Dexed, demande le 2026-09-16 ("il faut des
+// reglages, on a pas de reglages dans la fenetre dexed du tracker") :
+// FILT:/ENV: pilotent le filtre resonant et l'AudioEffectEnvelope
+// generiques, mais l'ADSR generique n'est PAS ecoutee par Dexed (sa
+// propre EG interne au patch DX7 la remplace, voir commentaire de
+// handleEnvCommand) -- une piste Dexed n'avait donc AUCUN reglage
+// audible depuis la page PATCH. Algorithme (0-31) et feedback (0-7)
+// sont les 2 parametres DX7 les plus identifiants et les plus simples
+// a exposer (adresse globale unique dans le voice data, pas par
+// operateur comme les niveaux/EG des 6 operateurs -- garde pour plus
+// tard si besoin). Accepte quelle que soit la piste/le moteur actif
+// (ecrit dans l'objet Dexed de la piste, audible des que/si elle
+// bascule sur DEXED), meme principe que ENV:.
+void handleDexedParamCommand(const String &line) {
+  const int idx1 = line.indexOf(':');
+  const int idx2 = line.indexOf(':', idx1 + 1);
+  const int idx3 = line.indexOf(':', idx2 + 1);
+  if (idx1 < 0 || idx2 < 0 || idx3 < 0) {
+    return;
+  }
+  const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+  const int index = line.substring(idx2 + 1, idx3).toInt();
+  if (track >= kTrackCount) {
+    return;
+  }
+
+  if (index == 0) {
+    const int algo = constrain(line.substring(idx3 + 1).toInt(), 0, 31);
+    trackDexedEngine[track].setVoiceDataElement(DEXED_VOICE_OFFSET + DEXED_ALGORITHM, static_cast<uint8_t>(algo));
+  } else if (index == 1) {
+    const int fb = constrain(line.substring(idx3 + 1).toInt(), 0, 7);
+    trackDexedEngine[track].setVoiceDataElement(DEXED_VOICE_OFFSET + DEXED_FEEDBACK, static_cast<uint8_t>(fb));
+  } else {
+    return;
+  }
+
+  relayLine(line);
+}
+
 // SCOPE:<piste 0-7> pour observer cette piste (sortie post-filtre, voir
 // trackFilter[]), SCOPE:OFF pour arreter -- voir updateScope() plus bas
 // pour l'envoi effectif des paquets. Rebranche patchScopeTap a chaque
@@ -1566,6 +1624,11 @@ void handleCommand(const String &line) {
 
   if (line.startsWith("ENV:")) {
     handleEnvCommand(line);
+    return;
+  }
+
+  if (line.startsWith("DXP:")) {
+    handleDexedParamCommand(line);
     return;
   }
 
