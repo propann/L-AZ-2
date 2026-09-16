@@ -886,6 +886,51 @@ bool hitTestTrkDiv(int16_t x, int16_t y) {
   return inBox(x, y, kTrkDivX, kTrkControlsY, kTrkDivW, kTrkControlsH);
 }
 
+// Panneau "patch actif" -- demande 2026-09-16 ("on a de la place, on
+// affiche le patch actif et ses reglages du cote droit ... on met le
+// patch en cours dans la piste selectionnee") : les colonnes NOTE/
+// INST/FX/VAL ne remplissent pas toute la largeur (kSeqRightEdge), il
+// reste ~194px a droite -- moteur + patch de la piste EDITEE
+// (selectedSeqTrack), memes tableaux que la page MOTEURS (declares
+// plus bas dans ce fichier, voir la declaration anticipee ci-dessous).
+extern uint8_t trackEngine[kSeqTrackCount];
+extern uint8_t trackPatch[kSeqTrackCount];
+
+constexpr int16_t kTrkSideGap = 8;
+constexpr int16_t kTrkSideX = kDetailLeft + kDetailStepW + kDetailNoteW + kDetailInstW + kDetailFxW + kDetailValW +
+                               kTrkSideGap;
+constexpr int16_t kTrkSideW = kSeqRightEdge - kTrkSideX;
+
+void drawTrkSidePanel() {
+  const int16_t h = static_cast<int16_t>(kSeqStepCount * (kDetailRowH + kDetailRowGap));
+  const uint16_t accent = kPalette[selectedSeqTrack % kPaletteCount];
+
+  gfx->fillRect(kTrkSideX, kDetailTop, kTrkSideW, h, RGB565_BLACK);
+  gfx->drawRect(kTrkSideX, kDetailTop, kTrkSideW, h, accent);
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 6));
+  gfx->print("PATCH ACTIF");
+
+  gfx->setTextSize(2);
+  gfx->setTextColor(accent);
+  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 22));
+  gfx->print(az2::engineName(trackEngine[selectedSeqTrack]));
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 46));
+  gfx->print(az2::enginePatchName(trackEngine[selectedSeqTrack], trackPatch[selectedSeqTrack]));
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 70));
+  gfx->print("(reglages filtre/ADSR");
+  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 82));
+  gfx->print("sur la page PATCH)");
+}
+
 void drawSeqDetailPage() {
   char title[16];
   snprintf(title, sizeof(title), "PATTERN %d", currentPattern);
@@ -895,6 +940,7 @@ void drawSeqDetailPage() {
   for (uint8_t s = 0; s < kSeqStepCount; ++s) {
     drawDetailRow(s);
   }
+  drawTrkSidePanel();
   drawTrkControls();
 }
 
@@ -2061,6 +2107,8 @@ void handleTeensyLine(const String &line) {
         trackEngine[track] = engine;
         if (currentScreen == Screen::Engines) {
           drawEngRow(track);
+        } else if (currentScreen == Screen::Sequencer && track == selectedSeqTrack && !screensaverActive) {
+          drawTrkSidePanel();
         }
       }
     }
@@ -2074,6 +2122,8 @@ void handleTeensyLine(const String &line) {
         trackPatch[track] = patch;
         if (currentScreen == Screen::Engines) {
           drawEngRow(track);
+        } else if (currentScreen == Screen::Sequencer && track == selectedSeqTrack && !screensaverActive) {
+          drawTrkSidePanel();
         }
       }
     }
