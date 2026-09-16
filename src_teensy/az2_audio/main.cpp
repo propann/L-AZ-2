@@ -1531,7 +1531,7 @@ void handleCommand(const String &line) {
     return;
   }
 
-  if (line == az2::kHelloControl || line == az2::kHelloKeypad) {
+  if (line == az2::kHelloControl) {
     announceHello();
     return;
   }

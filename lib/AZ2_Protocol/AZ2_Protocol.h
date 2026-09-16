@@ -40,7 +40,6 @@ constexpr uint8_t kPadCols = 4;
 
 constexpr const char *kHelloControl = "HELLO:ESP32_CONTROL";
 constexpr const char *kHelloAudio = "HELLO:TEENSY_AUDIO";
-constexpr const char *kHelloKeypad = "HELLO:PICO_KEYPAD";
 constexpr const char *kPlay = "PLAY";
 constexpr const char *kStop = "STOP";
 constexpr const char *kRecToggle = "REC:TOGGLE";
