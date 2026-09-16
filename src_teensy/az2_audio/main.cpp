@@ -1131,12 +1131,16 @@ void handleScopeCommand(const String &line) {
 }
 
 // Appelee depuis loop() -- draine scopeQueue et envoie un paquet toutes
-// les kScopeSendIntervalMs (~50 images/s, largement suffisant pour
-// l'oeil ; les blocs arrivent bien plus vite, ~2.9ms/bloc a 44.1kHz,
-// donc on jette les blocs intermediaires pour ne garder que le plus
-// recent -- pas de latence qui s'accumule).
+// les kScopeSendIntervalMs. Etait 20ms (~50 images/s) -- l'ecran
+// clignotait trop (chaque paquet efface/redessine toute la zone du
+// tracer, voir drawPatchScope() cote ESP32), remonte a 66ms (~15
+// images/s, largement suffisant pour un tracer visuel, bien moins
+// agressif a l'oeil) suite au retour ("la fenetre patch ... elle
+// scintille un peu trop"). Les blocs arrivent bien plus vite (~2.9ms/
+// bloc a 44.1kHz) -- on jette les blocs intermediaires pour ne garder
+// que le plus recent, pas de latence qui s'accumule.
 uint32_t lastScopeSendMs = 0;
-constexpr uint32_t kScopeSendIntervalMs = 20;
+constexpr uint32_t kScopeSendIntervalMs = 66;
 constexpr uint8_t kScopeDecimate = 128 / az2::kScopeSamplesPerPacket;
 
 void updateScope() {

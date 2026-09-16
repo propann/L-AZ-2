@@ -196,7 +196,7 @@ bool inBox(int16_t x, int16_t y, int16_t bx, int16_t by, int16_t bw, int16_t bh)
 // ---------------------------------------------------------------------
 // Etat partage entre les pages / le lien Teensy
 // ---------------------------------------------------------------------
-enum class Screen : uint8_t { Menu, Controls, Audio, Sequencer, Engines, Retro, Config, Links, About, Patch };
+enum class Screen : uint8_t { Menu, Controls, Audio, Sequencer, Engines, Retro, Config, Links, About, Patch, Song };
 Screen currentScreen = Screen::Menu;
 
 bool teensyLinked = false;
@@ -284,6 +284,7 @@ constexpr MenuItem kMenuItems[] = {
     {"SEQUENCEUR", "programmer les 16 pas", Screen::Sequencer, MenuCat::Musique},
     {"MOTEURS", "moteur + patch par piste", Screen::Engines, MenuCat::Musique},
     {"PATCH", "filtre + ADSR + forme d'onde", Screen::Patch, MenuCat::Musique},
+    {"SONG", "chainer les patterns", Screen::Song, MenuCat::Musique},
     {"AUDIO", "jouer le Teensy depuis l'ecran", Screen::Audio, MenuCat::Musique},
     {"JEUX", "Game Boy / GBC (ROM sur carte SD)", Screen::Retro, MenuCat::Jeux},
     {"CONFIGURATION", "ecran de veille, reglages", Screen::Config, MenuCat::Config},
@@ -622,18 +623,37 @@ constexpr int16_t kSeqTempoBtnW = 50;
 constexpr int16_t kSeqDivY = kSeqTempoY + kSeqTempoH + 4;
 constexpr int16_t kSeqDivH = 20;
 
-bool seqStepOn[kSeqTrackCount][kSeqStepCount] = {};
+// 8 patterns (voir PATTERN:/SONGSET:/SONGLEN:/SONGMODE: dans
+// AZ2_Protocol.h et patterns[] cote Teensy) -- demande 2026-09-16 ("il
+// faut un tracker complet ... plus qu'assembler des patterns"). L'ESP32
+// garde SES PROPRES copies des 8 grilles (pas de "dump" complet envoye
+// par le Teensy au changement de pattern, trop volumineux -- 8x8x16
+// pas) : seedees identiquement a seedDefaultNotes() cote Teensy au
+// boot, puis tenues a jour par les memes echos NOTE:/STEP:/INST:/SFX:
+// qu'avant, mais indexes par currentPattern (le pattern actuellement
+// EDITE des deux cotes, voir PATTERN: plus bas).
+constexpr uint8_t kPatternCount = 8;
+uint8_t currentPattern = 0;
+
+bool seqStepOn[kPatternCount][kSeqTrackCount][kSeqStepCount] = {};
 // Note par pas (voir NOTE: dans AZ2_Protocol.h -- porte de MicroDexed-touch,
 // demande le 2026-09-15 "prend le sequenceur du dexed touch"). Meme
 // defauts que seedDefaultNotes() cote Teensy tant que le NOTE: echo n'est
 // pas arrive.
-uint8_t seqStepNote[kSeqTrackCount][kSeqStepCount];
+uint8_t seqStepNote[kPatternCount][kSeqTrackCount][kSeqStepCount];
 // Colonnes INST/FX/VAL du tracker (voir AZ2_TRACKER_ETUDE.md, INST:/SFX:
 // dans AZ2_Protocol.h et handleInstCommand()/handleStepFxCommand() cote
 // Teensy) -- 0xFF = patch par defaut de la piste, 0 = pas d'effet.
-uint8_t seqStepPatch[kSeqTrackCount][kSeqStepCount];
-uint8_t seqStepFx[kSeqTrackCount][kSeqStepCount] = {};
-uint8_t seqStepFxVal[kSeqTrackCount][kSeqStepCount] = {};
+uint8_t seqStepPatch[kPatternCount][kSeqTrackCount][kSeqStepCount];
+uint8_t seqStepFx[kPatternCount][kSeqTrackCount][kSeqStepCount] = {};
+uint8_t seqStepFxVal[kPatternCount][kSeqTrackCount][kSeqStepCount] = {};
+
+// Song : liste ordonnee de patterns a enchainer (voir songPatterns[]
+// cote Teensy). Meme longueur max (kSongLength=16).
+constexpr uint8_t kSongLength = 16;
+uint8_t songPatterns[kSongLength] = {};
+uint8_t songLen = 0;
+bool songMode = false;
 // Une couleur par effet (voir kPalette) -- reperage visuel rapide sur
 // la grille ET la vue detail, demande le 2026-09-15 ("on met de la
 // couleur, des effets"). kDim pour "aucun effet" (index 0). Doit rester
@@ -677,7 +697,7 @@ uint16_t seqBandColor(uint8_t step) {
 void drawSeqCell(uint8_t track, uint8_t step) {
   int16_t x, y;
   seqCellRect(track, step, x, y);
-  const bool on = seqStepOn[track][step];
+  const bool on = seqStepOn[currentPattern][track][step];
   const bool playhead = (step == seqCurrentStep);
   const bool selected = (track == selectedSeqTrack && step == selectedSeqStep);
   gfx->fillRect(x, y, kSeqCellW, kSeqCellH, on ? kPalette[track % kPaletteCount] : seqBandColor(step));
@@ -696,7 +716,7 @@ void drawSeqCell(uint8_t track, uint8_t step) {
     // Plage d'affichage 36-84 (3 octaves autour du C4), bornee au-dela.
     constexpr uint8_t kNoteVisualMin = 36;
     constexpr uint8_t kNoteVisualMax = 84;
-    const uint8_t note = constrain(seqStepNote[track][step], kNoteVisualMin, kNoteVisualMax);
+    const uint8_t note = constrain(seqStepNote[currentPattern][track][step], kNoteVisualMin, kNoteVisualMax);
     const float ratio = static_cast<float>(note - kNoteVisualMin) / static_cast<float>(kNoteVisualMax - kNoteVisualMin);
     const int16_t notchY = static_cast<int16_t>(y + kSeqCellH - 3 - ratio * (kSeqCellH - 6));
     gfx->drawFastHLine(static_cast<int16_t>(x + 2), notchY, static_cast<int16_t>(kSeqCellW - 4), RGB565_WHITE);
@@ -704,7 +724,7 @@ void drawSeqCell(uint8_t track, uint8_t step) {
     // Pastille = effet actif sur ce pas (voir kStepFxColors) -- visible
     // sans ouvrir la vue detail, demande 2026-09-15 ("on met de la
     // couleur, des effets").
-    const uint8_t fxId = seqStepFx[track][step];
+    const uint8_t fxId = seqStepFx[currentPattern][track][step];
     if (fxId != 0) {
       gfx->fillRect(static_cast<int16_t>(x + kSeqCellW - 5), static_cast<int16_t>(y + 1), 4, 4, kStepFxColors[fxId]);
     }
@@ -829,7 +849,7 @@ void drawDetailHeader() {
 void drawDetailRow(uint8_t step) {
   const uint8_t track = static_cast<uint8_t>(selectedSeqTrack);
   const int16_t y = static_cast<int16_t>(kDetailTop + step * (kDetailRowH + kDetailRowGap));
-  const bool on = seqStepOn[track][step];
+  const bool on = seqStepOn[currentPattern][track][step];
   const bool rowSelected = (step == selectedSeqStep);
   const bool playhead = (step == seqCurrentStep);
   const uint16_t accent = kPalette[track % kPaletteCount];
@@ -853,7 +873,7 @@ void drawDetailRow(uint8_t step) {
   }
   gfx->setTextColor(noteSel ? RGB565_BLACK : (on ? RGB565_WHITE : kFaint));
   if (on) {
-    formatNoteName(seqStepNote[track][step], buf, sizeof(buf));
+    formatNoteName(seqStepNote[currentPattern][track][step], buf, sizeof(buf));
   } else {
     snprintf(buf, sizeof(buf), "---");
   }
@@ -866,7 +886,7 @@ void drawDetailRow(uint8_t step) {
     gfx->fillRect(detailColX(2), y, kDetailInstW, kDetailRowH, accent);
   }
   gfx->setTextColor(instSel ? RGB565_BLACK : (on ? RGB565_WHITE : kFaint));
-  const uint8_t patch = seqStepPatch[track][step];
+  const uint8_t patch = seqStepPatch[currentPattern][track][step];
   if (patch == 0xFF) {
     snprintf(buf, sizeof(buf), "--");
   } else {
@@ -877,7 +897,7 @@ void drawDetailRow(uint8_t step) {
 
   // FX (colonne editable 2) -- une couleur par effet (kStepFxColors),
   // demande 2026-09-15 ("on met de la couleur, des effets").
-  const uint8_t fxId = seqStepFx[track][step];
+  const uint8_t fxId = seqStepFx[currentPattern][track][step];
   const bool fxSel = rowSelected && seqDetailCol == 2;
   if (fxSel) {
     gfx->fillRect(detailColX(3), y, kDetailFxW, kDetailRowH, accent);
@@ -900,20 +920,38 @@ void drawDetailRow(uint8_t step) {
   if (fxId == 0) {
     snprintf(buf, sizeof(buf), "--");
   } else {
-    snprintf(buf, sizeof(buf), "%02X", seqStepFxVal[track][step]);
+    snprintf(buf, sizeof(buf), "%02X", seqStepFxVal[currentPattern][track][step]);
   }
   gfx->setCursor(static_cast<int16_t>(detailColX(4) + 2), static_cast<int16_t>(y + 6));
   gfx->print(buf);
 }
 
 void drawSeqDetailPage() {
-  char title[16];
-  snprintf(title, sizeof(title), "PISTE %d - DETAIL", selectedSeqTrack);
+  char title[24];
+  snprintf(title, sizeof(title), "P%d PISTE %d - DETAIL", currentPattern, selectedSeqTrack);
   drawSubHeader(title, kPalette[selectedSeqTrack % kPaletteCount]);
   drawDetailHeader();
   for (uint8_t s = 0; s < kSeqStepCount; ++s) {
     drawDetailRow(s);
   }
+}
+
+// Zone tactile sur le titre de l'en-tete (juste apres la fleche retour,
+// voir hitBack()) -- toucher cycle le pattern EDITE (voir currentPattern,
+// PATTERN: dans AZ2_Protocol.h). Meme zone sur la grille et la vue
+// detail.
+bool hitTestPatternHeader(int16_t x, int16_t y) {
+  return inBox(x, y, 90, 0, 200, 50);
+}
+
+void drawSequencerPage();  // definie plus bas -- seul appelant de switchToPattern()
+
+void switchToPattern(uint8_t p) {
+  currentPattern = static_cast<uint8_t>(p % kPatternCount);
+  char msg[12];
+  snprintf(msg, sizeof(msg), "PATTERN:%d", currentPattern);
+  sendToTeensy(msg);
+  drawSequencerPage();  // seul appelant : la page Sequenceur (grille ou detail)
 }
 
 int8_t hitTestDetailRow(int16_t x, int16_t y) {
@@ -934,7 +972,9 @@ void drawSequencerPage() {
     drawSeqDetailPage();
     return;
   }
-  drawSubHeader("SEQUENCEUR", kPalette[0]);
+  char title[20];
+  snprintf(title, sizeof(title), "SEQUENCEUR - PAT %d", currentPattern);
+  drawSubHeader(title, kPalette[0]);
   drawSeqGrid();
   drawSeqTransport();
   drawSeqTempo();
@@ -1096,9 +1136,16 @@ void drawPatchTrackRow() {
   gfx->print(buf);
 }
 
+// N'efface/redessine QUE l'interieur (pas le cadre, voir drawPatchPage()
+// qui le dessine une seule fois en entrant sur la page) -- appelee a
+// chaque paquet SCOPE recu (~15/s, voir kScopeSendIntervalMs cote
+// Teensy), redessiner le cadre a chaque fois donnait un effet de
+// scintillement genant ("la fenetre patch ... elle scintille un peu
+// trop").
 void drawPatchScope() {
-  gfx->fillRect(kMargin, kPatchScopeTop, kScreenSize - 2 * kMargin, kPatchScopeH, RGB565_BLACK);
-  gfx->drawRect(kMargin, kPatchScopeTop, kScreenSize - 2 * kMargin, kPatchScopeH, kFaint);
+  gfx->fillRect(static_cast<int16_t>(kMargin + 1), static_cast<int16_t>(kPatchScopeTop + 1),
+                static_cast<int16_t>(kScreenSize - 2 * kMargin - 2), static_cast<int16_t>(kPatchScopeH - 2),
+                RGB565_BLACK);
   if (!scopeHasData) {
     gfx->setTextSize(1);
     gfx->setTextColor(kDim);
@@ -1171,6 +1218,10 @@ void sendPatchEnv() {
 void drawPatchPage() {
   drawSubHeader("PATCH", kPalette[4]);
   drawPatchTrackRow();
+  // Cadre du tracer dessine UNE fois ici -- drawPatchScope() (appelee a
+  // chaque paquet SCOPE recu) ne touche plus que l'interieur, voir son
+  // commentaire.
+  gfx->drawRect(kMargin, kPatchScopeTop, kScreenSize - 2 * kMargin, kPatchScopeH, kFaint);
   drawPatchScope();
   for (uint8_t i = 0; i < 6; ++i) {
     drawPatchRow(i);
@@ -1198,6 +1249,120 @@ int8_t hitTestPatchRow(int16_t x, int16_t y, bool &isPlusSide) {
     }
     if (inBox(x, y, plusX, rowY, kPatchBtnW, rowH)) {
       isPlusSide = true;
+      return static_cast<int8_t>(i);
+    }
+  }
+  return -1;
+}
+
+// ---------------------------------------------------------------------
+// Page SONG -- chainage de patterns, demande le 2026-09-16 ("c'est
+// plus un sequenceur qui peut nous permettre d'assembler des patterns,
+// mais il faut un tracker complet"). Modele Polyend (le plus simple des
+// 3 references etudiees, voir AZ2_TRACKER_ETUDE.md) : chaque case de
+// song = un pattern ENTIER (8 pistes ensemble). MODE bascule boucle
+// simple (comportement d'origine) / song ; LONGUEUR (0-16) ; grille de
+// 16 cases, touche pour cycler le pattern assigne (0-7).
+// ---------------------------------------------------------------------
+constexpr int16_t kSongModeRowY = 90;
+constexpr int16_t kSongRowH = 38;
+constexpr int16_t kSongBtnW = 70;
+constexpr int16_t kSongLenRowY = kSongModeRowY + kSongRowH + 8;
+constexpr int16_t kSongGridTop = kSongLenRowY + kSongRowH + 12;
+constexpr uint8_t kSongCols = 4;
+constexpr int16_t kSongSlotGap = 6;
+constexpr int16_t kSongSlotW = (kScreenSize - 2 * kMargin - (kSongCols - 1) * kSongSlotGap) / kSongCols;
+constexpr int16_t kSongSlotH = 56;
+
+void drawSongModeRow() {
+  gfx->fillRect(kMargin, kSongModeRowY, kScreenSize - 2 * kMargin, kSongRowH, RGB565_BLACK);
+  gfx->drawRect(kMargin, kSongModeRowY, kScreenSize - 2 * kMargin, kSongRowH, kFaint);
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(kSongModeRowY + 3));
+  gfx->print("MODE (toucher pour changer)");
+  gfx->setTextSize(2);
+  gfx->setTextColor(songMode ? kPalette[1] : RGB565_WHITE);
+  gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(kSongModeRowY + 16));
+  gfx->print(songMode ? "SONG" : "BOUCLE SIMPLE");
+}
+
+void drawSongLenRow() {
+  const int16_t minusX = kMargin;
+  const int16_t plusX = static_cast<int16_t>(kScreenSize - kMargin - kSongBtnW);
+  gfx->fillRect(kMargin, kSongLenRowY, kScreenSize - 2 * kMargin, kSongRowH, RGB565_BLACK);
+  gfx->drawRect(minusX, kSongLenRowY, kSongBtnW, kSongRowH, kFaint);
+  gfx->drawRect(plusX, kSongLenRowY, kSongBtnW, kSongRowH, kFaint);
+  gfx->setTextSize(2);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(static_cast<int16_t>(minusX + 24), static_cast<int16_t>(kSongLenRowY + 6));
+  gfx->print('-');
+  gfx->setCursor(static_cast<int16_t>(plusX + 24), static_cast<int16_t>(kSongLenRowY + 6));
+  gfx->print('+');
+  char buf[20];
+  snprintf(buf, sizeof(buf), "LONGUEUR: %d", songLen);
+  gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - 55), static_cast<int16_t>(kSongLenRowY + 10));
+  gfx->print(buf);
+}
+
+void songSlotRect(uint8_t i, int16_t &x, int16_t &y) {
+  const uint8_t col = static_cast<uint8_t>(i % kSongCols);
+  const uint8_t row = static_cast<uint8_t>(i / kSongCols);
+  x = static_cast<int16_t>(kMargin + col * (kSongSlotW + kSongSlotGap));
+  y = static_cast<int16_t>(kSongGridTop + row * (kSongSlotH + kSongSlotGap));
+}
+
+void drawSongSlot(uint8_t i) {
+  int16_t x, y;
+  songSlotRect(i, x, y);
+  const bool active = i < songLen;
+  const uint8_t patt = songPatterns[i];
+
+  gfx->fillRect(x, y, kSongSlotW, kSongSlotH, active ? kPalette[patt % kPaletteCount] : RGB565_BLACK);
+  gfx->drawRect(x, y, kSongSlotW, kSongSlotH, kFaint);
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(active ? RGB565_BLACK : kDim);
+  char lbl[6];
+  snprintf(lbl, sizeof(lbl), "%02d", i);
+  gfx->setCursor(static_cast<int16_t>(x + 4), static_cast<int16_t>(y + 3));
+  gfx->print(lbl);
+
+  gfx->setTextSize(3);
+  gfx->setTextColor(active ? RGB565_BLACK : kFaint);
+  char buf[4];
+  if (active) {
+    snprintf(buf, sizeof(buf), "%d", patt);
+  } else {
+    snprintf(buf, sizeof(buf), "--");
+  }
+  gfx->setCursor(static_cast<int16_t>(x + kSongSlotW / 2 - 10), static_cast<int16_t>(y + kSongSlotH / 2 - 12));
+  gfx->print(buf);
+}
+
+void drawSongPage() {
+  drawSubHeader("SONG", kPalette[3]);
+  drawSongModeRow();
+  drawSongLenRow();
+  for (uint8_t i = 0; i < kSongLength; ++i) {
+    drawSongSlot(i);
+  }
+}
+
+bool hitTestSongMode(int16_t x, int16_t y) {
+  return inBox(x, y, kMargin, kSongModeRowY, kScreenSize - 2 * kMargin, kSongRowH);
+}
+bool hitTestSongLenMinus(int16_t x, int16_t y) {
+  return inBox(x, y, kMargin, kSongLenRowY, kSongBtnW, kSongRowH);
+}
+bool hitTestSongLenPlus(int16_t x, int16_t y) {
+  return inBox(x, y, static_cast<int16_t>(kScreenSize - kMargin - kSongBtnW), kSongLenRowY, kSongBtnW, kSongRowH);
+}
+int8_t hitTestSongSlot(int16_t x, int16_t y) {
+  for (uint8_t i = 0; i < kSongLength; ++i) {
+    int16_t sx, sy;
+    songSlotRect(i, sx, sy);
+    if (inBox(x, y, sx, sy, kSongSlotW, kSongSlotH)) {
       return static_cast<int8_t>(i);
     }
   }
@@ -1557,6 +1722,7 @@ void drawScreen(Screen s) {
     case Screen::Links: drawLinksPage(); return;
     case Screen::About: drawAboutPage(); return;
     case Screen::Patch: drawPatchPage(); return;
+    case Screen::Song: drawSongPage(); return;
   }
 }
 
@@ -1702,35 +1868,35 @@ void handleTeensyLine(const String &line) {
               char msg[24];
               switch (seqDetailCol) {
                 case 0: {
-                  const uint8_t newNote = nextNoteInScale(seqStepNote[t][s], static_cast<int8_t>(dir));
+                  const uint8_t newNote = nextNoteInScale(seqStepNote[currentPattern][t][s], static_cast<int8_t>(dir));
                   snprintf(msg, sizeof(msg), "NOTE:%d:%d:%d", t, s, newNote);
                   sendToTeensy(msg);
                   break;
                 }
                 case 1: {
                   const uint8_t count = az2::enginePatchCount(trackEngine[t]);
-                  const int base = (seqStepPatch[t][s] == 0xFF) ? trackPatch[t] : seqStepPatch[t][s];
+                  const int base = (seqStepPatch[currentPattern][t][s] == 0xFF) ? trackPatch[t] : seqStepPatch[currentPattern][t][s];
                   const int newPatch = (base + dir + count) % count;
                   snprintf(msg, sizeof(msg), "INST:%d:%d:%d", t, s, newPatch);
                   sendToTeensy(msg);
                   break;
                 }
                 case 2: {
-                  const int newFx = (seqStepFx[t][s] + dir + kStepFxCount) % kStepFxCount;
-                  snprintf(msg, sizeof(msg), "SFX:%d:%d:%d:%d", t, s, newFx, seqStepFxVal[t][s]);
+                  const int newFx = (seqStepFx[currentPattern][t][s] + dir + kStepFxCount) % kStepFxCount;
+                  snprintf(msg, sizeof(msg), "SFX:%d:%d:%d:%d", t, s, newFx, seqStepFxVal[currentPattern][t][s]);
                   sendToTeensy(msg);
                   break;
                 }
                 default: {
-                  const int newVal = constrain(static_cast<int>(seqStepFxVal[t][s]) + dir, 0, 255);
-                  snprintf(msg, sizeof(msg), "SFX:%d:%d:%d:%d", t, s, seqStepFx[t][s], newVal);
+                  const int newVal = constrain(static_cast<int>(seqStepFxVal[currentPattern][t][s]) + dir, 0, 255);
+                  snprintf(msg, sizeof(msg), "SFX:%d:%d:%d:%d", t, s, seqStepFx[currentPattern][t][s], newVal);
                   sendToTeensy(msg);
                   break;
                 }
               }
             }
           } else if (index == 0 || index == 1) {
-            const uint8_t newNote = nextNoteInScale(seqStepNote[t][s], index == 0 ? 1 : -1);
+            const uint8_t newNote = nextNoteInScale(seqStepNote[currentPattern][t][s], index == 0 ? 1 : -1);
             char msg[20];
             snprintf(msg, sizeof(msg), "NOTE:%d:%d:%d", t, s, newNote);
             sendToTeensy(msg);
@@ -1856,7 +2022,7 @@ void handleTeensyLine(const String &line) {
       const uint8_t step = static_cast<uint8_t>(line.substring(i2 + 1, i3).toInt());
       const uint8_t note = static_cast<uint8_t>(line.substring(i3 + 1).toInt());
       if (track < kSeqTrackCount && step < kSeqStepCount) {
-        seqStepNote[track][step] = note;
+        seqStepNote[currentPattern][track][step] = note;
         if (currentScreen == Screen::Sequencer && !screensaverActive) {
           if (seqDetailMode && track == selectedSeqTrack) {
             drawDetailRow(step);
@@ -1877,7 +2043,7 @@ void handleTeensyLine(const String &line) {
       const uint8_t step = static_cast<uint8_t>(line.substring(i2 + 1, i3).toInt());
       const uint8_t patch = static_cast<uint8_t>(line.substring(i3 + 1).toInt());
       if (track < kSeqTrackCount && step < kSeqStepCount) {
-        seqStepPatch[track][step] = patch;
+        seqStepPatch[currentPattern][track][step] = patch;
         if (currentScreen == Screen::Sequencer && seqDetailMode && track == selectedSeqTrack && !screensaverActive) {
           drawDetailRow(step);
         }
@@ -1896,8 +2062,8 @@ void handleTeensyLine(const String &line) {
       const uint8_t fx = static_cast<uint8_t>(line.substring(i3 + 1, i4).toInt());
       const uint8_t val = static_cast<uint8_t>(line.substring(i4 + 1).toInt());
       if (track < kSeqTrackCount && step < kSeqStepCount && fx < kStepFxCount) {
-        seqStepFx[track][step] = fx;
-        seqStepFxVal[track][step] = val;
+        seqStepFx[currentPattern][track][step] = fx;
+        seqStepFxVal[currentPattern][track][step] = val;
         if (currentScreen == Screen::Sequencer && seqDetailMode && track == selectedSeqTrack && !screensaverActive) {
           drawDetailRow(step);
         }
@@ -1912,7 +2078,7 @@ void handleTeensyLine(const String &line) {
       const uint8_t step = static_cast<uint8_t>(line.substring(i2 + 1, i3).toInt());
       const bool on = line.substring(i3 + 1).toInt() != 0;
       if (track < kSeqTrackCount && step < kSeqStepCount) {
-        seqStepOn[track][step] = on;
+        seqStepOn[currentPattern][track][step] = on;
         if (currentScreen == Screen::Sequencer && !screensaverActive) {
           if (seqDetailMode && track == selectedSeqTrack) {
             drawDetailRow(step);
@@ -1965,6 +2131,43 @@ void handleTeensyLine(const String &line) {
       if (currentScreen == Screen::Sequencer && !screensaverActive) {
         drawSeqDivision();
         drawSeqGrid();  // les bandes de mesure suivent le regroupement (voir drawSeqBeatBands())
+      }
+    }
+  } else if (line.startsWith("PATTERN:")) {
+    const uint8_t value = static_cast<uint8_t>(line.substring(8).toInt());
+    if (value < kPatternCount) {
+      currentPattern = value;
+      if (currentScreen == Screen::Sequencer && !screensaverActive) {
+        drawSequencerPage();
+      }
+    }
+  } else if (line.startsWith("SONGMODE:")) {
+    songMode = line.substring(9).toInt() != 0;
+    if (currentScreen == Screen::Song && !screensaverActive) {
+      drawSongPage();
+    }
+  } else if (line.startsWith("SONGLEN:")) {
+    const uint8_t value = static_cast<uint8_t>(line.substring(8).toInt());
+    if (value <= kSongLength) {
+      songLen = value;
+      if (currentScreen == Screen::Song && !screensaverActive) {
+        drawSongPage();
+      }
+    }
+  } else if (line.startsWith("SONGSET:")) {
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    if (i1 >= 0 && i2 >= 0) {
+      const uint8_t pos = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
+      const uint8_t pattern = static_cast<uint8_t>(line.substring(i2 + 1).toInt());
+      if (pos < kSongLength && pattern < kPatternCount) {
+        songPatterns[pos] = pattern;
+        if (pos + 1 > songLen) {
+          songLen = static_cast<uint8_t>(pos + 1);
+        }
+        if (currentScreen == Screen::Song && !screensaverActive) {
+          drawSongSlot(pos);
+        }
       }
     }
   } else if (line.startsWith("ENGINE:")) {
@@ -2164,13 +2367,16 @@ void setup() {
   delay(300);
   Serial.println("AZ2:ROLE:ESP32_SCREEN_TEST");
 
-  // Memes valeurs par defaut que seedDefaultNotes() cote Teensy --
-  // corrige des le premier NOTE:/HELLO recu si jamais desynchronise.
+  // Memes valeurs par defaut que seedDefaultNotes() cote Teensy (les 8
+  // patterns, pas seulement celui affiche au boot -- voir currentPattern)
+  // -- corrige des le premier NOTE:/HELLO recu si jamais desynchronise.
   static const uint8_t kDefaultNotes[kSeqTrackCount] = {48, 55, 60, 64, 60, 67, 72, 76};
-  for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
-    for (uint8_t s = 0; s < kSeqStepCount; ++s) {
-      seqStepNote[t][s] = kDefaultNotes[t];
-      seqStepPatch[t][s] = 0xFF;  // meme defaut que cote Teensy (voir seedDefaultNotes())
+  for (uint8_t p = 0; p < kPatternCount; ++p) {
+    for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
+      for (uint8_t s = 0; s < kSeqStepCount; ++s) {
+        seqStepNote[p][t][s] = kDefaultNotes[t];
+        seqStepPatch[p][t][s] = 0xFF;  // meme defaut que cote Teensy (voir seedDefaultNotes())
+      }
     }
   }
 
@@ -2213,7 +2419,12 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
   Serial.print(":y=");
   Serial.println(y);
 
-  if (currentScreen == Screen::Sequencer && seqDetailMode && hitBack(x, y)) {
+  if (currentScreen == Screen::Sequencer && hitTestPatternHeader(x, y)) {
+    // Titre de l'en-tete ("SEQUENCEUR - PAT N" / "PN PISTE X - DETAIL")
+    // -- toucher cycle le pattern EDITE (voir currentPattern, demande
+    // 2026-09-16 "il faut un tracker complet").
+    switchToPattern(static_cast<uint8_t>(currentPattern + 1));
+  } else if (currentScreen == Screen::Sequencer && seqDetailMode && hitBack(x, y)) {
     // "< PISTE N - DETAIL" -- revient a la grille 8 pistes, pas au menu
     // (voir drawSubHeader()/hitBack(), meme zone tactile que d'habitude).
     seqDetailMode = false;
@@ -2259,8 +2470,8 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       if (hitStep == selectedSeqStep) {
         // 2e toucher sur la ligne deja selectionnee -> bascule ON/OFF
         // (meme geste que sur la grille).
-        const bool newState = !seqStepOn[track][hitStep];
-        seqStepOn[track][hitStep] = newState;
+        const bool newState = !seqStepOn[currentPattern][track][hitStep];
+        seqStepOn[currentPattern][track][hitStep] = newState;
         char msg[20];
         snprintf(msg, sizeof(msg), "STEP:%d:%d:%d", track, hitStep, newState ? 1 : 0);
         sendToTeensy(msg);
@@ -2317,8 +2528,8 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
           drawSeqCell(static_cast<uint8_t>(prevTrack), static_cast<uint8_t>(prevStep));  // efface l'ancien surlignage
         }
 
-        const bool newState = !seqStepOn[track][step];
-        seqStepOn[track][step] = newState;  // optimiste ; re-synchronise par l'echo STEP: du Teensy
+        const bool newState = !seqStepOn[currentPattern][track][step];
+        seqStepOn[currentPattern][track][step] = newState;  // optimiste ; re-synchronise par l'echo STEP: du Teensy
         drawSeqCell(track, step);
         char msg[20];
         snprintf(msg, sizeof(msg), "STEP:%d:%d:%d", track, step, newState ? 1 : 0);
@@ -2361,6 +2572,44 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
         } else {
           sendPatchEnv();
         }
+      }
+    }
+  } else if (currentScreen == Screen::Song) {
+    if (hitTestSongMode(x, y)) {
+      songMode = !songMode;
+      char msg[12];
+      snprintf(msg, sizeof(msg), "SONGMODE:%d", songMode ? 1 : 0);
+      sendToTeensy(msg);
+      drawSongModeRow();
+    } else if (hitTestSongLenMinus(x, y)) {
+      songLen = songLen > 0 ? static_cast<uint8_t>(songLen - 1) : 0;
+      char msg[16];
+      snprintf(msg, sizeof(msg), "SONGLEN:%d", songLen);
+      sendToTeensy(msg);
+      drawSongLenRow();
+      drawSongSlot(songLen);  // la case qui vient de "sortir" de la longueur active doit s'assombrir
+    } else if (hitTestSongLenPlus(x, y)) {
+      const uint8_t previous = songLen;
+      songLen = static_cast<uint8_t>(min<uint32_t>(songLen + 1, kSongLength));
+      char msg[16];
+      snprintf(msg, sizeof(msg), "SONGLEN:%d", songLen);
+      sendToTeensy(msg);
+      drawSongLenRow();
+      if (songLen != previous) {
+        drawSongSlot(previous);
+      }
+    } else {
+      const int8_t slot = hitTestSongSlot(x, y);
+      if (slot >= 0) {
+        songPatterns[slot] = static_cast<uint8_t>((songPatterns[slot] + 1) % kPatternCount);
+        if (slot >= songLen) {
+          songLen = static_cast<uint8_t>(slot + 1);
+          drawSongLenRow();
+        }
+        char msg[16];
+        snprintf(msg, sizeof(msg), "SONGSET:%d:%d", slot, songPatterns[slot]);
+        sendToTeensy(msg);
+        drawSongSlot(static_cast<uint8_t>(slot));
       }
     }
   } else if (currentScreen == Screen::Config) {
