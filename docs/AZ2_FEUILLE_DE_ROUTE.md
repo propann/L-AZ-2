@@ -178,10 +178,10 @@ ordre :
 
 | Priorite | Tache | Bloque par |
 | ---: | --- | --- |
-| 1 | Mute/solo par piste | Rien -- pret a faire, juste choisir le mapping bouton |
+| 1 | Mute/solo par piste | **Piege trouve le 2026-09-16, voir note ci-dessous** -- pas "juste un gain a 0", a faire avec precaution sur le vrai materiel |
 | 2 | Sauvegarde/chargement de projet complet (patterns+song+BPM+scale) | Rien -- meme mecanique que la sauvegarde de patch (2026-09-16), juste plus de champs |
-| 3 | Swing/groove global | Rien -- un parametre dans `advanceTick()` |
-| 4 | Volume/pan par piste | Rien -- meme famille que FILT:/ENV: deja en place |
+| 3 | Swing/groove global | Piege timer trouve le 2026-09-16, voir note plus bas |
+| 4 | Volume/pan par piste | Meme piege que mute/solo si implemente sur le meme gain (voir note plus bas) |
 | 5 | Accords (plusieurs notes par pas depuis l'ecran) | Rien cote Teensy (`kNotesPerTrack=2` deja la) -- juste l'UI colonne NOTE a etendre |
 | 6 | Clavier tactile comme editeur live de note | Rien -- routage a ecrire (pad -> NOTE: si un pas est selectionne) |
 | 7 | Sampler (moteur audio a partir d'echantillons) | Carte SD Teensy preparee le 2026-09-16 (FAT32) -- reste a l'inserer physiquement et confirmer `SDTEENSY:READY`, puis ecrire le moteur `AudioPlaySdWav`/`AudioPlaySdRaw` |
@@ -192,3 +192,60 @@ Critere de sortie de cette phase : AZ-2 n'a plus aucun "trou" flagrant
 par rapport a une groovebox d'entree de gamme (mute/solo + sauvegarde +
 swing sont les 3 attendus partout, meme sur les machines les moins
 cheres etudiees).
+
+### Piege trouve en preparant le mute/solo (2026-09-16, pas implemente)
+
+En regardant `trackNoteOn()`/`trackNoteOff()` pour brancher un mute
+simple ("juste mettre le gain du groupe a 0"), une decouverte : pour le
+moteur **BRAIDS**, le gain du mixeur de groupe (`trackGroupMixer(track)
+.gain(trackGroupChannel(track), ...)`) sert DEJA de porte note-on/note-
+off (Braids est un oscillateur qui tourne en continu, sans enveloppe
+propre -- voir `kBraidsActiveGain` a l'allumage, `0.0f` a l'extinction,
+dans `trackNoteOn()`/`trackNoteOff()`). Ecrire un mute qui met
+brutalement ce meme gain a 0 volerait la place de cette porte : a la
+prochaine note, `trackNoteOn()` remettrait `kBraidsActiveGain` sans
+tenir compte du mute, et demuter une piste Braids en cours de note ne
+la ferait pas revenir (le code ne re-applique le gain qu'aux
+transitions note-on/note-off, jamais en dehors).
+
+Facon correcte de le faire (a ecrire, PAS fait) :
+
+1. Un tableau `bool trackMuted[kTrackCount]` + `bool trackSoloed[kTrackCount]`.
+2. Une fonction `float effectiveGain(track)` = 0 si mute ou (un solo actif
+   ET cette piste pas soloed), sinon le gain "normal" du moteur actif
+   (0.0f pour Braids au repos, 0.5f pour les autres -- meme valeurs que
+   `setTrackEngine()` aujourd'hui).
+3. `trackNoteOn()` (cas Braids) doit utiliser `kBraidsActiveGain *
+   (effectiveGain(track) > 0 ? 1 : 0)` au lieu du gain fixe -- pas
+   `kBraidsActiveGain` tout court.
+4. Un changement de mute/solo (`MUTE:`/`SOLO:`) doit **recalculer et
+   reappliquer le gain du groupe pour la piste concernee** -- mais SEULEMENT
+   si son moteur n'est pas Braids EN TRAIN DE JOUER une note (sinon on
+   ecraserait la porte au mauvais moment). Le plus sur : garder aussi un
+   `bool trackNoteHeld[kTrackCount]` mis a jour par trackNoteOn()/Off(),
+   et ne toucher au gain depuis MUTE:/SOLO: QUE si `!trackNoteHeld[track]`
+   pour une piste Braids (sinon laisser la prochaine transition note-on/
+   off appliquer le bon gain).
+5. Tester en reel avec une piste Braids qui joue en boucle pendant qu'on
+   mute/demute plusieurs fois de suite -- c'est le cas qui casserait
+   silencieusement sans le point 4.
+
+Rien de tout ca n'a ete ecrit aujourd'hui (pas de materiel branche pour
+verifier un changement sur le chemin audio) -- juste le piege identifie
+pour ne pas le decouvrir en prod la prochaine fois.
+
+**Le meme piege s'applique au volume/pan par piste (item 4)** si
+implemente en multipliant le meme gain de groupe -- meme prudence
+requise (verifier avec une piste Braids qui joue en continu pendant
+qu'on bouge le volume).
+
+**Swing/groove (item 3) a aussi un piege different, trouve en y
+regardant** : le tempo est pilote par un seul `IntervalTimer` a periode
+FIXE (`tickIntervalUs()`, recalculee seulement quand BPM/division
+changent). Un vrai swing doit alterner 2 durees de tick (pas
+long/court) -- ca veut dire rappeler `.update()` sur le timer DEPUIS
+L'ISR elle-meme selon la parite du pas courant, ce qui est plus delicat
+a rendre fiable (jitter, sécurité de reconfigurer un timer depuis sa
+propre interruption) qu'un simple "decalage" comme note initialement.
+A verifier en reel avec un oscilloscope/analyseur logique sur l'horloge
+avant de considerer ca "fait", pas juste a l'oreille.
