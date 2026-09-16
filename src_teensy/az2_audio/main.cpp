@@ -443,7 +443,30 @@ struct SequencerTrack {
   uint8_t baseNote = 0;          // note de reference du pas (l'ARP applique ses offsets dessus)
   uint8_t ticksSinceTrigger = 0;
 };
-SequencerTrack seqTracks[kTrackCount];
+// Plusieurs patterns + chainage en "song", demande le 2026-09-16 ("il
+// faut un tracker complet ... plus qu'un sequenceur qui permet
+// d'assembler des patterns"). Modele le plus simple des 3 references
+// etudiees (voir AZ2_TRACKER_ETUDE.md) -- comme Polyend Tracker : un
+// pas de song = UN pattern complet (8 pistes ensemble), pas de chaines
+// par piste independantes comme LSDJ/M8 (bien plus de travail pour peu
+// de gain a ce stade).
+constexpr uint8_t kPatternCount = 8;
+SequencerTrack patterns[kPatternCount][kTrackCount];
+// Pattern en cours d'EDITION -- STEP:/NOTE:/INST:/SFX: modifient
+// toujours celui-ci, qu'il soit ou non celui qui joue reellement (on
+// peut preparer un pattern pendant qu'un autre tourne, comme dans un
+// vrai tracker).
+uint8_t currentPattern = 0;
+// Pattern reellement JOUE par l'ISR (voir advanceTick()) -- suit
+// currentPattern en mode boucle simple ; suit songPatterns[songPos] en
+// mode song.
+uint8_t playingPattern = 0;
+
+constexpr uint8_t kSongLength = 16;
+uint8_t songPatterns[kSongLength] = {};
+uint8_t songLen = 0;    // 0 = pas de song definie
+bool songMode = false;  // false = boucle simple sur currentPattern (comportement d'origine)
+uint8_t songPos = 0;
 
 // Sous-decoupage du pas en "ticks" (fondation commune a ARP/CUT/RETRIG
 // dans LSDJ/M8/Polyend, voir AZ2_TRACKER_ETUDE.md) -- 4 ticks/pas, assez
@@ -481,10 +504,12 @@ void seedDefaultNotes() {
   // chaque pas est ensuite modifiable individuellement via NOTE:, voir
   // handleNoteCommand(). C3,G3,C4,E4 puis une octave au-dessus pour 4-7.
   static const uint8_t kDefaultNotes[kTrackCount] = {48, 55, 60, 64, 60, 67, 72, 76};
-  for (uint8_t t = 0; t < kTrackCount; ++t) {
-    for (uint8_t s = 0; s < kStepCount; ++s) {
-      seqTracks[t].stepNote[s] = kDefaultNotes[t];
-      seqTracks[t].stepPatch[s] = 0xFF;  // 0xFF = patch par defaut de la piste (voir INST, plus haut)
+  for (uint8_t p = 0; p < kPatternCount; ++p) {
+    for (uint8_t t = 0; t < kTrackCount; ++t) {
+      for (uint8_t s = 0; s < kStepCount; ++s) {
+        patterns[p][t].stepNote[s] = kDefaultNotes[t];
+        patterns[p][t].stepPatch[s] = 0xFF;  // 0xFF = patch par defaut de la piste (voir INST, plus haut)
+      }
     }
   }
 }
@@ -527,6 +552,21 @@ void announceHello() {
     az2::printPatchSelect(Serial, t, trackPatch[t]);
     az2::printPatchSelect(Serial1, t, trackPatch[t]);
   }
+
+  // Pattern/song (voir patterns[]/songPatterns[] plus haut) -- pas les
+  // 8x8x16 pas complets (bien trop de lignes), juste l'etat de
+  // navigation/song, comme pour bpm/stepsPerBeat ci-dessus.
+  char msg[16];
+  snprintf(msg, sizeof(msg), "PATTERN:%d", currentPattern);
+  relayLine(msg);
+  snprintf(msg, sizeof(msg), "SONGMODE:%d", songMode ? 1 : 0);
+  relayLine(msg);
+  snprintf(msg, sizeof(msg), "SONGLEN:%d", songLen);
+  relayLine(msg);
+  for (uint8_t i = 0; i < songLen; ++i) {
+    snprintf(msg, sizeof(msg), "SONGSET:%d:%d", i, songPatterns[i]);
+    relayLine(msg);
+  }
 }
 
 // Un moteur different par piste (voir AZ2_FEUILLE_DE_ROUTE_MOTEUR.md) :
@@ -567,9 +607,10 @@ void trackNoteOff(uint8_t track, uint8_t note) {
 
 void allTrackNotesOff() {
   for (uint8_t t = 0; t < kTrackCount; ++t) {
-    if (seqTracks[t].stepPlaying) {
-      trackNoteOff(t, seqTracks[t].playingNote);
-      seqTracks[t].stepPlaying = false;
+    SequencerTrack &tr = patterns[playingPattern][t];
+    if (tr.stepPlaying) {
+      trackNoteOff(t, tr.playingNote);
+      tr.stepPlaying = false;
     }
   }
 }
@@ -583,7 +624,7 @@ void allTrackNotesOff() {
 // route est trop couteux pour une ISR (voir SequencerTrack plus haut),
 // laisse pour une iteration future.
 void triggerStepFx(uint8_t t) {
-  SequencerTrack &tr = seqTracks[t];
+  SequencerTrack &tr = patterns[playingPattern][t];
   if (!tr.stepPlaying) {
     return;
   }
@@ -638,10 +679,20 @@ void advanceTick() {
     currentStep = static_cast<uint8_t>((currentStep + 1) % kStepCount);
     if (currentStep == 0) {
       ++currentBar;
+      // Fin du pattern joue : avance dans la song si le mode song est
+      // actif, sinon la piste jouee reste alignee sur celle en cours
+      // d'edition (comportement d'origine, boucle simple -- voir
+      // patterns[]/currentPattern/playingPattern plus haut).
+      if (songMode && songLen > 0) {
+        songPos = static_cast<uint8_t>((songPos + 1) % songLen);
+        playingPattern = songPatterns[songPos];
+      } else {
+        playingPattern = currentPattern;
+      }
     }
 
     for (uint8_t t = 0; t < kTrackCount; ++t) {
-      SequencerTrack &tr = seqTracks[t];
+      SequencerTrack &tr = patterns[playingPattern][t];
       if (tr.stepOn[currentStep]) {
         const uint8_t note = tr.stepNote[currentStep];
         trackNoteOn(t, note, 100);
@@ -660,8 +711,9 @@ void advanceTick() {
     clockPending = true;
   } else {
     for (uint8_t t = 0; t < kTrackCount; ++t) {
-      if (seqTracks[t].stepPlaying && seqTracks[t].activeFx != kStepFxNone) {
-        seqTracks[t].ticksSinceTrigger = currentTick;
+      SequencerTrack &tr = patterns[playingPattern][t];
+      if (tr.stepPlaying && tr.activeFx != kStepFxNone) {
+        tr.ticksSinceTrigger = currentTick;
         triggerStepFx(t);
       }
     }
@@ -684,6 +736,8 @@ void startSequencer() {
   playing = true;
   currentStep = kStepCount - 1;  // le prochain tick 0 (voir advanceTick()) ira au pas 0
   currentTick = 0;
+  songPos = 0;
+  playingPattern = (songMode && songLen > 0) ? songPatterns[0] : currentPattern;
   sequencerTimer.begin(advanceTick, tickIntervalUs());
 }
 
@@ -710,7 +764,7 @@ void handleStepCommand(const String &line) {
     return;
   }
 
-  seqTracks[track].stepOn[step] = on;
+  patterns[currentPattern][track].stepOn[step] = on;
   relayLine(line);  // confirme tel quel, utile pour que l'UI ESP32 se resynchronise
 }
 
@@ -733,7 +787,7 @@ void handleNoteCommand(const String &line) {
     return;
   }
 
-  seqTracks[track].stepNote[step] = static_cast<uint8_t>(note);
+  patterns[currentPattern][track].stepNote[step] = static_cast<uint8_t>(note);
   relayLine(line);
 }
 
@@ -757,7 +811,7 @@ void handleInstCommand(const String &line) {
     return;
   }
 
-  seqTracks[track].stepPatch[step] = static_cast<uint8_t>(patch);
+  patterns[currentPattern][track].stepPatch[step] = static_cast<uint8_t>(patch);
   relayLine(line);
 }
 
@@ -783,8 +837,75 @@ void handleStepFxCommand(const String &line) {
     return;
   }
 
-  seqTracks[track].stepFx[step] = static_cast<uint8_t>(fx);
-  seqTracks[track].stepFxVal[step] = static_cast<uint8_t>(val);
+  patterns[currentPattern][track].stepFx[step] = static_cast<uint8_t>(fx);
+  patterns[currentPattern][track].stepFxVal[step] = static_cast<uint8_t>(val);
+  relayLine(line);
+}
+
+// PATTERN:<0-7> -- choisit le pattern EDITE (STEP:/NOTE:/INST:/SFX:
+// s'appliquent a celui-ci). En mode boucle simple (songMode false),
+// c'est aussi celui qui joue, effectif au prochain pas (voir
+// advanceTick()) -- pas de coupure/glitch immediat, juste quantifie.
+void handlePatternCommand(const String &line) {
+  const int idx = line.indexOf(':');
+  if (idx < 0) {
+    return;
+  }
+  const int pattern = line.substring(idx + 1).toInt();
+  if (pattern < 0 || pattern >= kPatternCount) {
+    return;
+  }
+  currentPattern = static_cast<uint8_t>(pattern);
+  relayLine(line);
+}
+
+// SONGSET:<position 0-15>:<pattern 0-7> -- assigne un pattern a une
+// case de la song (voir songPatterns[] plus haut). Etend songLen si la
+// position depasse la longueur actuelle (pas de trou possible pour
+// l'instant -- v1 simple, toujours une song contigue depuis 0).
+void handleSongSetCommand(const String &line) {
+  const int idx1 = line.indexOf(':');
+  const int idx2 = line.indexOf(':', idx1 + 1);
+  if (idx1 < 0 || idx2 < 0) {
+    return;
+  }
+  const int pos = line.substring(idx1 + 1, idx2).toInt();
+  const int pattern = line.substring(idx2 + 1).toInt();
+  if (pos < 0 || pos >= kSongLength || pattern < 0 || pattern >= kPatternCount) {
+    return;
+  }
+  songPatterns[pos] = static_cast<uint8_t>(pattern);
+  if (static_cast<uint8_t>(pos + 1) > songLen) {
+    songLen = static_cast<uint8_t>(pos + 1);
+  }
+  relayLine(line);
+}
+
+// SONGLEN:<0-16> -- longueur active de la song (0 = pas de song
+// definie). Raccourcir ne perd pas les cases au-dela -- elles restent
+// en memoire, juste ignorees par la lecture tant que songLen ne les
+// couvre pas.
+void handleSongLenCommand(const String &line) {
+  const int idx = line.indexOf(':');
+  if (idx < 0) {
+    return;
+  }
+  const int len = line.substring(idx + 1).toInt();
+  if (len < 0 || len > kSongLength) {
+    return;
+  }
+  songLen = static_cast<uint8_t>(len);
+  relayLine(line);
+}
+
+// SONGMODE:<0|1> -- 0 = boucle simple sur currentPattern (comportement
+// d'origine), 1 = enchaine songPatterns[0..songLen-1] en boucle.
+void handleSongModeCommand(const String &line) {
+  const int idx = line.indexOf(':');
+  if (idx < 0) {
+    return;
+  }
+  songMode = line.substring(idx + 1).toInt() != 0;
   relayLine(line);
 }
 
@@ -1381,6 +1502,26 @@ void handleCommand(const String &line) {
 
   if (line.startsWith("SFX:")) {
     handleStepFxCommand(line);
+    return;
+  }
+
+  if (line.startsWith("PATTERN:")) {
+    handlePatternCommand(line);
+    return;
+  }
+
+  if (line.startsWith("SONGSET:")) {
+    handleSongSetCommand(line);
+    return;
+  }
+
+  if (line.startsWith("SONGLEN:")) {
+    handleSongLenCommand(line);
+    return;
+  }
+
+  if (line.startsWith("SONGMODE:")) {
+    handleSongModeCommand(line);
     return;
   }
 
