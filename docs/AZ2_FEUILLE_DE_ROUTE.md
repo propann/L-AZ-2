@@ -178,7 +178,7 @@ ordre :
 
 | Priorite | Tache | Bloque par |
 | ---: | --- | --- |
-| 1 | Mute/solo par piste | **Piege trouve le 2026-09-16, voir note ci-dessous** -- pas "juste un gain a 0", a faire avec precaution sur le vrai materiel |
+| 1 | Mute/solo par piste | **[FAIT le 2026-09-17]** -- voir section dediee plus bas (le piege Braids trouve le 2026-09-16 est resolu, mute/demute immediat meme sur Braids) |
 | 2 | Sauvegarde/chargement de projet complet (patterns+song+BPM+scale) | **[FAIT le 2026-09-17]** page PROJET, 4 emplacements, `/projects/N.proj` sur la SD de l'ESP32 -- voir section dediee plus bas |
 | 3 | Swing/groove global | Piege timer trouve le 2026-09-16, voir note plus bas |
 | 4 | Volume par piste | **[FAIT le 2026-09-17]**, voir section dediee plus bas. **Pan : PAS FAIT** -- chaine mono de bout en bout (patchOutL/patchOutR dupliquent le meme mixMaster), un vrai pan demanderait de refaire les bus en stereo |
@@ -291,6 +291,48 @@ correctement dans un lecteur audio classique sur ordinateur).
 (`REC:START`/`REC:STOP`) -- presente et fonctionnelle, fichier `.wav`
 cree avec succes. Reste a verifier le contenu audio avec un vrai jeu
 qui joue du son pendant l'enregistrement.
+
+### Mute/solo par piste (2026-09-17) -- resolution du piege Braids
+
+Priorite #1, LE piege le plus serieux trouve le 2026-09-16 -- resolu
+proprement, mieux que prevu a l'origine :
+
+- Idee cle : `trackNoteHeld[]` suit si une note Braids est REELLEMENT
+  en train de sonner sur chaque piste (mis a jour dans
+  `trackNoteOn()`/`trackNoteOff()`). Avec cette info, une fonction
+  unique `applyGroupGainNow(track)` sait calculer le bon gain de groupe
+  dans TOUS les cas (Braids tenu, Braids au repos, autre moteur) et
+  peut etre appelee a N'IMPORTE QUEL moment sans jamais fausser la
+  porte note-on/off -- pas besoin de "differer" quoi que ce soit.
+  Resultat : **mute/demute est immediat, meme sur une note Braids deja
+  tenue** -- meilleur que la premiere approche (volume seul, la veille)
+  qui acceptait un decalage sur ce moteur avant que ce mecanisme plus
+  general soit trouve.
+- `trackEffectiveGain(track)` combine volume + mute + solo en un seul
+  multiplicateur : mute gagne toujours ; si au moins une piste est
+  soloed, seules les soloed sont audibles ; sinon volume normal.
+- Commandes `MUTE:<piste>:<0|1>` et `SOLO:<piste>:<0|1>` (Teensy). Un
+  changement de SOLO recalcule le gain de TOUTES les pistes (une piste
+  peut devenir muette parce qu'une AUTRE vient d'etre soloed) ; un
+  changement de MUTE ne recalcule que la piste concernee (mute
+  n'affecte jamais l'audibilite des autres pistes).
+- ESP32 : page MOTEURS, boutons **C** (mute) / **D** (solo) pour la
+  piste choisie par la croix -- indicateurs "M" rouge / "S" jaune sur
+  la ligne. Reutilise C/D (libres, meme famille que le C de sortie GB
+  et le D d'edition de pas -- chacun scope a son propre ecran, aucune
+  collision).
+- Mute inclus dans la sauvegarde de projet (13e champ des lignes
+  TRACK:, retro-compatible). **Solo volontairement PAS sauvegarde**
+  (convention habituelle DAW/mixeurs : le solo est un outil de
+  monitoring live, pas une decision de composition).
+- Ancien code de `handleVolCommand()` simplifie au passage (appelle
+  maintenant `applyGroupGainNow()` au lieu de dupliquer sa propre
+  logique de calcul de gain).
+
+Compile verifie (3 environnements), **PAS ENCORE flashe ni teste en
+reel** -- ecrit sans materiel branche. A tester en priorite : muter/
+demuter une piste BRAIDS pendant qu'elle joue une note tenue (le cas
+que le piege d'origine aurait casse).
 
 ### Volume par piste (2026-09-17)
 

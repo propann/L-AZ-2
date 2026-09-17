@@ -191,20 +191,63 @@ uint8_t trackEngine[kTrackCount] = {
 };
 uint8_t trackPatch[kTrackCount] = {0, 0, 0, 0, 0, 0, 0, 0};
 
-// Volume par piste (VOL:, demande 2026-09-16/17, priorite #4 de la
-// liste indispensable) -- 0-127, 127 = plein volume (comportement
-// d'origine si jamais touche). ATTENTION piege trouve en l'ecrivant
-// (voir AZ2_FEUILLE_DE_ROUTE.md, "piege mute/solo") : le gain du
-// mixeur de groupe sert DEJA de porte note-on/off pour BRAIDS -- ce
-// volume ne peut PAS juste multiplier ce gain n'importe quand. Pour
-// Braids, le volume ne prend effet qu'A LA PROCHAINE transition
-// note-on/off (voir trackNoteOn()) ; pour tous les autres moteurs (le
-// gain de groupe est statique hors note-on/off), il est recalcule et
-// reapplique immediatement (voir handleVolCommand()). Pas de vrai
-// panoramique pour l'instant : la chaine est MONO de bout en bout
-// (patchOutL/patchOutR dupliquent le meme mixMaster, voir plus haut) --
-// un vrai pan demanderait de refaire les bus en stereo, hors scope ici.
+// Volume/mute/solo par piste (VOL:/MUTE:/SOLO:, priorites #1 et #4 de
+// la liste indispensable, AZ2_BENCHMARK_CONCURRENCE.md). ATTENTION
+// piege trouve le 2026-09-16 (voir AZ2_FEUILLE_DE_ROUTE.md, "piege
+// mute/solo") : le gain du mixeur de groupe sert DEJA de porte note-on/
+// off pour BRAIDS -- impossible de le multiplier n'importe quand sans
+// risquer de casser cette porte. Solution retenue : trackNoteHeld[]
+// suit si une note Braids est REELLEMENT en train de sonner sur cette
+// piste ; applyGroupGainNow() (juste apres) sait alors calculer le bon
+// gain dans TOUS les cas (Braids tenu, Braids au repos, autre moteur)
+// et peut etre appelee a tout moment -- mute/demute est donc immediat
+// meme sur une note Braids deja tenue, pas de decalage comme une
+// premiere version (volume seul) l'avait accepte avant que ce
+// mecanisme plus general soit trouve.
 uint8_t trackVolume[kTrackCount] = {127, 127, 127, 127, 127, 127, 127, 127};
+bool trackMuted[kTrackCount] = {};
+bool trackSoloed[kTrackCount] = {};
+bool trackNoteHeld[kTrackCount] = {};  // Braids seulement pour l'instant, voir trackNoteOn()/Off()
+
+bool anyTrackSoloed() {
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    if (trackSoloed[t]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Combine volume + mute + solo en UN seul multiplicateur 0.0-1.0 --
+// mute gagne toujours ; sinon, si au moins une piste est soloed, seules
+// les pistes soloed sont audibles ; sinon le volume normal s'applique.
+float trackEffectiveGain(uint8_t track) {
+  if (trackMuted[track]) {
+    return 0.0f;
+  }
+  if (anyTrackSoloed() && !trackSoloed[track]) {
+    return 0.0f;
+  }
+  return static_cast<float>(trackVolume[track]) / 127.0f;
+}
+
+// Recalcule et applique IMMEDIATEMENT le gain du mixeur de groupe pour
+// une piste -- SUR pour Braids grace a trackNoteHeld[] (voir plus
+// haut) : si aucune note n'est tenue, reste a 0 (repos naturel de ce
+// moteur, ne "reveille" jamais une porte qui devrait etre fermee).
+void applyGroupGainNow(uint8_t track) {
+  if (trackEngine[track] == az2::kEngineBraids) {
+    const float g = trackNoteHeld[track] ? kBraidsActiveGain * trackEffectiveGain(track) : 0.0f;
+    trackGroupMixer(track).gain(trackGroupChannel(track), g);
+  } else {
+    trackGroupMixer(track).gain(trackGroupChannel(track), 0.5f * trackEffectiveGain(track));
+  }
+}
+
+// Pas de vrai panoramique pour l'instant : la chaine est MONO de bout
+// en bout (patchOutL/patchOutR dupliquent le meme mixMaster, voir plus
+// haut) -- un vrai pan demanderait de refaire les bus en stereo, hors
+// scope ici.
 
 // 8 voix DX7 choisies a la main dans la banque vendored (voir
 // src_teensy/microdexed-touch/third-party/Synth_Dexed/examples/Banks/
@@ -372,9 +415,6 @@ void setTrackEngine(uint8_t track, uint8_t engine) {
   trackEngine[track] = engine;
   trackPatch[track] = 0;
 
-  AudioMixer4 &group = trackGroupMixer(track);
-  const uint8_t channel = trackGroupChannel(track);
-
   // patchTrackIn[] rebranche l'ENTREE du filtre de la piste (voir
   // trackFilter[]/patchFilterToGroup[] plus haut), pas le groupe
   // directement -- le filtre reste branche au groupe en permanence.
@@ -401,10 +441,12 @@ void setTrackEngine(uint8_t track, uint8_t engine) {
   }
 
   applyTrackPatch(track);
-  // engine == Braids : 0.0f (silence tant qu'aucune note n'est jouee,
-  // voir trackNoteOn()) -- le volume ne s'applique qu'a ce moment-la
-  // pour ce moteur, voir le commentaire de trackVolume[] plus haut.
-  group.gain(channel, engine == az2::kEngineBraids ? 0.0f : 0.5f * (static_cast<float>(trackVolume[track]) / 127.0f));
+  // Un changement de moteur invalide toute note precedemment tenue
+  // (voir trackNoteHeld[]) -- applyGroupGainNow() calculera donc 0.0f
+  // pour un nouveau moteur Braids, correct (silence tant qu'aucune
+  // note n'est jouee, voir trackNoteOn()).
+  trackNoteHeld[track] = false;
+  applyGroupGainNow(track);
 }
 
 // Deux entrees possibles pour le protocole AZ2 (architecture a 2 cerveaux
@@ -620,11 +662,8 @@ void trackNoteOn(uint8_t track, uint8_t note, uint8_t velocity) {
     case az2::kEngineEPiano: trackEPianoEngine[track].noteOn(note, velocity); break;
     case az2::kEngineBraids:
       trackBraidsEngine[track].set_braids_pitch(static_cast<int16_t>(note) << 7);
-      // Volume applique ICI (voir trackVolume[]) -- c'est le seul
-      // moment sur ce moteur ou toucher ce gain est sans danger pour
-      // la porte note-on/off.
-      trackGroupMixer(track).gain(trackGroupChannel(track),
-                                   kBraidsActiveGain * (static_cast<float>(trackVolume[track]) / 127.0f));
+      trackNoteHeld[track] = true;
+      applyGroupGainNow(track);
       break;
     case az2::kEngineKarplus:
       trackKarplusEngine[track].noteOn(midiNoteToFreq(note), static_cast<float>(velocity) / 127.0f);
@@ -641,7 +680,10 @@ void trackNoteOff(uint8_t track, uint8_t note) {
   switch (trackEngine[track]) {
     case az2::kEngineDexed: trackDexedEngine[track].keyup(note); break;
     case az2::kEngineEPiano: trackEPianoEngine[track].noteOff(note); break;
-    case az2::kEngineBraids: trackGroupMixer(track).gain(trackGroupChannel(track), 0.0f); break;
+    case az2::kEngineBraids:
+      trackNoteHeld[track] = false;
+      trackGroupMixer(track).gain(trackGroupChannel(track), 0.0f);
+      break;
     case az2::kEngineKarplus: trackKarplusEngine[track].noteOff(1.0f); break;
     case az2::kEngineAnalog: trackAnalogEnv[track].noteOff(); break;
   }
@@ -1094,15 +1136,47 @@ void handleVolCommand(const String &line) {
   if (track >= kTrackCount) {
     return;
   }
-  const int vol = constrain(line.substring(idx2 + 1).toInt(), 0, 127);
-  trackVolume[track] = static_cast<uint8_t>(vol);
+  trackVolume[track] = static_cast<uint8_t>(constrain(line.substring(idx2 + 1).toInt(), 0, 127));
+  applyGroupGainNow(track);
+  relayLine(line);
+}
 
-  if (trackEngine[track] != az2::kEngineBraids) {
-    trackGroupMixer(track).gain(trackGroupChannel(track), 0.5f * (static_cast<float>(vol) / 127.0f));
+// MUTE:<piste 0-7>:<0|1> et SOLO:<piste 0-7>:<0|1> -- voir
+// trackEffectiveGain()/applyGroupGainNow() plus haut pour le calcul
+// (mute gagne toujours ; un solo actif rend muettes toutes les pistes
+// non soloed). Un changement de solo affecte potentiellement TOUTES
+// les pistes (une piste peut devenir muette parce qu'une AUTRE vient
+// d'etre soloed) -- on recalcule donc le gain de TOUTES les pistes a
+// chaque fois, pas seulement celle nommee dans la commande.
+void handleMuteCommand(const String &line) {
+  const int idx1 = line.indexOf(':');
+  const int idx2 = line.indexOf(':', idx1 + 1);
+  if (idx1 < 0 || idx2 < 0) {
+    return;
   }
-  // Piste Braids : rien a faire ici, voir trackNoteOn() -- le nouveau
-  // volume s'appliquera a la PROCHAINE note jouee sur cette piste.
+  const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+  if (track >= kTrackCount) {
+    return;
+  }
+  trackMuted[track] = line.substring(idx2 + 1).toInt() != 0;
+  applyGroupGainNow(track);
+  relayLine(line);
+}
 
+void handleSoloCommand(const String &line) {
+  const int idx1 = line.indexOf(':');
+  const int idx2 = line.indexOf(':', idx1 + 1);
+  if (idx1 < 0 || idx2 < 0) {
+    return;
+  }
+  const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+  if (track >= kTrackCount) {
+    return;
+  }
+  trackSoloed[track] = line.substring(idx2 + 1).toInt() != 0;
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    applyGroupGainNow(t);
+  }
   relayLine(line);
 }
 
@@ -1670,6 +1744,16 @@ void handleCommand(const String &line) {
 
   if (line.startsWith("VOL:")) {
     handleVolCommand(line);
+    return;
+  }
+
+  if (line.startsWith("MUTE:")) {
+    handleMuteCommand(line);
+    return;
+  }
+
+  if (line.startsWith("SOLO:")) {
+    handleSoloCommand(line);
     return;
   }
 

@@ -230,7 +230,7 @@ valable dans l'ensemble) avec la recherche fraiche ci-dessus :
 
 | # | Amelioration | Pourquoi indispensable | Effort estime |
 | ---: | --- | --- | --- |
-| 1 | **Mute/solo par piste** | Present chez TOUS les concurrents cites, y compris les moins chers (Circuit Tracks) ; sans ca on ne peut pas "jouer" en scene, juste programmer | Faible -- gain a 0 par piste, mapping bouton a definir (C/D libres, voir "gachette") |
+| 1 | **Mute/solo par piste** | Present chez TOUS les concurrents cites, y compris les moins chers (Circuit Tracks) ; sans ca on ne peut pas "jouer" en scene, juste programmer | **[FAIT le 2026-09-17]** -- voir AZ2_FEUILLE_DE_ROUTE.md. C/D (page MOTEURS) = mute/solo, mute/demute immediat meme sur Braids |
 | 2 | **Sauvegarde/chargement de PROJET complet** (pas juste un patch) | Tous les concurrents survivent a une coupure ; on a la sauvegarde de patch (2026-09-16) mais pas patterns+song+BPM+scale en un fichier | Moyen -- meme mecanique que savePatchSlot()/loadPatchSlot(), format a etendre (JSON ou texte simple sur SD) |
 | 3 | **Swing/groove** | Present chez quasi tous (Polyend, LSDJ "groove screen", M8) ; sans lui le sequenceur sonne mecanique | **Correction 2026-09-16** : moyen, pas faible -- le tempo est un seul `IntervalTimer` a periode fixe, un vrai swing alterne 2 durees de tick et doit reconfigurer le timer depuis sa propre ISR (voir note dans AZ2_FEUILLE_DE_ROUTE.md) -- a verifier avec un analyseur logique, pas juste a l'oreille |
 | 4 | **Volume par piste** | Tous les concurrents, y compris les moins chers | **[FAIT le 2026-09-17]** -- voir AZ2_FEUILLE_DE_ROUTE.md. Pan pas fait (chaine mono de bout en bout) |

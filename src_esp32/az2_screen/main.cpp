@@ -1061,6 +1061,11 @@ void drawSequencerPage() {
 uint8_t trackEngine[kSeqTrackCount] = {az2::kEngineDexed, az2::kEngineDexed, az2::kEngineEPiano, az2::kEngineBraids,
                                         az2::kEngineDexed, az2::kEngineDexed, az2::kEngineEPiano, az2::kEngineBraids};
 uint8_t trackPatch[kSeqTrackCount] = {0, 0, 0, 0, 0, 0, 0, 0};
+// Mute/solo (MUTE:/SOLO:, priorite #1 de la liste indispensable) --
+// bascules cote Teensy dans trackMuted[]/trackSoloed[]/trackEffectiveGain(),
+// voir le piege Braids documente dans AZ2_FEUILLE_DE_ROUTE.md.
+bool trackMuted[kSeqTrackCount] = {};
+bool trackSoloed[kSeqTrackCount] = {};
 
 // Navigation croix sur la page MOTEURS -- demande 2026-09-16 ("dans la
 // fenetre des moteurs j'ai pas le controle joystick pour choisir et
@@ -1108,6 +1113,18 @@ void drawEngRow(uint8_t track) {
   gfx->setTextColor(kDim);
   gfx->setCursor(static_cast<int16_t>(kEngLeft + 6), static_cast<int16_t>(y + 2));
   gfx->print(title);
+  // Mute/solo (priorite #1 de la liste indispensable) -- BTN:C/D
+  // bascule pour la piste selectionnee par la croix (voir plus bas).
+  if (trackMuted[track]) {
+    gfx->setTextColor(RGB565_RED);
+    gfx->setCursor(static_cast<int16_t>(kEngLeft + 26), static_cast<int16_t>(y + 2));
+    gfx->print('M');
+  }
+  if (trackSoloed[track]) {
+    gfx->setTextColor(RGB565_YELLOW);
+    gfx->setCursor(static_cast<int16_t>(kEngLeft + 38), static_cast<int16_t>(y + 2));
+    gfx->print('S');
+  }
 
   gfx->setTextSize(2);
   gfx->setTextColor(RGB565_WHITE);
@@ -2163,9 +2180,12 @@ void saveProject(uint8_t slot) {
     f.printf("SONGSET:%d:%d\n", i, songPatterns[i]);
   }
   for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
-    f.printf("TRACK:%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", t, trackEngine[t], trackPatch[t], trackCutoff[t],
+    // Mute inclus (13e champ) mais PAS solo -- solo est un outil de
+    // monitoring live, pas une decision de composition (convention
+    // habituelle DAW/mixeurs : le solo ne survit pas a une sauvegarde).
+    f.printf("TRACK:%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", t, trackEngine[t], trackPatch[t], trackCutoff[t],
              trackReso[t], trackAttack[t], trackDecay[t], trackSustain[t], trackRelease[t], trackAlgo[t],
-             trackFeedback[t], trackVolume[t]);
+             trackFeedback[t], trackVolume[t], trackMuted[t] ? 1 : 0);
   }
   for (uint8_t p = 0; p < kPatternCount; ++p) {
     for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
@@ -2233,13 +2253,13 @@ void loadProject(uint8_t slot) {
         sendToTeensy(msg);
       }
     } else if (line.startsWith("TRACK:")) {
-      // 12 champs depuis l'ajout de VOL: (volume par piste) -- fichiers
-      // a 11 champs (avant) restent lisibles, volume laisse a sa valeur
-      // courante (deja 127 par defaut) dans ce cas.
-      int vals[12] = {};
+      // 13 champs depuis l'ajout de MUTE (12e = volume, 13e = mute) --
+      // fichiers a 11 ou 12 champs (avant ces ajouts) restent lisibles,
+      // les champs manquants gardent leur valeur courante par defaut.
+      int vals[13] = {};
       int idx = 0, start = 0;
       const String rest = afterColon(line);
-      for (int i = 0; i <= rest.length() && idx < 12; ++i) {
+      for (int i = 0; i <= rest.length() && idx < 13; ++i) {
         if (i == rest.length() || rest.charAt(i) == ',') {
           vals[idx++] = rest.substring(start, i).toInt();
           start = i + 1;
@@ -2259,8 +2279,12 @@ void loadProject(uint8_t slot) {
         sendToTeensy(msg);
         snprintf(msg, sizeof(msg), "DXP:%d:1:%d", t, vals[10]);
         sendToTeensy(msg);
-        if (idx == 12) {
+        if (idx >= 12) {
           snprintf(msg, sizeof(msg), "VOL:%d:%d", t, vals[11]);
+          sendToTeensy(msg);
+        }
+        if (idx >= 13) {
+          snprintf(msg, sizeof(msg), "MUTE:%d:%d", t, vals[12]);
           sendToTeensy(msg);
         }
       }
@@ -2690,6 +2714,21 @@ void handleTeensyLine(const String &line) {
         padEditsStep = !padEditsStep;
         drawAudioPage();
       }
+      // Page MOTEURS : C bascule MUTE, D bascule SOLO pour la piste
+      // choisie par la croix (priorite #1 de la liste indispensable).
+      if (pressed && currentScreen == Screen::Engines && (letter == 'C' || letter == 'D')) {
+        const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
+        char msg[12];
+        if (letter == 'C') {
+          trackMuted[t] = !trackMuted[t];
+          snprintf(msg, sizeof(msg), "MUTE:%d:%d", t, trackMuted[t] ? 1 : 0);
+        } else {
+          trackSoloed[t] = !trackSoloed[t];
+          snprintf(msg, sizeof(msg), "SOLO:%d:%d", t, trackSoloed[t] ? 1 : 0);
+        }
+        sendToTeensy(msg);
+        drawEngRow(t);
+      }
     }
   } else if (line.startsWith("POT:")) {
     const int firstColon = line.indexOf(':');
@@ -2977,6 +3016,26 @@ void handleTeensyLine(const String &line) {
         trackVolume[track] = vol;
         if (currentScreen == Screen::Patch && track == patchTrack && !screensaverActive) {
           drawVolRow();
+        }
+      }
+    }
+  } else if (line.startsWith("MUTE:") || line.startsWith("SOLO:")) {
+    // Echo mute/solo (voir handleMuteCommand()/handleSoloCommand() cote
+    // Teensy) -- garde trackMuted[]/trackSoloed[] a jour meme si le
+    // changement vient d'ailleurs (chargement de projet, par exemple).
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    if (i1 >= 0 && i2 >= 0) {
+      const uint8_t track = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
+      const bool on = line.substring(i2 + 1).toInt() != 0;
+      if (track < kSeqTrackCount) {
+        if (line.startsWith("MUTE:")) {
+          trackMuted[track] = on;
+        } else {
+          trackSoloed[track] = on;
+        }
+        if (currentScreen == Screen::Engines && !screensaverActive) {
+          drawEngRow(track);
         }
       }
     }
