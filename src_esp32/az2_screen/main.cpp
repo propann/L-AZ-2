@@ -196,7 +196,7 @@ bool inBox(int16_t x, int16_t y, int16_t bx, int16_t by, int16_t bw, int16_t bh)
 // ---------------------------------------------------------------------
 // Etat partage entre les pages / le lien Teensy
 // ---------------------------------------------------------------------
-enum class Screen : uint8_t { Menu, Controls, Audio, Sequencer, Engines, Retro, Config, Links, About, Patch, Song };
+enum class Screen : uint8_t { Menu, Controls, Audio, Sequencer, Engines, Retro, Config, Links, About, Patch, Song, Project };
 Screen currentScreen = Screen::Menu;
 
 bool teensyLinked = false;
@@ -285,6 +285,7 @@ constexpr MenuItem kMenuItems[] = {
     {"MOTEURS", "moteur + patch par piste", Screen::Engines, MenuCat::Musique},
     {"PATCH", "filtre + ADSR + forme d'onde", Screen::Patch, MenuCat::Musique},
     {"SONG", "chainer les patterns", Screen::Song, MenuCat::Musique},
+    {"PROJET", "sauvegarder / charger tout le morceau", Screen::Project, MenuCat::Musique},
     {"AUDIO", "jouer le Teensy depuis l'ecran", Screen::Audio, MenuCat::Musique},
     {"JEUX", "Game Boy / GBC (ROM sur carte SD)", Screen::Retro, MenuCat::Jeux},
     {"CONFIGURATION", "ecran de veille, reglages", Screen::Config, MenuCat::Config},
@@ -1995,6 +1996,245 @@ bool hitTestScalePlus(int16_t x, int16_t y) {
 }
 
 // ---------------------------------------------------------------------
+// Page PROJET -- sauvegarde/chargement du morceau ENTIER (patterns,
+// song, tempo/division, gamme, moteur+patch+filtre+ADSR par piste),
+// pas juste un patch (voir savePatchSlot()/loadPatchSlot() plus haut,
+// qui ne couvrent qu'UNE piste). Demande 2026-09-16 ("qu'on puisse
+// creer facilement un projet, le sauvegarder"), priorite #2 de la liste
+// d'ameliorations indispensables (AZ2_BENCHMARK_CONCURRENCE.md) --
+// implementee le 2026-09-17. Fichier texte simple sur la SD de l'ESP32
+// (meme carte que les ROM/patches), format ligne par ligne, lisible a
+// l'oeil -- "fichiers ouverts" comme le reste du projet. Toutes les
+// donnees existent DEJA cote ESP32 (miroir local de l'etat du
+// sequenceur) -- sauvegarder = juste les ecrire ; charger = les
+// relire ET renvoyer les commandes normales au Teensy (meme principe
+// que loadPatchSlot(), a plus grande echelle).
+// ---------------------------------------------------------------------
+constexpr uint8_t kProjectSlotCount = 4;
+uint8_t projectSlot = 0;
+constexpr int16_t kProjectSlotY = 120;
+constexpr int16_t kProjectSlotH = 40;
+constexpr int16_t kProjectBtnW = (kScreenSize - 2 * kMargin) / 3;
+
+void drawProjectPage() {
+  drawSubHeader("PROJET", kPalette[3]);
+
+  const int16_t saveX = static_cast<int16_t>(kMargin + kProjectBtnW);
+  const int16_t loadX = static_cast<int16_t>(kMargin + 2 * kProjectBtnW);
+  gfx->fillRect(kMargin, kProjectSlotY, kScreenSize - 2 * kMargin, kProjectSlotH, RGB565_BLACK);
+  gfx->drawRect(kMargin, kProjectSlotY, kProjectBtnW, kProjectSlotH, kFaint);
+  gfx->drawRect(saveX, kProjectSlotY, kProjectBtnW, kProjectSlotH, kFaint);
+  gfx->drawRect(loadX, kProjectSlotY, kProjectBtnW, kProjectSlotH, kFaint);
+
+  gfx->setTextSize(2);
+  gfx->setTextColor(RGB565_WHITE);
+  char buf[12];
+  snprintf(buf, sizeof(buf), "SLOT %d", projectSlot);
+  gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(kProjectSlotY + 10));
+  gfx->print(buf);
+  gfx->setTextColor(kPalette[1 % kPaletteCount]);
+  gfx->setCursor(static_cast<int16_t>(saveX + 16), static_cast<int16_t>(kProjectSlotY + 10));
+  gfx->print("SAVE");
+  gfx->setTextColor(kPalette[2 % kPaletteCount]);
+  gfx->setCursor(static_cast<int16_t>(loadX + 16), static_cast<int16_t>(kProjectSlotY + 10));
+  gfx->print("LOAD");
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  const char *lines[] = {
+      "Sauvegarde TOUT le morceau : patterns,",
+      "chainage song, tempo/division, gamme,",
+      "moteur/patch/filtre/ADSR de chaque piste.",
+      "",
+      "4 emplacements -- /projects/N.proj sur",
+      "la carte SD de l'ecran.",
+  };
+  for (uint8_t i = 0; i < sizeof(lines) / sizeof(lines[0]); ++i) {
+    gfx->setCursor(kMargin, static_cast<int16_t>(kProjectSlotY + kProjectSlotH + 20 + i * 18));
+    gfx->print(lines[i]);
+  }
+}
+
+bool hitTestProjectSlotNum(int16_t x, int16_t y) {
+  return inBox(x, y, kMargin, kProjectSlotY, kProjectBtnW, kProjectSlotH);
+}
+bool hitTestProjectSlotSave(int16_t x, int16_t y) {
+  return inBox(x, y, static_cast<int16_t>(kMargin + kProjectBtnW), kProjectSlotY, kProjectBtnW, kProjectSlotH);
+}
+bool hitTestProjectSlotLoad(int16_t x, int16_t y) {
+  return inBox(x, y, static_cast<int16_t>(kMargin + 2 * kProjectBtnW), kProjectSlotY, kProjectBtnW, kProjectSlotH);
+}
+
+void saveProject(uint8_t slot) {
+  SD.mkdir("/projects");
+  char path[24];
+  snprintf(path, sizeof(path), "/projects/%d.proj", slot);
+  SD.remove(path);
+  File f = SD.open(path, FILE_WRITE);
+  if (!f) {
+    Serial.print("PROJECT_SAVE_ERROR:");
+    Serial.println(path);
+    return;
+  }
+
+  f.printf("BPM:%d\n", static_cast<int>(seqBpm + 0.5f));
+  f.printf("DIV:%d\n", seqStepsPerBeat);
+  f.printf("SCALE:%d\n", currentScaleIndex);
+  f.printf("SONGMODE:%d\n", songMode ? 1 : 0);
+  f.printf("SONGLEN:%d\n", songLen);
+  for (uint8_t i = 0; i < songLen; ++i) {
+    f.printf("SONGSET:%d:%d\n", i, songPatterns[i]);
+  }
+  for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
+    f.printf("TRACK:%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", t, trackEngine[t], trackPatch[t], trackCutoff[t],
+             trackReso[t], trackAttack[t], trackDecay[t], trackSustain[t], trackRelease[t], trackAlgo[t],
+             trackFeedback[t]);
+  }
+  for (uint8_t p = 0; p < kPatternCount; ++p) {
+    for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
+      for (uint8_t s = 0; s < kSeqStepCount; ++s) {
+        f.printf("STEP:%d,%d,%d,%d,%d,%d,%d,%d\n", p, t, s, seqStepOn[p][t][s] ? 1 : 0, seqStepNote[p][t][s],
+                 seqStepPatch[p][t][s], seqStepFx[p][t][s], seqStepFxVal[p][t][s]);
+      }
+    }
+  }
+  f.close();
+  Serial.print("PROJECT_SAVED:");
+  Serial.println(path);
+}
+
+// Coupe une ligne "cle:reste" -- renvoie "reste" (String vide si pas de
+// ':'). Petit utilitaire local, le reste du fichier utilise deja ce
+// motif partout (indexOf(':') + substring()) mais ligne par ligne ici
+// simplifie la lecture du fichier projet.
+String afterColon(const String &line) {
+  const int i = line.indexOf(':');
+  return (i < 0) ? String("") : line.substring(i + 1);
+}
+
+void loadProject(uint8_t slot) {
+  char path[24];
+  snprintf(path, sizeof(path), "/projects/%d.proj", slot);
+  File f = SD.open(path);
+  if (!f) {
+    Serial.print("PROJECT_LOAD_EMPTY:");
+    Serial.println(path);
+    return;
+  }
+
+  char msg[32];
+  // PAS static -- doit repartir de -1 a CHAQUE appel de loadProject(),
+  // sinon un second chargement dont le premier pattern coinciderait
+  // avec le dernier pattern du fichier precedent sauterait a tort le
+  // PATTERN: initial (bug trouve a la relecture avant de flasher).
+  int8_t lastPattern = -1;
+  while (f.available()) {
+    const String line = f.readStringUntil('\n');
+    if (line.startsWith("BPM:")) {
+      const int bpm = afterColon(line).toInt();
+      snprintf(msg, sizeof(msg), "BPM:%d", bpm);
+      sendToTeensy(msg);
+    } else if (line.startsWith("DIV:")) {
+      const int div = afterColon(line).toInt();
+      snprintf(msg, sizeof(msg), "DIV:%d", div);
+      sendToTeensy(msg);
+    } else if (line.startsWith("SCALE:")) {
+      currentScaleIndex = static_cast<uint8_t>(afterColon(line).toInt() % kScaleCount);
+    } else if (line.startsWith("SONGMODE:")) {
+      const int v = afterColon(line).toInt();
+      snprintf(msg, sizeof(msg), "SONGMODE:%d", v);
+      sendToTeensy(msg);
+    } else if (line.startsWith("SONGLEN:")) {
+      const int v = afterColon(line).toInt();
+      snprintf(msg, sizeof(msg), "SONGLEN:%d", v);
+      sendToTeensy(msg);
+    } else if (line.startsWith("SONGSET:")) {
+      const String rest = afterColon(line);
+      const int c = rest.indexOf(':');
+      if (c >= 0) {
+        snprintf(msg, sizeof(msg), "SONGSET:%s:%s", rest.substring(0, c).c_str(), rest.substring(c + 1).c_str());
+        sendToTeensy(msg);
+      }
+    } else if (line.startsWith("TRACK:")) {
+      int vals[11] = {};
+      int idx = 0, start = 0;
+      const String rest = afterColon(line);
+      for (int i = 0; i <= rest.length() && idx < 11; ++i) {
+        if (i == rest.length() || rest.charAt(i) == ',') {
+          vals[idx++] = rest.substring(start, i).toInt();
+          start = i + 1;
+        }
+      }
+      if (idx == 11) {
+        const int t = vals[0];
+        snprintf(msg, sizeof(msg), "ENGINE:%d:%d", t, vals[1]);
+        sendToTeensy(msg);
+        snprintf(msg, sizeof(msg), "PATCH:%d:%d", t, vals[2]);
+        sendToTeensy(msg);
+        snprintf(msg, sizeof(msg), "FILT:%d:%d:%d", t, vals[3], vals[4]);
+        sendToTeensy(msg);
+        snprintf(msg, sizeof(msg), "ENV:%d:%d:%d:%d:%d", t, vals[5], vals[6], vals[7], vals[8]);
+        sendToTeensy(msg);
+        snprintf(msg, sizeof(msg), "DXP:%d:0:%d", t, vals[9]);
+        sendToTeensy(msg);
+        snprintf(msg, sizeof(msg), "DXP:%d:1:%d", t, vals[10]);
+        sendToTeensy(msg);
+      }
+    } else if (line.startsWith("STEP:")) {
+      int vals[8] = {};
+      int idx = 0, start = 0;
+      const String rest = afterColon(line);
+      for (int i = 0; i <= rest.length() && idx < 8; ++i) {
+        if (i == rest.length() || rest.charAt(i) == ',') {
+          vals[idx++] = rest.substring(start, i).toInt();
+          start = i + 1;
+        }
+      }
+      if (idx == 8) {
+        const uint8_t p = static_cast<uint8_t>(vals[0]);
+        const uint8_t t = static_cast<uint8_t>(vals[1]);
+        const uint8_t s = static_cast<uint8_t>(vals[2]);
+        // STEP:/NOTE:/INST:/SFX: (protocole existant) sont tous par
+        // pattern COURANT cote Teensy -- il faut d'abord basculer sur
+        // le pattern p, sinon on ecrirait dans le mauvais pattern. Le
+        // fichier est trie par pattern croissant (voir saveProject()),
+        // donc un simple "si different du dernier" suffit, pas besoin
+        // de detecter les sauts.
+        if (p != lastPattern) {
+          snprintf(msg, sizeof(msg), "PATTERN:%d", p);
+          sendToTeensy(msg);
+          lastPattern = p;
+        }
+        if (p < kPatternCount && t < kSeqTrackCount && s < kSeqStepCount) {
+          seqStepOn[p][t][s] = vals[3] != 0;
+          seqStepNote[p][t][s] = static_cast<uint8_t>(vals[4]);
+          seqStepPatch[p][t][s] = static_cast<uint8_t>(vals[5]);
+          seqStepFx[p][t][s] = static_cast<uint8_t>(vals[6]);
+          seqStepFxVal[p][t][s] = static_cast<uint8_t>(vals[7]);
+        }
+        snprintf(msg, sizeof(msg), "STEP:%d:%d:%d", t, s, vals[3]);
+        sendToTeensy(msg);
+        snprintf(msg, sizeof(msg), "NOTE:%d:%d:%d", t, s, vals[4]);
+        sendToTeensy(msg);
+        if (vals[5] != 0xFF) {
+          snprintf(msg, sizeof(msg), "INST:%d:%d:%d", t, s, vals[5]);
+          sendToTeensy(msg);
+        }
+        snprintf(msg, sizeof(msg), "SFX:%d:%d:%d:%d", t, s, vals[6], vals[7]);
+        sendToTeensy(msg);
+      }
+    }
+  }
+  f.close();
+  // Repart sur le pattern 0, comme au demarrage -- evite de rester
+  // affiche sur le dernier pattern du fichier charge sans le vouloir.
+  snprintf(msg, sizeof(msg), "PATTERN:%d", 0);
+  sendToTeensy(msg);
+  Serial.print("PROJECT_LOADED:");
+  Serial.println(path);
+}
+
+// ---------------------------------------------------------------------
 // Ecran de veille "Matrix" -- s'active apres screensaverTimeoutSec sans
 // activite (toucher ecran OU NAV:/BTN: du Teensy, voir loop()/
 // handleTeensyLine()). Demande le 2026-09-15, reprend l'esthetique
@@ -2089,6 +2329,7 @@ void drawScreen(Screen s) {
     case Screen::About: drawAboutPage(); return;
     case Screen::Patch: drawPatchPage(); return;
     case Screen::Song: drawSongPage(); return;
+    case Screen::Project: drawProjectPage(); return;
   }
 }
 
@@ -3105,6 +3346,21 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
         sendToTeensy(msg);
         drawSongSlot(static_cast<uint8_t>(slot));
       }
+    }
+  } else if (currentScreen == Screen::Project) {
+    if (hitTestProjectSlotNum(x, y)) {
+      projectSlot = static_cast<uint8_t>((projectSlot + 1) % kProjectSlotCount);
+      drawProjectPage();
+    } else if (hitTestProjectSlotSave(x, y)) {
+      saveProject(projectSlot);
+    } else if (hitTestProjectSlotLoad(x, y)) {
+      loadProject(projectSlot);
+      // Les tableaux locaux (trackEngine[]/seqStepOn[]/etc.) sont mis a
+      // jour par loadProject() ET par les echos normaux du Teensy au
+      // fur et a mesure -- redessiner une fois de plus a la fin est
+      // juste pour rafraichir CETTE page (rien de son contenu ne
+      // depend des donnees chargees).
+      drawProjectPage();
     }
   } else if (currentScreen == Screen::Config) {
     if (hitTestCfgMinus(x, y)) {

@@ -179,7 +179,7 @@ ordre :
 | Priorite | Tache | Bloque par |
 | ---: | --- | --- |
 | 1 | Mute/solo par piste | **Piege trouve le 2026-09-16, voir note ci-dessous** -- pas "juste un gain a 0", a faire avec precaution sur le vrai materiel |
-| 2 | Sauvegarde/chargement de projet complet (patterns+song+BPM+scale) | Rien -- meme mecanique que la sauvegarde de patch (2026-09-16), juste plus de champs |
+| 2 | Sauvegarde/chargement de projet complet (patterns+song+BPM+scale) | **[FAIT le 2026-09-17]** page PROJET, 4 emplacements, `/projects/N.proj` sur la SD de l'ESP32 -- voir section dediee plus bas |
 | 3 | Swing/groove global | Piege timer trouve le 2026-09-16, voir note plus bas |
 | 4 | Volume/pan par piste | Meme piege que mute/solo si implemente sur le meme gain (voir note plus bas) |
 | 5 | Accords (plusieurs notes par pas depuis l'ecran) | Rien cote Teensy (`kNotesPerTrack=2` deja la) -- juste l'UI colonne NOTE a etendre |
@@ -286,6 +286,40 @@ Prochaine etape utile : verifier `SDTEENSY:READY` au boot (carte SD
 Teensy inseree ?), puis tester REC/START en jouant a un jeu, confirmer
 le fichier `.wav` cree/lisible (taille coherente avec la duree, joue
 correctement dans un lecteur audio classique sur ordinateur).
+
+**[2026-09-17, confirme]** carte SD Teensy testee directement en serie
+(`REC:START`/`REC:STOP`) -- presente et fonctionnelle, fichier `.wav`
+cree avec succes. Reste a verifier le contenu audio avec un vrai jeu
+qui joue du son pendant l'enregistrement.
+
+### Sauvegarde de projet complet (2026-09-17)
+
+Priorite #2 de la liste indispensable, implementee -- pure gestion de
+donnees ESP32, **aucun changement cote Teensy** (toutes les commandes
+protocole utilisees existaient deja : STEP:/NOTE:/INST:/SFX:/ENGINE:/
+PATCH:/FILT:/ENV:/DXP:/BPM:/DIV:/PATTERN:/SONGSET:/SONGLEN:/SONGMODE:).
+
+- Nouvelle page `Screen::Project` (menu MUSIQUE) : selecteur
+  d'emplacement (4) + SAVE/LOAD, meme motif que la page PATCH.
+- `saveProject()` ecrit `/projects/N.proj` sur la SD de l'ESP32 (fichier
+  texte simple, lisible a l'oeil) : BPM, division, gamme, song
+  (mode/longueur/chainage), moteur+patch+filtre+ADSR+algo/feedback des
+  8 pistes, ET les 8×8×16 = 1024 pas (note/etat/patch/effet/valeur) des
+  8 patterns -- tout, pas seulement ce qui est actif.
+  `loadProject()` relit le fichier et renvoie chaque commande normale
+  au Teensy (meme principe que `loadPatchSlot()`, a plus grande
+  echelle) tout en mettant a jour les tableaux locaux de l'ESP32.
+- Bug trouve et corrige AVANT le premier flash (relecture du code) :
+  `lastPattern` etait declare `static` dans la boucle de lecture --
+  aurait garde sa valeur d'un chargement a l'autre et pu sauter le
+  changement de pattern necessaire au tout debut d'un second
+  chargement. Corrige en variable locale normale, reinitialisee a
+  chaque appel de `loadProject()`.
+- Compile verifie (master_teensy + screen_esp), **PAS ENCORE flashe ni
+  teste en reel** -- ecrit sans materiel branche. A tester : sauvegarder
+  un petit morceau, modifier des pas, charger le meme emplacement,
+  verifier que tout revient exactement comme avant (patterns, song,
+  tempo, sons).
 
 **Le meme piege s'applique au volume/pan par piste (item 4)** si
 implemente en multipliant le meme gain de groupe -- meme prudence

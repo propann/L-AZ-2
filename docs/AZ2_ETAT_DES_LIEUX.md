@@ -179,6 +179,12 @@ sauvegarder les patchs ... un sampleur ... a integrer") :
   le Teensy n'etait pas accessible en USB depuis cette machine au
   moment du dev (relie a l'ESP32 par l'UART Serial1 seulement, ce qui
   explique le lien "TEENSY_AUDIO:READY" toujours vu au reboot ESP32).
+  **[2026-09-17, confirme]** carte SD Teensy (`BUILTIN_SDCARD`) **PRESENTE
+  et fonctionnelle** -- teste directement en serie (`REC:START` ->
+  `REC:STARTED:/samples/SAMPLE_001.wav`, `REC:STOP` ->
+  `REC:STOPPED:samples=0`, fichier cree avec succes). Plus de blocage
+  materiel pour le sampleur -- reste a verifier le contenu audio reel
+  (jouer un jeu pendant l'enregistrement, ecouter le .wav resultant).
   **[2026-09-17] Flashe et verifie en reel** : `CPU:usage=8.6%:max=9.9%`,
   `MEM:blocks=133:max=141/200` (identique aux mesures d'avant, aucune
   regression). `DXP:0:0:5`/`DXP:0:1:3` testes en direct par serie USB --
@@ -257,3 +263,28 @@ aujourd'hui.
   est 33+ commits devant `origin/main`, jamais poussee. Necessite une
   action de l'utilisateur (`gh auth login` ou jeton personnel) pour
   debloquer.
+
+## Journee du 2026-09-17 -- emulateur GB + sampler phase 1
+
+- **Verification du mapping manette GB** : Start/Select (encodeurs 1/2)
+  confirmes deja en place depuis le 2026-09-15. Tous les boutons d'une
+  vraie Game Boy couverts.
+- **[FAIT, flashe, teste en reel]** Bouton **C** pour quitter une
+  partie en cours (`goTo(Screen::Menu)`, sauvegarde la RAM cartouche).
+  Page A PROPOS mise a jour avec le mapping complet.
+- **[FAIT, flashe]** Pagination de la liste de ROM : `kGbMaxRoms` 16 ->
+  40, affichage par pages de 8 avec fleches </> -- suite a l'ajout de
+  34 jeux perso sur la carte SD ESP32 (Zelda, Mario, Tetris, Pokemon,
+  Kirby, Wario, etc., copies depuis une cle USB personnelle, PAS dans
+  le depot git).
+- **[FAIT, flashe, PARTIELLEMENT teste]** Sampler GB phase 1
+  (REC/STOP) : encodeur 0 declenche l'enregistrement, capture le son
+  GB natif (8kHz) dans un `.wav` sur la SD DEDIEE du Teensy. **Ecriture
+  SD confirmee en reel** (`REC:START`/`REC:STOP` testes directement en
+  serie, fichier cree avec succes). **Pas encore teste avec un vrai
+  jeu qui joue du son** (0 echantillon capture lors du test, aucune ROM
+  chargee a ce moment) -- prochaine etape : enregistrer pendant une
+  vraie partie et ecouter le fichier resultant.
+- Phase 2/3 du sampler (vue d'onde en direct, decoupage tactile,
+  decoupage automatique, clavier de nom, moteur de lecture) : pas
+  commencees, detaillees dans AZ2_FEUILLE_DE_ROUTE.md.
