@@ -2,6 +2,11 @@
 
 Objectif: demarrer la groovebox avec un cablage clair, deux firmwares PlatformIO, et des points a completer seulement la ou il manque encore une reference exacte.
 
+**[Note 2026-09-17]** Document HISTORIQUE (matrice SparkFun 4x4
+abandonnee le 2026-09-14) -- le cablage reellement utilise est dans
+[AZ2_CABLAGE_MASTER.md](AZ2_CABLAGE_MASTER.md) (croix + boutons +
+encodeurs directs sur le Teensy).
+
 ## Architecture generale
 
 ```mermaid
