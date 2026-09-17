@@ -1,5 +1,31 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-17, important pour toute future analyse externe]** `main`
+etait reste fige au tout premier commit du projet (`b3eeae8`, 13
+septembre -- Teensy = 134 lignes, un seul oscillateur sinus ; le
+firmware ecran `src_esp32/az2_screen/` n'existait meme pas dessus)
+pendant que ~140 commits de developpement reel se faisaient sur la
+branche `az2-screen-engines-sequencer`. Un audit technique externe
+("IA tierce") a ete lance contre `main` et a donc lu le code du jour 1
+-- ses conclusions ("aucun sequenceur", "un seul moteur sinus", "aucune
+interface ecran", "liaison non fonctionnelle") etaient vraies pour ce
+commit-la mais fausses par rapport a l'etat reel du projet. `main` a
+ete remis a jour le 2026-09-17 (fusion de `az2-screen-engines-
+sequencer`, commit `419d110`) : les deux branches sont maintenant
+alignees. **Toute IA/outil externe lance a l'avenir doit lire `main`
+(ou `az2-screen-engines-sequencer`, identiques desormais) -- pas un
+vieux commit** -- sinon le meme faux diagnostic se reproduira. Voir
+`docs/AZ2_AUDIT_TECHNIQUE_COMPLET_2026-09-17.md`,
+`AZ2_CIBLE_PRODUIT_ET_FEUILLE_DE_ROUTE_2026.md` et
+`AZ2_ETUDE_CONCURRENCE_TRACKERS_GROOVEBOXES_2026.md` pour les 3
+documents concernes -- leurs constats de code sont a relativiser pour
+cette raison, mais leurs points d'hygiene de depot (pas de LICENSE
+racine, pas de CI/tests, plateformes non figees, ~522 Mo dont 132 Mo
+pour microdexed-touch) et leur vision produit (4 vues d'un meme
+sequenceur, protocole verse/CRC/ack, etude concurrentielle M8/Polyend/
+Elektron/etc.) restent valables et utiles independamment du bug de
+branche.
+
 **[Rafraichi le 2026-09-17]** -- ce document a commence comme un topo
 ponctuel (2026-09-15) puis est devenu un journal chronologique (sections
 datees plus bas, gardees pour l'historique). Les 3 sections qui suivent
