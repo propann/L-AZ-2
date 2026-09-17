@@ -8,6 +8,14 @@ Pico) forment UNE seule application** repartie sur 3 cartes -- une
 decision cote protocole ou architecture engage generalement les 3, meme
 quand une carte n'est pas branchee au moment ou on code.
 
+**[Note 2026-09-17]** Le Pico a ete abandonne le 2026-09-14 (matrice/
+mux LED jamais fonctionnels) -- l'application est desormais sur 2
+cartes, pas 3. Une carte SD DEDIEE existe maintenant sur le Teensy
+(sampler, capture phase 1 faite le 2026-09-17) -- le contexte "pas de
+SD ni de sample" ci-dessus ne s'applique plus. Les moteurs
+synthetiques listes plus bas restent la base actuelle (5 moteurs,
+inchanges depuis).
+
 ## Moteurs retenus (deja vendored, verifies dans le repo)
 
 Tous dans `src_teensy/microdexed-touch/third-party/` :

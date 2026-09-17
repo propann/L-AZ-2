@@ -12,7 +12,7 @@ AZ-2 reprend MicroDexed-touch comme moteur musical Teensy, mais remplace sa logi
 | --- | --- | --- |
 | Audio temps reel | Teensy 4.1 | Teensy 4.1 |
 | DAC audio | PCM5102A Audio Board en I2S | PCM5102A I2S 3.3 V |
-| Ecran original | ILI9341 320x240 SPI tactile | ESP32-4848S040C_I 480x480 ST7701 |
+| Ecran original | ILI9341 320x240 SPI tactile | VIEWE UEDX48480040E-WB 480x480 GC9503V (identifie le 2026-09-13 -- pas l'ESP32-4848S040C_I/ST7701 suppose au tout depart) |
 | UI | Dans le firmware Teensy | Dans le firmware ESP32-S3 |
 | Pads/controle | Encodeurs/touch/UI MicroDexed | Matrice SparkFun 4x4 bouton + LED via ESP32 |
 | Communication UI/audio | Interne Teensy | Protocole serie ESP32 -> Teensy |

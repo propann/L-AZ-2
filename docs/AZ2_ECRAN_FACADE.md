@@ -2,6 +2,14 @@
 
 Objectif: figer une premiere direction claire pour AZ-2: une groovebox hardware basee sur Teensy pour l'audio adapte de MicroDexed-touch, un ecran ESP32-S3 pour l'interface, et une matrice SparkFun 4x4 bouton + LED lue/pilotee par l'ESP32 avec multiplexeurs.
 
+**[Note 2026-09-17]** Document de planification TRES precoce, perime
+sur plusieurs points cles : la matrice SparkFun 4x4+LED a ete
+abandonnee le 2026-09-14 (remplacee par croix+boutons+encodeurs
+directs sur le Teensy) ; l'ecran reellement utilise est le module
+VIEWE UEDX48480040E-WB (driver GC9503V), pas l'ESP32-4848S040C_I/ST7701
+suppose au depart (identifie le 2026-09-13, voir `platformio.ini`).
+Etat reel : [AZ2_ETAT_DES_LIEUX.md](AZ2_ETAT_DES_LIEUX.md).
+
 Voir aussi: [Strategie de portage MicroDexed-touch](AZ2_PORTAGE_MICRODEXED_TOUCH.md).
 
 ## Vision produit
