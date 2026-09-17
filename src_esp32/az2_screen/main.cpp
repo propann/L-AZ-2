@@ -567,8 +567,29 @@ void drawAudioCell(uint8_t pad, bool pressed) {
   gfx->print(pad);
 }
 
+// Clavier tactile comme editeur live (demande 2026-09-15, etape 6 de
+// AZ2_TRACKER_ETUDE.md) : "taper un pad pendant qu'un pas de
+// sequenceur est selectionne doit pouvoir poser cette note sur le pas
+// au lieu de/en plus de croix haut/bas". selectedSeqTrack/
+// selectedSeqStep valent TOUJOURS quelque chose depuis la refonte du
+// tracker (plus jamais -1, voir leur declaration) -- impossible de
+// deviner "un pas est selectionne" a partir de leur seule valeur.
+// D'ou un bouton D dedie (libre, la GB n'utilise que A/B/C -- voir
+// drawGbRecIndicator()/le commentaire de C) pour bascule explicite,
+// pour ne jamais ecraser une composition par accident en jouant
+// simplement sur les pads.
+bool padEditsStep = false;
+extern int8_t selectedSeqTrack;  // definie plus bas, avec le reste de l'etat du sequenceur
+extern int8_t selectedSeqStep;
+
 void drawAudioPage() {
-  drawSubHeader("AUDIO - touche pour jouer (2 doigts OK)", kPalette[2]);
+  char title[48];
+  if (padEditsStep) {
+    snprintf(title, sizeof(title), "AUDIO - pose sur piste %d pas %d (D)", selectedSeqTrack, selectedSeqStep);
+  } else {
+    snprintf(title, sizeof(title), "AUDIO - touche pour jouer (D=poser sur pas)");
+  }
+  drawSubHeader(title, kPalette[2]);
   for (uint8_t pad = 0; pad < az2::kPadCount; ++pad) {
     drawAudioCell(pad, false);
   }
@@ -2661,6 +2682,14 @@ void handleTeensyLine(const String &line) {
         // menus").
         goTo(Screen::Menu);
       }
+      // Page AUDIO : D bascule le clavier tactile entre "jouer en
+      // direct" et "poser la note sur le pas selectionne du
+      // sequenceur" (voir padEditsStep plus haut, etape 6 de
+      // AZ2_TRACKER_ETUDE.md).
+      if (pressed && letter == 'D' && currentScreen == Screen::Audio) {
+        padEditsStep = !padEditsStep;
+        drawAudioPage();
+      }
     }
   } else if (line.startsWith("POT:")) {
     const int firstColon = line.indexOf(':');
@@ -3261,9 +3290,25 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
     if (pad >= 0 && pad != heldAudioPad[0] && pad != heldAudioPad[1]) {
       heldAudioPad[slot] = pad;
       drawAudioCell(static_cast<uint8_t>(pad), true);
-      char msg[24];
-      snprintf(msg, sizeof(msg), "PAD:%02d:DOWN:vel=100", pad);
-      sendToTeensy(msg);
+      if (padEditsStep) {
+        // "Poser" la note sur le pas selectionne (voir padEditsStep) au
+        // lieu de jouer en direct -- allume aussi le pas (STEP: ON),
+        // sinon la note posee ne s'entendrait jamais en lecture.
+        const uint8_t t = static_cast<uint8_t>(selectedSeqTrack);
+        const uint8_t s = static_cast<uint8_t>(selectedSeqStep);
+        const uint8_t note = static_cast<uint8_t>(az2::kPadBaseNote + pad);
+        seqStepOn[currentPattern][t][s] = true;
+        seqStepNote[currentPattern][t][s] = note;
+        char msg[24];
+        snprintf(msg, sizeof(msg), "STEP:%d:%d:1", t, s);
+        sendToTeensy(msg);
+        snprintf(msg, sizeof(msg), "NOTE:%d:%d:%d", t, s, note);
+        sendToTeensy(msg);
+      } else {
+        char msg[24];
+        snprintf(msg, sizeof(msg), "PAD:%02d:DOWN:vel=100", pad);
+        sendToTeensy(msg);
+      }
     }
   } else if (currentScreen == Screen::Sequencer) {
     // Vue tracker unique (voir seqDetailMode plus haut) : selecteur de

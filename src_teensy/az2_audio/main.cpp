@@ -422,17 +422,17 @@ String espLine;
 uint32_t lastStatusMs = 0;
 bool playing = false;
 
-// Gamme chromatique sur les 16 pads (voix live): pad 0 = kPadBaseNote
-// (MIDI), pad 15 = kPadBaseNote+15. 48 = C3. Transpose ajustable via
-// MACRO: (protocole toujours la, voir handleMacroCommand()) mais plus
-// aucune source ne l'envoie depuis l'abandon du Pico (2026-09-14) --
-// reste a 0 tant qu'un futur controle (encodeur/gachette C-D) n'est pas
-// branche dessus. Voir AZ2_ETAT_DES_LIEUX.md / feuille de route.
-constexpr uint8_t kPadBaseNote = 48;
+// Gamme chromatique sur les 16 pads (voix live) -- kPadBaseNote
+// PARTAGE avec l'ESP32 depuis le 2026-09-17 (voir AZ2_Protocol.h,
+// utilise aussi pour "poser" une note de pad sur un pas du sequenceur).
+// Transpose ajustable via MACRO: (protocole toujours la, voir
+// handleMacroCommand()) mais plus aucune source ne l'envoie depuis
+// l'abandon du Pico (2026-09-14) -- reste a 0 tant qu'un futur controle
+// (encodeur/gachette C-D) n'est pas branche dessus.
 int8_t transposeSemitones = 0;
 
 uint8_t padToMidiNote(uint8_t pad) {
-  return static_cast<uint8_t>(kPadBaseNote + pad + transposeSemitones);
+  return static_cast<uint8_t>(az2::kPadBaseNote + pad + transposeSemitones);
 }
 
 void announceLed(uint8_t pad, const char *state) {

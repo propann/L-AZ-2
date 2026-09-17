@@ -183,7 +183,7 @@ ordre :
 | 3 | Swing/groove global | Piege timer trouve le 2026-09-16, voir note plus bas |
 | 4 | Volume par piste | **[FAIT le 2026-09-17]**, voir section dediee plus bas. **Pan : PAS FAIT** -- chaine mono de bout en bout (patchOutL/patchOutR dupliquent le meme mixMaster), un vrai pan demanderait de refaire les bus en stereo |
 | 5 | Accords (plusieurs notes par pas depuis l'ecran) | Rien cote Teensy (`kNotesPerTrack=2` deja la) -- juste l'UI colonne NOTE a etendre |
-| 6 | Clavier tactile comme editeur live de note | Rien -- routage a ecrire (pad -> NOTE: si un pas est selectionne) |
+| 6 | Clavier tactile comme editeur live de note | **[FAIT le 2026-09-17]** -- voir section dediee plus bas |
 | 7 | Sampler (moteur audio a partir d'echantillons) | **Capture (phase 1) faite le 2026-09-17**, voir section dediee plus bas. Reste : verifier en reel (carte SD Teensy inseree ?), puis vue d'onde/decoupage/nommage (phase 2), puis le moteur de LECTURE `AudioPlaySdWav`/`AudioPlaySdRaw` (phase 3, pas commence) |
 | 8 | MIDI in/out | Rien de bloquant technique (USB_MIDI_SERIAL deja dans platformio.ini) -- juste pas encore cable au sequenceur |
 | 9 | Wi-Fi (config web, transfert fichiers) | Rien de bloquant, jamais redemande depuis la Phase 5 -- rester bas dans la pile tant que le musical n'est pas complet |
@@ -323,6 +323,33 @@ Compile verifie (master_teensy + screen_esp), **PAS ENCORE flashe ni
 teste en reel** -- ecrit sans materiel branche, y compris la mise en
 page de la ligne VOLUME (calcul de coordonnees seulement, jamais vue
 sur l'ecran reel).
+
+### Clavier tactile comme editeur live (2026-09-17)
+
+Priorite #8, etape 6 de AZ2_TRACKER_ETUDE.md ("taper un pad pendant
+qu'un pas de sequenceur est selectionne doit pouvoir poser cette note
+sur le pas"). Purement ESP32, aucun changement Teensy.
+
+- Probleme trouve en l'ecrivant : `selectedSeqTrack`/`selectedSeqStep`
+  valent TOUJOURS quelque chose depuis la refonte du tracker (plus
+  jamais -1) -- impossible de deviner "un pas est selectionne" a partir
+  de leur seule valeur, contrairement a ce que la formulation d'origine
+  laissait supposer.
+- Solution retenue : bouton **D** (libre -- ni la manette GB ni aucune
+  page ne l'utilisait) bascule explicitement la page AUDIO entre "jouer
+  en direct" et "poser sur piste/pas" (indique dans le titre de la
+  page). Evite d'ecraser une composition par accident en jouant
+  simplement sur les pads.
+- Taper un pad en mode "poser" allume le pas (STEP: ON) ET y ecrit la
+  note du pad (NOTE:) -- sans l'allumer, la note posee ne s'entendrait
+  jamais en lecture.
+- Petit refactor au passage : `kPadBaseNote` (48, note du pad 0) etait
+  duplique en dur cote Teensy seulement -- deplace dans AZ2_Protocol.h
+  (partage), l'ESP32 en a maintenant besoin pour calculer la note a
+  ecrire sans repasser par le Teensy.
+
+Compile verifie (3 environnements), **PAS ENCORE flashe ni teste en
+reel**.
 
 ### Sauvegarde de projet complet (2026-09-17)
 

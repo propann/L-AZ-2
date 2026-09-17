@@ -35,6 +35,13 @@ constexpr uint32_t kGbAudioSampleRate = 8000;
 constexpr uint8_t kScopePacketMagic = 0x02;
 constexpr uint8_t kScopeSamplesPerPacket = 32;
 constexpr uint8_t kPadCount = 16;
+// Gamme chromatique des 16 pads (voix live) : pad 0 = kPadBaseNote
+// (MIDI), pad 15 = kPadBaseNote+15. 48 = C3. Partage entre les deux
+// cartes depuis le 2026-09-17 (avant : duplique en dur cote Teensy
+// seulement -- l'ESP32 en a besoin pour "poser" une note de pad
+// directement sur un pas du sequenceur, voir padEditsStep dans
+// src_esp32/az2_screen/main.cpp).
+constexpr uint8_t kPadBaseNote = 48;
 constexpr uint8_t kPadRows = 4;
 constexpr uint8_t kPadCols = 4;
 
