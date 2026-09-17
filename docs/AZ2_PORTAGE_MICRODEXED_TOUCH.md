@@ -1,5 +1,13 @@
 # AZ-2 - Strategie de portage MicroDexed-touch
 
+**[Note 2026-09-17]** Document de planification PRECOCE, en partie
+perime : la ligne "Pads/controle" ci-dessous et le schema plus bas
+parlent d'une matrice SparkFun 4x4 bouton + LED, **abandonnee le
+2026-09-14** (remplacee par croix+4 boutons+3 encodeurs directs sur le
+Teensy, voir `AZ2_CABLAGE_MASTER.md`). Le reste (Teensy comme moteur
+audio, ESP32-S3 pour l'UI) reste exact. Etat reel :
+[AZ2_ETAT_DES_LIEUX.md](AZ2_ETAT_DES_LIEUX.md).
+
 Source de reference: `https://codeberg.org/positionhigh/MicroDexed-touch`.
 
 Le depot AZ-2 contient deja une copie de MicroDexed-touch dans `src_teensy/microdexed-touch`. Cette base sert de matiere premiere pour le moteur audio, mais pas pour l'interface finale.

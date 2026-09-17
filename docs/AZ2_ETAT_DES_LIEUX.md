@@ -337,6 +337,33 @@ code source (`walnut_cgb.h`, VBlank pose `gb->gb_frame=true` a CHAQUE
 frame reelle quel que soit `frame_skip`, qui ne saute QUE le rendu
 pixel) : pas de bug la-dedans, confirme.
 
+### Menage supplementaire : mentions du pad 4x4 (demande separee)
+
+Passage dedie sur toutes les mentions de la matrice SparkFun 4x4/Pico
+(hardware abandonne le 2026-09-14) pour verifier qu'aucune ne pretend a
+tort etre le hardware actuel :
+
+- Code et docs actifs (`main.cpp` ESP32/Teensy, `AZ2_Protocol.h`,
+  `README.md`, `AZ2_CABLAGE_MASTER.md`, `platformio.ini`) : deja propres
+  ou deja correctement marques "ABANDONNE" -- rien a faire.
+- `AZ2_FEUILLE_DE_ROUTE.md` : la section "Phase 3 - Matrice SparkFun
+  4x4" (plan d'origine) n'etait annotee comme abandonnee que bien plus
+  bas dans le document (section "Mise a jour 2026-09-16") -- un lecteur
+  qui lit dans l'ordre pouvait la croire encore active. Ajoute un
+  avertissement direct sur la section elle-meme.
+- `AZ2_PORTAGE_MICRODEXED_TOUCH.md` : contrairement aux autres docs de
+  planification precoce (ECRAN_FACADE, ARCHITECTURE_FIRMWARE_DOUBLE,
+  ESP32_CONTROLE_WIFI_SD_RETRO), celui-ci n'avait PAS recu de note
+  "perime" alors qu'il presente la matrice 4x4 comme le controle retenu
+  -- note ajoutee en tete de fichier.
+- `src_esp32/az2_control/main.cpp` (environnement `ui_esp`, garde comme
+  reference isolee, hors `default_envs`) : implemente reellement le
+  scan mux 4x4 (`AZ2:FEATURE:SPARKFUN_4X4_MATRIX` etc.), donc le code
+  n'est pas faux en soi, mais rien dans le fichier ne disait que ce
+  hardware est abandonne et que ce n'est pas le firmware ESP32 shippe --
+  commentaire d'entete ajoute pour clarifier. Compile verifie
+  (`pio run -e ui_esp`), pas de changement de comportement.
+
 ## Bugs reels trouves en jouant (2026-09-17, utilisateur de retour)
 
 Premier vrai test manette en main apres le flash de l'ESP32 -- 2 bugs

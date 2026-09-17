@@ -65,7 +65,13 @@ Critere de sortie: un message ESP32 declenche un son Teensy.
 
 ## Phase 3 - Matrice SparkFun 4x4
 
-Objectif: transformer les 16 pads en surface de jeu.
+**Abandonnee le 2026-09-14** -- ce plan de matrice+multiplexeurs SparkFun
+n'a jamais ete construit tel quel et ne le sera pas: remplace par
+croix+4 boutons+3 encodeurs directs sur Teensy. Section gardee ci-dessous
+pour l'historique seulement (voir le detail dans la mise a jour plus bas
+et dans `AZ2_CABLAGE_PICO.md`); ne pas la lire comme un plan actif.
+
+Objectif (a l'epoque): transformer les 16 pads en surface de jeu.
 
 | Priorite | Tache |
 | ---: | --- |

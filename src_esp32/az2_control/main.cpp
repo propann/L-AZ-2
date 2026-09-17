@@ -1,3 +1,11 @@
+// Environnement ui_esp : bring-up isole pour la matrice boutons+LED
+// SparkFun 4x4 (via mux CD74HC4067) et les encodeurs, sur un
+// ESP32-S3-DevKitC-1 nu. Ce hardware (matrice+Pico) a ete ABANDONNE le
+// 2026-09-14 au profit de croix+4 boutons+3 encodeurs directs sur le
+// Teensy (voir AZ2_CABLAGE_MASTER.md) -- ce fichier n'est plus dans
+// default_envs (voir platformio.ini) et n'est PAS le firmware ESP32
+// shippe (c'est src_esp32/az2_screen/main.cpp). Garde uniquement comme
+// reference/tests isoles pour ce mux, pas comme code actif.
 #include <Arduino.h>
 #include <SD.h>
 #include <SPI.h>
