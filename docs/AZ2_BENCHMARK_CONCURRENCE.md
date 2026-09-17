@@ -50,7 +50,7 @@ Sources principales consultees:
 | Zynthian | Plateforme open synth Linux, multi-engine, web config, audio/MIDI | Bonne reference pour config web et philosophie ouverte |
 | Monome Norns | Petit ordinateur musical open, scripts, communaute forte | La communaute aime les machines ouvertes si elles sont poetiques et jouables |
 | LMN-3 | DAW-in-a-box open source sur Raspberry Pi | Reference pour workflow DAW autonome, mais AZ-2 reste microcontroleurs en v0 |
-| Retro-Go | Emulation portable ESP32, SD, Wi-Fi file manager | Bonus fun separe: utile pour apprendre l'ESP32, jamais prioritaire sur l'instrument |
+| Retro-Go | Emulation portable ESP32, SD, Wi-Fi file manager | Bonus fun separe: utile pour apprendre l'ESP32, jamais prioritaire sur l'instrument. **Etudie et ecarte pour le mode JEUX v0 (2026-09-14)** : ESP-IDF natif (pas Arduino) + ecrans SPI ILI9341-only officiellement supportes, incompatible avec notre ecran RGB parallele sans un vrai chantier (double demarrage OTA + pilote ecran a ecrire) -- voir [AZ2_EMULATION_JEUX.md](AZ2_EMULATION_JEUX.md) pour l'alternative retenue (Walnut-CGB, GB/GBC, Arduino-natif, licence MIT) |
 
 Sources principales consultees:
 
@@ -131,14 +131,130 @@ AZ-2 doit separer les modes:
 | Sujet | Decision v0 |
 | --- | --- |
 | Audio | Teensy 4.1 + PCM5102A, pas ESP32 audio |
-| Controle | ESP32-S3 ecran + pads + LEDs + SD + Wi-Fi |
+| Controle | **[Revu 2026-09-17]** ESP32-S3 ecran tactile + croix/boutons/encodeurs physiques cables sur le Teensy (pas de matrice/LEDs physiques, abandonnees le 2026-09-14) + SD. Wi-Fi jamais commence |
 | Protocole | UART texte compact au debut, binaire versionne ensuite si necessaire |
-| MIDI/CV | Hors v0, architecture prevue mais pas bloquante |
-| Samples | SD cote ESP32, transfert vers Teensy a definir |
+| MIDI/CV | **[Revu 2026-09-17]** notes IN faites (USB MIDI -> voix live) ; sync/OUT/CV toujours hors v0 |
+| Samples | **[Revu 2026-09-17]** finalement carte SD DEDIEE sur le Teensy (`BUILTIN_SDCARD`), pas de transfert depuis l'ESP32 -- capture (phase 1) faite |
 | MicroDexed | Source d'inspiration moteur, pas firmware final tel quel |
 | Retro-Go | Bonus isole, jamais melange au firmware musical principal |
+
+## Topo 2026-09-15 : ou en est AZ-2 reellement vs le marche
+
+Etat reel de la machine a cette date (pas une intention -- ce qui tourne
+et a ete teste) : 8 pistes, sequenceur 16 pas avec note PAR PAS,
+tempo+division reglables a l'ecran, 5 moteurs de synthese
+selectionnables/reglables par piste (Dexed FM, mda ePiano, Braids,
+Karplus-Strong corde pincee, oscillateur analogique), bus d'effets
+maitre (reverb+delay) pilote par 3 potards physiques, ecran tactile
+480x480 avec plusieurs pages de controle, croix+4 boutons+3 potards
+cables directement sur le Teensy. PSRAM 16 Mo confirmee mais pas encore
+utilisee (pas de sampleur). Pas de MIDI, pas de sauvegarde persistante,
+pas de carte SD branchee.
+
+### Ce qui manquait le plus le 2026-09-15 (table HISTORIQUE, perimee)
+
+**[Perimee, gardee pour l'historique]** -- cette table date du tout
+premier topo concurrence. Chaque ligne a ete soit faite, soit
+remplacee par une estimation plus juste dans la table priorisee du
+2026-09-16/17 plus bas (section "Liste des ameliorations
+indispensables") -- s'y referer, pas a celle-ci, pour l'etat reel.
+
+| Manque | Present chez | Effort estime (2026-09-15) | Statut reel |
+| --- | --- | --- | --- |
+| Mute/solo par piste | Quasi tous (Digitakt, Circuit Tracks, M8...) | Faible -- juste un gain a 0 par piste, mapping bouton a definir | **[FAIT le 2026-09-17]**, effort reel : moyen (piege Braids, voir plus bas) |
+| Sauvegarde/rechargement (patterns+patchs survivent a une coupure) | Tous, meme les moins chers | Moyen -- PSRAM ou flash interne Teensy, format a definir | **[FAIT le 2026-09-17]** (patch le 2026-09-16, projet complet le 2026-09-17), sur SD ESP32 pas PSRAM/flash interne |
+| Swing/groove (decalage d'un pas sur deux) | Quasi tous | Faible -- decalage de timing dans advanceSequencer() | **PAS FAIT**, effort reel : moyen (piege timer/ISR, voir plus bas) |
+| Volume/pan reglable PAR piste (pas juste le bus maitre) | Tous | Moyen -- deja identifie feuille de route etape 4 | Volume **[FAIT le 2026-09-17]**, pan pas fait (chaine mono) |
+| MIDI (sync/notes in-out) | Digitakt, Circuit Tracks, M8, MPC... quasi tous | Moyen-eleve -- USB MIDI natif dispo sur Teensy (classe audio+MIDI) | Notes IN **[FAIT le 2026-09-17]**, sync/MIDI OUT pas fait |
+| Sons samples/drums | Digitakt, MPC, Blackbox, EP-133 (tous orientes sample) | Eleve -- demande une carte SD (voir roadmap etape 6) | Carte SD Teensy confirmee, capture (phase 1) **[FAITE le 2026-09-17]**, lecture (phase 3) pas commencee |
+| Enchainement de patterns / mode song | M8, Digitakt, Circuit Tracks | Eleve -- refonte du sequenceur (patterns multiples par piste) | **[FAIT le 2026-09-15]** (8 patterns + chainage song, page SONG) |
+
+### Ce qu'on supprime (nettoyage, pas de perte fonctionnelle reelle)
+
+- ~~**Page ENCODEURS**~~ -- **[FAIT]** retiree le 2026-09-15 (plus
+  aucune source de `MACRO:` depuis l'abandon du Pico).
+- ~~**`src_esp32/retro-go-master/`**~~ (Retro-Go vendored, 134 Mo,
+  1670 fichiers) -- **[FAIT, 2026-09-15]** supprime (`git rm -r`).
+  Etudie et ECARTE le 2026-09-14 pour le mode JEUX (ESP-IDF,
+  incompatible avec notre ecran RGB parallele sans un vrai double
+  demarrage -- voir AZ2_EMULATION_JEUX.md), jamais le chemin retenu
+  (Walnut-CGB). Reste dans l'historique git si jamais utile de le
+  retrouver.
+- ~~**`kHelloKeypad`**~~ dans AZ2_Protocol.h -- **[FAIT, 2026-09-16]**
+  supprime (plus personne ne l'emettait depuis l'abandon du Pico,
+  confirme par grep avant suppression).
+- ~~**`src_pico/`**~~ -- **[FAIT, 2026-09-16]** supprime (`git rm -r`).
+  Le cablage/diagnostic reste documente en prose dans
+  AZ2_CABLAGE_PICO.md, le code reste dans l'historique git si jamais
+  utile de le retrouver.
+- ~~**`src_esp32/Launcher_lvgl-master/`**~~ (75 Mo, exemple vendore d'un
+  fournisseur, jamais reference dans le build) -- **[FAIT, 2026-09-16]**
+  supprime.
+- ~~**Stubs vides `src_esp32/main.cpp` / `src_teensy/main.cpp`**~~ --
+  **[FAIT, 2026-09-16]** supprimes (hors `build_src_filter`, sans
+  reference nulle part).
+
+### Ce qui distingue deja AZ-2 (a ne pas perdre en avancant)
+
+Diagnostic materiel documente en public (utile pour du DIY/reparation),
+architecture ouverte en 2 cartes lisibles, 5 moteurs de synthese
+radicalement differents deja en place avec beaucoup de marge CPU (~8%
+de pic mesure sur 8 pistes + FX), et un vrai potentiometre physique
+relie en direct au mixeur (pas juste un menu) -- rare meme chez les
+concurrents cites.
 
 ## Avantage AZ-2 a construire
 
 AZ-2 doit devenir une machine ou l'on voit tout, ou l'on peut tout reparer, et ou chaque fonction a une place nette. Les concurrents brillent par finition. Nous devons briller par intelligence d'architecture, rapidite de workflow et liberte.
+
+## Mise a jour 2026-09-16 -- nouvelle recherche + etat reel vs marche
+
+Recherche demandee ("on fait une recherche sur nos concurrents, liste
+des ameliorations indispensables") -- 2 machines ajoutees au comparatif,
+les autres reverifiees. Sources en bas de section.
+
+| Machine | Etat 2026 | Lecon pour AZ-2 |
+| --- | --- | --- |
+| **Teenage Engineering OP-XY** (nouveau, $2299, remise a $1699 en promo) | 8 pistes, 8 moteurs synth + 3 sampleurs, 24 voix, ecran 480x222, gyroscope pour macro-controle par inclinaison, "Brain" auto-transpose selon la tonalite du morceau, CV/Gate + MIDI + Bluetooth | Le prix confirme que la lisibilite/l'ecran + le controle direct (pas juste des menus) sont ce qui justifie un tarif eleve -- AZ-2 doit rester lisible SANS ce budget. "Brain" (auto-transpose) est une bonne idee a retenir une fois nos gammes/accords en place |
+| **nanoloop (Game Boy)** (mono/one, toujours vendu en cartouche) | Synthetiseur+sequenceur MINIMALISTE tournant sur le vrai chip son GB (carre/carre/onde 4 bits/bruit), interface reduite a une grille, sync analogique + transfert de fichiers par jack | C'est litteralement notre idee de "sampler la Game Boy" mais dans l'autre sens (composer AVEC le chip GB) -- confirme que le public pour "faire de la musique avec/depuis une Game Boy" existe et est actif. AZ-2 peut aller plus loin : ECHANTILLONNER un vrai jeu GB (musique/bruitages) puis les rejouer sur nos 5 moteurs, pas juste piloter le chip |
+| **Dirtywave M8 Model:02** (maj $790, ecran 3.5" IPS, 12h batterie) | Micro integre pour echantillonner, sampleur mono/stereo 8/16/24 bits, USB-C, 64 Go de carte SD fournie avec demos/presets | Le micro integre pour sampler a la volee est une fonction tres appreciee -- notre "sampler la Game Boy" est un axe proche (source audio captive au lieu du micro) mais on pourrait aussi envisager un micro plus tard |
+| **Polyend Tracker Mini** (maj) | Devenu quasi poche, batterie, micro integre, sample stereo (nouveaute vs l'original), 12 pistes audio USB-C, 48 instruments/256 patterns/128 pas par projet | Confirme stereo + micro comme standard attendu desormais chez un tracker portable ; notre pattern 8 pistes/16 pas reste modeste en comparaison -- a garder simple pour l'instant (deja plus complexe que prevu ce mois-ci) mais noter que 16 pas est petit face a 128 |
+
+Sources additionnelles : [Teenage Engineering OP-XY](https://teenage.engineering/products/op-xy), [Sound on Sound OP-XY](https://www.soundonsound.com/reviews/teenage-engineering-op-xy), [nanoloop one](http://www.nanoloop.com/one/), [CDM -- nanoloop reborn](https://cdm.link/nanoloop-game-boy-hardware/), [Dirtywave M8 Model:02](https://dirtywave.com/products/m8-tracker-model-02), [Gearnews M8 Model:02](https://www.gearnews.com/dirtywave-m8-tracker-model-02/), [Sound on Sound Polyend Tracker Mini](https://www.soundonsound.com/reviews/polyend-tracker-mini), [AltWire Polyend Tracker Mini](https://altwire.net/polyend-tracker-mini-review/).
+
+### Etat reel AZ-2 au 2026-09-16 (vs le topo du 2026-09-15)
+
+Beaucoup avance depuis le dernier topo concurrence : tracker colonnes
+NOTE/INST/FX/VAL (vue unique, plus de grille), 8 patterns + chainage
+song basique, gammes (verrouillage a la saisie), filtre resonant +
+ADSR **reellement editables par piste** (pas juste prevus), oscilloscope
+temps reel, sauvegarde/chargement de patch (slots sur SD), reglages
+propres au moteur Dexed (algo/feedback DX7). Voir
+[AZ2_ETAT_DES_LIEUX.md](AZ2_ETAT_DES_LIEUX.md) pour le detail verifie
+en reel vs seulement compile.
+
+### Liste des ameliorations indispensables (priorisee)
+
+Recoupe le tableau "ce qui manque le plus" du 2026-09-15 (toujours
+valable dans l'ensemble) avec la recherche fraiche ci-dessus :
+
+| # | Amelioration | Pourquoi indispensable | Effort estime |
+| ---: | --- | --- | --- |
+| 1 | **Mute/solo par piste** | Present chez TOUS les concurrents cites, y compris les moins chers (Circuit Tracks) ; sans ca on ne peut pas "jouer" en scene, juste programmer | **[FAIT le 2026-09-17]** -- voir AZ2_FEUILLE_DE_ROUTE.md. C/D (page MOTEURS) = mute/solo, mute/demute immediat meme sur Braids |
+| 2 | **Sauvegarde/chargement de PROJET complet** (pas juste un patch) | Tous les concurrents survivent a une coupure ; on a la sauvegarde de patch (2026-09-16) mais pas patterns+song+BPM+scale en un fichier | **[FAIT le 2026-09-17]** -- voir AZ2_FEUILLE_DE_ROUTE.md. Page PROJET, 4 emplacements, `/projects/N.proj` |
+| 3 | **Swing/groove** | Present chez quasi tous (Polyend, LSDJ "groove screen", M8) ; sans lui le sequenceur sonne mecanique | **[FAIT le 2026-09-17]** -- voir AZ2_FEUILLE_DE_ROUTE.md. Piege timer du 2026-09-16 evite (jamais de reconfiguration du timer depuis l'ISR -- seul le seuil logiciel de fin de pas varie) |
+| 4 | **Volume par piste** | Tous les concurrents, y compris les moins chers | **[FAIT le 2026-09-17]** -- voir AZ2_FEUILLE_DE_ROUTE.md. Pan pas fait (chaine mono de bout en bout) |
+| 5 | **Micro/sampler integre** (ou a defaut, sampler-depuis-GB deja prevu) | M8, Polyend Tracker Mini, Blackbox, EP-133 -- tous orientes sample en 2026 | **Capture (phase 1) FAITE le 2026-09-17** -- carte SD Teensy confirmee presente et fonctionnelle (teste en reel), REC/STOP -> `.wav`. Reste : phase 2 (vue d'onde/decoupage/nommage) + phase 3 (moteur de LECTURE `AudioPlaySdWav`/`AudioPlaySdRaw`, encore Eleve) |
+| 6 | **MIDI notes IN** | Quasi tous les concurrents cites | **[FAIT le 2026-09-17]** -- voir AZ2_FEUILLE_DE_ROUTE.md. Sync horloge + MIDI OUT + routage vers une piste : pas fait |
+| 7 | **Accords / plusieurs notes par pas** | LSDJ/M8 le permettent en partie, demande deja documentee (AZ2_TRACKER_ETUDE.md etape 5) | **Correction 2026-09-16** : plus gros que prevu -- `kNotesPerTrack=2` n'est QUE la polyphonie interne du moteur (Dexed/EPiano), pas une 2e note par pas dans les donnees du sequenceur (`stepNote[kStepCount]` est un seul octet par pas). Un vrai accord demande d'etendre `stepNote` a 2 notes partout (Teensy ET ESP32 : protocole NOTE:, tracker, sauvegarde) -- touche le meme code que le bug de gel deja rencontre cette session (`advanceTick()`). A faire avec du materiel pour verifier, pas a l'aveugle |
+| 8 | **Clavier tactile comme editeur live** (poser une note sur le pas selectionne en tapant un pad) | Aucun concurrent direct ne fait exactement ca, mais c'est un gain de vitesse d'edition documente (etape 6 de l'etude tracker) | **[FAIT le 2026-09-17]** -- voir AZ2_FEUILLE_DE_ROUTE.md |
+
+**Mise a jour 2026-09-17** : 5 des 8 items (#1, #2, #4, #6, #8) sont
+faits (compiles, pas encore verifies en reel -- aucun board branche ce
+jour-la). Restent, dans l'ordre de priorite reelle desormais : **#3
+swing** et **#7 accords** (tous deux "plus gros que prevu", pieges
+documentes dans AZ2_FEUILLE_DE_ROUTE.md, a faire avec le materiel sous
+la main) et **#5 sampler phase 2/3** (design d'ecran a faire les yeux
+dessus). Voir [AZ2_ETAT_DES_LIEUX.md](AZ2_ETAT_DES_LIEUX.md) pour le
+detail verifie-en-reel vs seulement-compile.
 

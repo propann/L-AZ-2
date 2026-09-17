@@ -2,6 +2,17 @@
 
 Objectif: definir proprement la repartition ESP32 / Teensy pour obtenir une groovebox rapide, robuste et facile a faire evoluer.
 
+**[Note 2026-09-17]** Document de planification PRECOCE -- le principe
+general (ESP32 = humain/UI, Teensy = audio temps reel) est toujours
+exact et respecte, mais beaucoup de details plus bas (pages UI
+nommees "Home/Performance/Hardware Test", strategie samples A/B/C,
+etapes Teensy 1-2-3...) datent d'avant que quoi que ce soit ne soit
+construit et ne correspondent plus a ce qui existe reellement. Pour
+l'etat reel : [AZ2_ETAT_DES_LIEUX.md](AZ2_ETAT_DES_LIEUX.md) (verifie
+en reel vs compile) et [AZ2_FEUILLE_DE_ROUTE.md](AZ2_FEUILLE_DE_ROUTE.md)
+(ce qui reste a faire). Garde ici pour la logique de repartition
+d'origine, toujours valable en esprit.
+
 ## Principe general
 
 ```mermaid
@@ -23,17 +34,16 @@ Regle: l'ESP32 s'occupe de comprendre l'humain. Le Teensy s'occupe de ne jamais 
 | --- | --- | --- | --- |
 | Ecran 480x480 | Maitre | Aucun | L'ecran est physiquement sur l'ESP32 |
 | Touch | Maitre | Aucun | Entree UI non critique audio |
-| Matrice 4x4 boutons | Maitre | Recoit events | Scan/debounce cote controle |
-| LEDs pads | Maitre | Peut demander etat | Feedback rapide sans charger audio |
-| Wi-Fi | Maitre | Aucun | Risque de jitter, donc loin du son |
+| Croix + 4 boutons + 3 encodeurs | Recoit events | Maitre (cables directement dessus) | **[Revu 2026-09-17]** remplace la matrice 4x4/LEDs prevues ici -- abandonnees le 2026-09-14 (mux LED jamais fonctionnel, voir AZ2_CABLAGE_PICO.md), plus de retour LED physique par pad |
+| Wi-Fi | Maitre | Aucun | Risque de jitter, donc loin du son -- **jamais commence**, pas prioritaire |
 | SD ecran | Maitre | Acces indirect | L'ESP32 gere fichiers, transferts, index |
 | Web config | Maitre | Aucun | Hors temps reel |
 | Projet/presets UI | Maitre | Applique snapshot | L'ESP32 montre et sauve, le Teensy joue |
 | Synthese | Aucun | Maitre | Temps reel audio |
-| Sample playback | Prepare/indexe | Joue | A definir selon RAM/SD/stream |
+| Sample (capture) | Declenche REC/STOP | Capture + ecrit le `.wav` | **[Revu 2026-09-17]** carte SD DEDIEE sur le Teensy (`BUILTIN_SDCARD`), pas indexee par l'ESP32. Lecture (playback) pas encore concue |
 | Sequencer critique | Shadow/UI | Maitre v0 | Le timing musical doit rester cote Teensy |
 | Tempo/clock interne | Affiche/controle | Maitre v0 | Evite dependance UI pour le groove |
-| MIDI/CV futur | Route possible | Maitre si timing | Hors v0 |
+| MIDI/CV | Aucun | Maitre | **[Revu 2026-09-17]** notes IN faites (USB MIDI Teensy -> voix live) ; sync/OUT/CV toujours hors v0 |
 | Logs | Collecte | Envoie status | ESP32 agrege pour SD/web |
 
 ## Pourquoi cette repartition

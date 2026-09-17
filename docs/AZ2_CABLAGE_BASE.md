@@ -2,6 +2,11 @@
 
 Objectif: demarrer la groovebox avec un cablage clair, deux firmwares PlatformIO, et des points a completer seulement la ou il manque encore une reference exacte.
 
+**[Note 2026-09-17]** Document HISTORIQUE (matrice SparkFun 4x4
+abandonnee le 2026-09-14) -- le cablage reellement utilise est dans
+[AZ2_CABLAGE_MASTER.md](AZ2_CABLAGE_MASTER.md) (croix + boutons +
+encodeurs directs sur le Teensy).
+
 ## Architecture generale
 
 ```mermaid
@@ -42,9 +47,15 @@ Le lien ESP32 -> Teensy commence en UART serie simple. USB MIDI viendra plus tar
 
 | Signal | ESP32 | Teensy | Note |
 | --- | --- | --- | --- |
-| TX ESP32 | A renseigner | RX Teensy | Commandes `PAD`, `PLAY`, `STOP` |
-| RX ESP32 | A renseigner | TX Teensy | Etat audio, LED, pattern |
+| TX ESP32 | GPIO17 | RX1 (pin 0) | Commandes `PAD`, `PLAY`, `STOP` |
+| RX ESP32 | GPIO18 | TX1 (pin 1) | Etat audio, LED, pattern |
 | GND | GND | GND | Masse commune obligatoire |
+
+Valide sur ESP32-S3-DevKitC-1 nu (bring-up), teste le 2026-09-13 : boot serie OK
+(`WIFI:OFF:BOOT`, `SD:SKIP:PINS_NOT_SET`, heartbeat `STATUS:ESP32_CONTROL:READY`).
+A reverifier si on passe au module ecran ESP32-4848S040C_I: son bus RGB +
+tactile + SD occupe la quasi-totalite des GPIO, ces pins devront peut-etre
+changer.
 
 Debit cible: `230400`.
 
@@ -117,26 +128,50 @@ La reference exacte des multiplexeurs manque encore. La base firmware utilise do
 
 Attention: un multiplexeur analogique type CD74HC4067 peut aider a lire/selectionner, mais il n'est pas forcement adapte pour fournir le courant des LEDs. Pour les LEDs RGB, prevoir drivers/transistors si la luminosite ou le courant deviennent serieux.
 
-### Pins a renseigner dans le firmware ESP32
+### Pins renseignes dans le firmware ESP32 (bring-up DevKitC-1)
 
-Fichier: `src_esp32/az2_control/main.cpp`.
+Fichier: `src_esp32/az2_control/main.cpp`. UART Teensy fixee (voir plus haut).
+Mux boutons/LED fixes sur un CD74HC4067 par fonction, adresses S0-S3
+partagees entre les deux (memes GPIO), car bouton et LED d'un pad_id sont
+toujours adresses ensemble:
 
 ```cpp
-constexpr int kTeensyRxPin = -1;
-constexpr int kTeensyTxPin = -1;
+constexpr int kTeensyTxPin = 17;
+constexpr int kTeensyRxPin = 18;
 
-constexpr int kButtonMuxS0 = -1;
-constexpr int kButtonMuxS1 = -1;
-constexpr int kButtonMuxS2 = -1;
-constexpr int kButtonMuxS3 = -1;
-constexpr int kButtonMuxSignal = -1;
+constexpr int kButtonMuxS0 = 4;
+constexpr int kButtonMuxS1 = 5;
+constexpr int kButtonMuxS2 = 6;
+constexpr int kButtonMuxS3 = 7;
+constexpr int kButtonMuxSignal = 8;
 
-constexpr int kLedMuxS0 = -1;
-constexpr int kLedMuxS1 = -1;
-constexpr int kLedMuxS2 = -1;
-constexpr int kLedMuxS3 = -1;
-constexpr int kLedMuxSignal = -1;
+constexpr int kLedMuxS0 = kButtonMuxS0;  // memes GPIO que le mux boutons
+constexpr int kLedMuxS1 = kButtonMuxS1;
+constexpr int kLedMuxS2 = kButtonMuxS2;
+constexpr int kLedMuxS3 = kButtonMuxS3;
+constexpr int kLedMuxSignal = 9;
 ```
+
+Ces pins sont valides pour un ESP32-S3-DevKitC-1 nu. A reverifier avant de
+souder sur le module ecran final (voir note plus haut).
+
+## Encodeurs rotatifs 1-4
+
+EC11 classiques (2 voies quadrature A/B + bouton poussoir integre), tout en
+`INPUT_PULLUP` cote ESP32 (l'autre patte de chaque contact va au GND commun).
+Cablage v0 sur ESP32-S3-DevKitC-1 nu, valide au flash (voir plus bas) :
+
+| Encodeur | A | B | Bouton |
+| --- | --- | --- | --- |
+| 1 | GPIO10 | GPIO11 | GPIO38 |
+| 2 | GPIO12 | GPIO13 | GPIO39 |
+| 3 | GPIO14 | GPIO15 | GPIO40 |
+| 4 | GPIO16 | GPIO21 | GPIO41 |
+
+Protocole envoye vers le Teensy: `MACRO:<1-4>:+N` / `MACRO:<1-4>:-N` par cran
+(4 transitions quadrature = 1 cran), `ENC:<1-4>:BTN:DOWN`/`UP` pour le clic.
+Tant qu'aucun encodeur n'est cable sur une broche, un etat flottant peut
+declencher un evenement bouton isole au boot: normal, pas un defaut.
 
 ## SD de l'ecran
 
@@ -179,16 +214,29 @@ Decision v0:
 
 ## Tests de cablage v0
 
-1. Flasher `master_teensy`.
-2. Tester le PCM5102A seul avec `PLAY` / `STOP`.
-3. Flasher `ui_esp`.
+1. Flasher `master_teensy`. **Fait** (2026-09-13, compile OK apres correction
+   `AudioSynthWaveformSine` sans `.begin()`).
+2. Tester le PCM5102A seul avec `PLAY` / `STOP`. **A faire** des que le
+   Teensy est branche.
+3. Flasher `ui_esp`. **Fait**, sur ESP32-S3-DevKitC-1 nu.
 4. Verifier le boot serie ESP32: Wi-Fi OFF, SD skip si pins non renseignees.
-5. Renseigner UART ESP32/Teensy.
-6. Envoyer `HELLO:ESP32_CONTROL`, verifier `HELLO:TEENSY_AUDIO`.
-7. Renseigner multiplexeurs boutons.
-8. Tester `PAD:00` a `PAD:15`.
-9. Renseigner pilotage LEDs.
-10. Tester un mode LED rouge simple avant RGB complet.
+   **Fait**, boot serie conforme.
+5. Renseigner UART ESP32/Teensy. **Fait** (GPIO17/18, voir plus haut) — cote
+   ESP32; branchement physique + ecoute `Serial1` cote Teensy a faire/tester
+   ensuite.
+6. Envoyer `HELLO:ESP32_CONTROL`, verifier `HELLO:TEENSY_AUDIO`. **A faire**
+   une fois l'UART cablee physiquement entre les deux cartes.
+7. Renseigner multiplexeurs boutons. **Fait** (CD74HC4067, GPIO4-7 adresse +
+   GPIO8 signal).
+8. Tester `PAD:00` a `PAD:15`. **A faire** des que la matrice SparkFun et le
+   CD74HC4067 boutons sont cables.
+9. Renseigner pilotage LEDs. **Fait** (meme bus d'adresse que les boutons,
+   GPIO9 signal, une LED a la fois — v0 mono, voir plus bas).
+10. Tester un mode LED rouge simple avant RGB complet. **A faire** avec le
+    CD74HC4067 LED cable.
+11. Renseigner et tester les 4 encodeurs rotatifs. **Fait**, boot OK avec
+    `AZ2:FEATURE:ENCODERS_4X`; test reel des crans/bouton a faire une fois
+    les EC11 cables (voir "Encodeurs rotatifs 1-4" plus haut).
 
 ## Commandes PlatformIO
 
