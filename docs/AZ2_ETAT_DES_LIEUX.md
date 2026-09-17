@@ -1,86 +1,79 @@
-# AZ-2 - Etat des lieux (2026-09-15, soir)
+# AZ-2 - Etat des lieux
 
-Topo demande ("on fait un topo de la situation, on documente") avant
-une session de developpement autonome de nuit ("tu as toute la nuit,
-avance tout ce que tu peux"). Point de depart pour la suite -- mis a
-jour au fil de la nuit dans la section "Journal de la nuit" en bas.
+**[Rafraichi le 2026-09-17]** -- ce document a commence comme un topo
+ponctuel (2026-09-15) puis est devenu un journal chronologique (sections
+datees plus bas, gardees pour l'historique). Les 3 sections qui suivent
+resument l'etat REEL actuel ; pour le detail jour par jour, voir le
+journal en dessous de "Journal de la nuit".
 
 ## Vue d'ensemble
 
-AZ-2 est une groovebox modulaire a 2 cartes :
-- **Teensy 4.1** (`src_teensy/az2_audio/`) : moteur audio temps reel,
-  sequenceur, DAC I2S (PCM5102A).
+AZ-2 est une groovebox modulaire a 2 cartes, orientee Game Boy/GBC :
+- **Teensy 4.1** (`src_teensy/az2_audio/`) : moteur audio temps reel
+  (5 synthes, filtre/ADSR/volume/mute/solo par piste), sequenceur/
+  tracker, sampler (capture), MIDI IN, DAC I2S (PCM5102A), carte SD
+  dediee (samples).
 - **ESP32-S3** (`src_esp32/az2_screen/`) : ecran tactile 480x480 RGB
   parallele (carte VIEWE UEDX48480040E-WB), interface utilisateur,
-  emulateur Game Boy/GBC, carte SD (ROMs).
+  emulateur Game Boy/GBC, carte SD (ROMs, patches, projets).
 - Liaison UART 230400 bauds entre les deux (Serial1 Teensy <->
   GPIO19/20 ESP32), protocole texte ligne par ligne + paquets binaires
-  (audio GB, voir plus bas) -- partage via `lib/AZ2_Protocol/`.
+  (audio GB, oscilloscope) -- partage via `lib/AZ2_Protocol/`.
 - Croix + 4 boutons + 3 encodeurs rotatifs (avec bouton) cables
   directement sur le Teensy -- remplacent le Pico/matrice abandonnes
   le 2026-09-14.
 
-## Ce qui marche et est CONFIRME en reel
+## Ce qui marche et est CONFIRME en reel (verifie sur le vrai materiel)
 
-- **Son** : 8 pistes, 5 moteurs par piste (Dexed FM, mda EPiano,
-  Braids, Karplus-Strong, Analog), patch reel par moteur, bus d'effets
-  maitre (reverb + delay), sortie DAC -- confirme audible.
-- **Ecran** : affichage + tactile multi-doigt confirmes.
-- **Lien UART** Teensy<->ESP32 confirme (HELLO, echo d'etat complet a
-  la reconnexion).
-- **Sequenceur** (avant ce soir) : 16 pas, note par pas, tempo/division
-  reglables, horloge sur IntervalTimer (jitter-free, mesure).
-- **Encodeurs rotatifs (3) + bouton integre** : cables et testes en
-  reel -- pilotent volume/reverb/delay (rotation) + boutons GB Select/
-  Start (encodeurs 2/3) en mode JEUX.
-- **Croix + boutons A/B/C/D** : cables et testes en reel.
-- **Emulateur Game Boy/GBC** (Walnut-CGB) : confirme, une ROM reelle
-  (Tobu Tobu Girl, homebrew MIT) demarre et tourne. Sauvegarde cart RAM
-  (`.sav`) sur la carte SD ESP32. Liste de ROM (plusieurs fichiers dans
-  `/games`) -- backend fait, UI faite, **pas encore testee avec
-  plusieurs ROM en meme temps sur la carte**.
-- **Menu ecran** reorganise en 4 categories (MUSIQUE/JEUX/CONFIG/DOC),
-  navigable croix+A/B+tactile -- confirme en reel.
-- **Ecran de veille** ("matrix"), configurable, confirme en reel.
+- **Son** : 8 pistes, 5 moteurs, patch reel par moteur, filtre resonant
+  par piste, ADSR par piste, bus d'effets maitre (reverb+delay), sortie
+  DAC -- confirme audible.
+- **Ecran** : affichage + tactile multi-doigt.
+- **Lien UART** Teensy<->ESP32 (HELLO, echo d'etat complet).
+- **Croix + boutons A/B/C/D + 3 encodeurs (bouton integre)** : cables
+  et testes en reel.
+- **Emulateur Game Boy/GBC** (Walnut-CGB) : ROM reelle testee (Tobu
+  Tobu Girl), sauvegarde cart RAM sur SD.
+- **Sampler, capture (phase 1)** : ecriture sur la carte SD DEDIEE du
+  Teensy confirmee (`REC:START`/`REC:STOP` testes en serie).
+- **Reglages Dexed (DXP:, algo/feedback)** : testes en serie.
+- **Menu ecran** 4 categories, navigable croix+A/B+tactile.
+- **Ecran de veille** ("matrix"), configurable.
+- **Toolchain** `teensy_loader_cli` recompile depuis la source
+  officielle -- fiable, plusieurs flashs reussis.
 
-## Ce qui est CODE ce soir mais PAS ENCORE TESTE EN REEL
+## Ce qui est CODE mais PAS ENCORE VERIFIE EN REEL
 
-(l'ESP32 attend un flash -- mode boot manuel requis, utilisateur
-absent ; le Teensy est a jour et flashe)
+Tout ce qui suit compile mais n'a jamais ete flashe/entendu/vu depuis
+son ecriture (la session du 2026-09-17 a ete faite sans aucun board
+branche) -- **priorite au reveil du materiel : tout reverifier avant
+d'ajouter quoi que ce soit d'autre** :
 
-- **Son de l'emulateur GB -> DAC Teensy** : minigb_apu vendore, paquets
-  PCM 8kHz mono envoyes sur Serial1, reçus et rejoues via
-  `AudioPlayQueue` cote Teensy (bus d'effets maitre). Compile, flashe
-  cote Teensy, **jamais entendu en vrai**.
-- **Tracker, fondation** (voir `AZ2_TRACKER_ETUDE.md`) :
-  - Ticks internes au pas (4/pas) cote Teensy, effets ARP/CUT/RETRIG
-    par pas -- compile, flashe cote Teensy, **jamais entendu**.
-  - Colonnes NOTE/INST/FX/VAL par pas, vue "detail" cote ecran (comme
-    l'ecran phrase LSDJ/M8) -- **ESP32 pas reflashe, jamais vu/teste**.
-  - **Bug trouve et corrige** : la grille sequenceur ET la page MOTEURS
-    etaient figees a 4 pistes affichees alors que le Teensy en joue 8
-    depuis le 2026-09-14 -- corrige (8 partout), pas encore verifie a
-    l'oeil sur le vrai ecran.
-- **Toolchain** : `teensy_loader_cli` du paquet PlatformIO (bugue sur
-  les gros firmwares Teensy 4.1) remplace par une recompilation depuis
-  la source officielle a jour (`tools/`) -- confirme fonctionnel
-  (plusieurs flashs Teensy reussis depuis).
+- **Mute/solo par piste** (boutons C/D, page MOTEURS).
+- **Volume par piste** (page PATCH).
+- **Sauvegarde/chargement de PROJET complet** (page PROJET).
+- **MIDI notes IN** (jamais teste avec un vrai controleur).
+- **Clavier tactile comme editeur live** (bouton D, page AUDIO).
+- **Pagination de la liste de ROM** (16->40, defilement par pages de 8).
+- **Bouton C pour quitter une partie GB**.
+- Tracker : ticks/colonnes NOTE-INST-FX-VAL/chainage song/gammes --
+  flashes et utilises depuis, stables.
 
 ## Bugs connus / limites actuelles
 
 - Colonne **INST** (patch par pas) : stockee et transmise, **pas
   encore appliquee** au son reel (changer de patch Dexed est trop
-  couteux pour tourner dans l'ISR du sequenceur) -- a resoudre plus
-  tard (patch pre-charge en avance ? limite a certains moteurs ?).
-- **Pas de chainage de patterns** (song/chain) -- un seul pattern de 16
-  pas en boucle, pas d'arrangement long.
-- **Pas de gammes/accords**, pas de clavier tactile comme editeur live
-  de note, pas de sauvegarde/chargement de projet -- demandes,
-  documentees dans `AZ2_TRACKER_ETUDE.md` (etapes 5-7), pas commencees.
-- Boutons **C/D** liberes du mapping GB (etaient Select/Start, main-
-  tenant sur les encodeurs) -- pas encore de role assigne ("gachette").
-- Pas de filtre par piste, pas d'ADSR editable (l'ADSR de l'Analog est
-  fixe en dur dans `setup()`), pas de vue d'onde/oscilloscope.
+  couteux pour tourner dans l'ISR du sequenceur).
+- **Accords** (plusieurs notes par pas) : pas fait, plus gros que
+  prevu -- voir AZ2_BENCHMARK_CONCURRENCE.md.
+- **Swing/groove** : pas fait, piege timer/ISR trouve -- voir
+  AZ2_FEUILLE_DE_ROUTE.md.
+- **Sampler** : capture faite, PAS de lecture (pas de moteur
+  `AudioPlaySdWav`/`AudioPlaySdRaw`), pas de vue d'onde/decoupage/
+  nommage a l'ecran.
+- **Pas de vrai panoramique** (chaine audio mono de bout en bout).
+- **GitHub** : remote configure mais authentification pas encore
+  etablie sur cette machine -- voir la section GitHub du journal.
 
 ## Journal de la nuit -- ce qui a ete fait
 
