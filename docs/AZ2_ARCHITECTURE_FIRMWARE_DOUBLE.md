@@ -2,6 +2,17 @@
 
 Objectif: definir proprement la repartition ESP32 / Teensy pour obtenir une groovebox rapide, robuste et facile a faire evoluer.
 
+**[Note 2026-09-17]** Document de planification PRECOCE -- le principe
+general (ESP32 = humain/UI, Teensy = audio temps reel) est toujours
+exact et respecte, mais beaucoup de details plus bas (pages UI
+nommees "Home/Performance/Hardware Test", strategie samples A/B/C,
+etapes Teensy 1-2-3...) datent d'avant que quoi que ce soit ne soit
+construit et ne correspondent plus a ce qui existe reellement. Pour
+l'etat reel : [AZ2_ETAT_DES_LIEUX.md](AZ2_ETAT_DES_LIEUX.md) (verifie
+en reel vs compile) et [AZ2_FEUILLE_DE_ROUTE.md](AZ2_FEUILLE_DE_ROUTE.md)
+(ce qui reste a faire). Garde ici pour la logique de repartition
+d'origine, toujours valable en esprit.
+
 ## Principe general
 
 ```mermaid
