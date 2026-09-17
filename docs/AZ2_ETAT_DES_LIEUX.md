@@ -282,6 +282,35 @@ aujourd'hui.
   decoupage automatique, clavier de nom, moteur de lecture) : pas
   commencees, detaillees dans AZ2_FEUILLE_DE_ROUTE.md.
 
+## Bugs reels trouves en jouant (2026-09-17, utilisateur de retour)
+
+Premier vrai test manette en main apres le flash de l'ESP32 -- 2 bugs
+reels rapportes et corriges dans la foulee :
+
+1. **"je peux pas selectionner une ROM avec la croix et A/B, avoir le
+   nom en surbrillance"** -- la croix sur la page JEUX etait TOUJOURS
+   routee vers `gbSetButton()` (boutons du jeu), meme quand aucune ROM
+   n'etait encore chargee : aucune navigation clavier n'atteignait
+   jamais la liste. Corrige : `selectedRomIndex` + surbrillance (meme
+   convention que la piste choisie sur la page MOTEURS), HAUT/BAS
+   deplacent la selection (suit le defilement automatiquement), A
+   charge la ROM selectionnee. `gbSetButton()`/le mapping A/B ne
+   s'activent plus que si une partie est REELLEMENT en cours
+   (`gbIsLoaded()`), pas juste "page JEUX affichee".
+2. **"bug d'affichage quand ca commence a demarrer l'emulation"** --
+   trouve : `drawLinkStatus()` (bandeau "TEENSY: relie" en bas de
+   l'ecran, `kStatusY = 450`) chevauche le bas de l'image du jeu
+   (celle-ci va de y=24 a y=456, voir `gbBlitLine()`). Cette fonction
+   est appelee a CHAQUE ligne recue du Teensy, y compris `STATUS:`
+   envoye ~1x/seconde en continu -- une barre noire + texte
+   s'incrustait donc sur le bas de l'ecran de jeu toutes les secondes
+   pendant qu'une partie tournait. Corrige : exclue quand
+   `currentScreen==Screen::Retro && gbIsLoaded()`, meme famille
+   d'exclusion que Controls/Links deja en place.
+
+Compile verifie, **pas encore reflashe** au moment d'ecrire cette
+entree -- ESP32 deconnecte entre le rapport de bug et le fix.
+
 ## Suite du 2026-09-17 -- 5 des 8 priorites indispensables faites
 
 Utilisateur parti travailler ("on attaque la feuille de route, avance

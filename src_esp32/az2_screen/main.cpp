@@ -1765,6 +1765,12 @@ constexpr int16_t kRomPageY = kRomRowTop + kRomListH + 6;
 constexpr int16_t kRomPageH = 32;
 constexpr int16_t kRomPageBtnW = 60;
 uint8_t gbRomScroll = 0;  // index (absolu) de la 1ere ROM visible
+// Selection croix (demande 2026-09-17 : "je peux pas selectionner une
+// rom avec la croix et A/B et avoir le nom en surbrillance") -- avant,
+// la croix sur cette page etait toujours routee vers gbSetButton() (les
+// boutons du JEU), meme quand aucune ROM n'etait encore chargee, donc
+// aucune navigation clavier possible dans la liste.
+int8_t selectedRomIndex = 0;
 
 void romRowRect(uint8_t visibleRow, int16_t &y) {
   y = static_cast<int16_t>(kRomRowTop + visibleRow * kRomRowH);
@@ -1780,6 +1786,12 @@ void drawRomRow(uint8_t index) {
   romRowRect(static_cast<uint8_t>(index - gbRomScroll), y);
   gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, kRomRowH - 6, RGB565_BLACK);
   gfx->drawRect(kMargin, y, kScreenSize - 2 * kMargin, kRomRowH - 6, kPalette[index % kPaletteCount]);
+  if (index == selectedRomIndex) {
+    // Ligne selectionnee par la croix -- meme convention que la piste
+    // choisie sur la page MOTEURS (contour blanc double).
+    gfx->drawRect(static_cast<int16_t>(kMargin + 1), static_cast<int16_t>(y + 1), kScreenSize - 2 * kMargin - 2,
+                  kRomRowH - 8, RGB565_WHITE);
+  }
   gfx->setTextSize(2);
   gfx->setTextColor(RGB565_WHITE);
   gfx->setCursor(static_cast<int16_t>(kMargin + 10), static_cast<int16_t>(y + 6));
@@ -2451,6 +2463,7 @@ void goTo(Screen s) {
   if (s == Screen::Retro && !gbIsLoaded()) {
     gbRomCount = gbScanRoms(gbRomNames);
     gbRomScroll = 0;
+    selectedRomIndex = 0;
   } else if (s != Screen::Retro && gbIsLoaded()) {
     gbUnload();
   }
@@ -2514,11 +2527,38 @@ void handleTeensyLine(const String &line) {
         if (currentScreen == Screen::Controls && !screensaverActive) {
           drawNavBox(static_cast<uint8_t>(index));
         }
-        // Page JEUX : la croix pilote directement le Game Boy (voir
-        // gb_emulator.h -- GbButton::Up/Down/Left/Right sont dans le
-        // meme ordre que index ici, 0-3).
-        if (currentScreen == Screen::Retro) {
+        // Page JEUX, partie en cours : la croix pilote directement le
+        // Game Boy (voir gb_emulator.h -- GbButton::Up/Down/Left/Right
+        // sont dans le meme ordre que index ici, 0-3).
+        if (currentScreen == Screen::Retro && gbIsLoaded()) {
           gbSetButton(static_cast<GbButton>(index), pressed);
+        }
+        // Page JEUX, liste de ROM (pas encore charge) : HAUT/BAS
+        // deplacent la selection surlignee (voir selectedRomIndex plus
+        // haut, demande 2026-09-17 -- "je peux pas selectionner une rom
+        // avec la croix et avoir le nom en surbrillance"). Suit
+        // automatiquement le defilement si la selection sort de la
+        // fenetre visible (kRomVisibleRows).
+        if (pressed && currentScreen == Screen::Retro && !gbIsLoaded() && gbRomCount > 0 &&
+            (index == 0 || index == 1)) {
+          const int8_t previous = selectedRomIndex;
+          if (index == 1 && selectedRomIndex < gbRomCount - 1) {
+            ++selectedRomIndex;
+          } else if (index == 0 && selectedRomIndex > 0) {
+            --selectedRomIndex;
+          }
+          if (selectedRomIndex != previous) {
+            if (selectedRomIndex < gbRomScroll) {
+              gbRomScroll = static_cast<uint8_t>(selectedRomIndex);
+              drawRetroPage();
+            } else if (selectedRomIndex >= gbRomScroll + kRomVisibleRows) {
+              gbRomScroll = static_cast<uint8_t>(selectedRomIndex - kRomVisibleRows + 1);
+              drawRetroPage();
+            } else {
+              drawRomRow(static_cast<uint8_t>(previous));
+              drawRomRow(static_cast<uint8_t>(selectedRomIndex));
+            }
+          }
         }
         // Menu principal : la croix deplace la selection surlignee --
         // demande 2026-09-15 ("il faut que ca serve dans les menus"),
@@ -2654,9 +2694,17 @@ void handleTeensyLine(const String &line) {
       // gachettes") : C/D se liberent pour un futur role de gachette
       // (pas encore assigne).
       const bool inGbGame = (currentScreen == Screen::Retro && gbIsLoaded());
-      if (currentScreen == Screen::Retro && index < 2) {
+      if (inGbGame && index < 2) {
         static const GbButton kGbMap[2] = {GbButton::A, GbButton::B};
         gbSetButton(kGbMap[index], pressed);
+      }
+      // Page JEUX, liste de ROM (pas encore charge) : A charge la ROM
+      // choisie par la croix -- meme convention que le tactile
+      // (toucher une ligne), et que A pour confirmer ailleurs (menu).
+      if (pressed && letter == 'A' && currentScreen == Screen::Retro && !gbIsLoaded() && gbRomCount > 0) {
+        if (gbLoadRom(gbRomNames[selectedRomIndex])) {
+          drawRetroPage();
+        }
       }
       // Sortir d'une partie : demande 2026-09-17 ("il faut un truc pour
       // sortir de l'emulateur cote code") -- B est deja pris par le jeu
@@ -3085,7 +3133,16 @@ void handleTeensyLine(const String &line) {
   if (currentScreen == Screen::Links) {
     drawLinksPage();
   }
-  if (currentScreen != Screen::Controls && currentScreen != Screen::Links) {
+  // Bug trouve le 2026-09-17 ("bug d'affichage quand ca commence a
+  // demarrer l'emulation") : drawLinkStatus() se dessine en bas de
+  // l'ecran (kStatusY = kScreenSize-30 = 450) -- ca chevauche le bas de
+  // l'image du jeu (kGbScreenTop=24 a 24+432=456, voir gbBlitLine()).
+  // Cette fonction tourne a CHAQUE ligne recue du Teensy, y compris
+  // STATUS: envoye ~1x/s en continu -- une barre noire + texte
+  // s'incrustait donc sur le bas de l'ecran de jeu toutes les secondes
+  // pendant qu'une partie tournait. Exclu en plus de Controls/Links.
+  const bool gbPlaying = (currentScreen == Screen::Retro && gbIsLoaded());
+  if (currentScreen != Screen::Controls && currentScreen != Screen::Links && !gbPlaying) {
     drawLinkStatus();
   }
 }
