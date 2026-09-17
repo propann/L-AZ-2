@@ -1658,14 +1658,31 @@ uint8_t gbRomCount = 0;
 
 constexpr int16_t kRomRowTop = 90;
 constexpr int16_t kRomRowH = 40;
+// Pagination (demande 2026-09-17, "met en plus des trucs cool ... genre
+// 20 30") -- avant, toutes les ROM trouvees etaient dessinees a la
+// suite sans defilement : au-dela de ~9-10 lignes, le reste tombait
+// hors ecran (480px de haut) et devenait injoignable au tactile. 8
+// lignes visibles (meme convention que les 8 pistes ailleurs dans
+// l'appli) + une rangee de pagination en bas si besoin.
+constexpr uint8_t kRomVisibleRows = 8;
+constexpr int16_t kRomListH = kRomVisibleRows * kRomRowH;
+constexpr int16_t kRomPageY = kRomRowTop + kRomListH + 6;
+constexpr int16_t kRomPageH = 32;
+constexpr int16_t kRomPageBtnW = 60;
+uint8_t gbRomScroll = 0;  // index (absolu) de la 1ere ROM visible
 
-void romRowRect(uint8_t index, int16_t &y) {
-  y = static_cast<int16_t>(kRomRowTop + index * kRomRowH);
+void romRowRect(uint8_t visibleRow, int16_t &y) {
+  y = static_cast<int16_t>(kRomRowTop + visibleRow * kRomRowH);
 }
 
+// index : absolu dans gbRomNames[], pas relatif a la page -- ne dessine
+// rien s'il tombe hors de la fenetre visible actuelle (gbRomScroll).
 void drawRomRow(uint8_t index) {
+  if (index < gbRomScroll || index >= gbRomScroll + kRomVisibleRows) {
+    return;
+  }
   int16_t y;
-  romRowRect(index, y);
+  romRowRect(static_cast<uint8_t>(index - gbRomScroll), y);
   gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, kRomRowH - 6, RGB565_BLACK);
   gfx->drawRect(kMargin, y, kScreenSize - 2 * kMargin, kRomRowH - 6, kPalette[index % kPaletteCount]);
   gfx->setTextSize(2);
@@ -1674,18 +1691,53 @@ void drawRomRow(uint8_t index) {
   gfx->print(gbRomNames[index]);
 }
 
+// Renvoie l'index ABSOLU (pas relatif a la page) de la ROM touchee.
 int8_t hitTestRomRow(int16_t x, int16_t y) {
   if (x < kMargin || x > kScreenSize - kMargin) {
     return -1;
   }
-  for (uint8_t i = 0; i < gbRomCount; ++i) {
+  const uint8_t visibleCount = static_cast<uint8_t>(min<int>(kRomVisibleRows, gbRomCount - gbRomScroll));
+  for (uint8_t row = 0; row < visibleCount; ++row) {
     int16_t rowY;
-    romRowRect(i, rowY);
+    romRowRect(row, rowY);
     if (y >= rowY && y < rowY + (kRomRowH - 6)) {
-      return static_cast<int8_t>(i);
+      return static_cast<int8_t>(gbRomScroll + row);
     }
   }
   return -1;
+}
+
+void drawRomPageRow() {
+  if (gbRomCount <= kRomVisibleRows) {
+    return;  // tout tient sur une page, pas besoin de pagination
+  }
+  const int16_t prevX = kMargin;
+  const int16_t nextX = static_cast<int16_t>(kScreenSize - kMargin - kRomPageBtnW);
+  gfx->fillRect(kMargin, kRomPageY, kScreenSize - 2 * kMargin, kRomPageH, RGB565_BLACK);
+  gfx->drawRect(prevX, kRomPageY, kRomPageBtnW, kRomPageH, kFaint);
+  gfx->drawRect(nextX, kRomPageY, kRomPageBtnW, kRomPageH, kFaint);
+  gfx->setTextSize(2);
+  gfx->setTextColor(gbRomScroll > 0 ? RGB565_WHITE : kFaint);
+  gfx->setCursor(static_cast<int16_t>(prevX + 14), static_cast<int16_t>(kRomPageY + 8));
+  gfx->print('<');
+  gfx->setTextColor(gbRomScroll + kRomVisibleRows < gbRomCount ? RGB565_WHITE : kFaint);
+  gfx->setCursor(static_cast<int16_t>(nextX + 14), static_cast<int16_t>(kRomPageY + 8));
+  gfx->print('>');
+
+  char buf[16];
+  const uint8_t lastShown = static_cast<uint8_t>(min<int>(gbRomScroll + kRomVisibleRows, gbRomCount));
+  snprintf(buf, sizeof(buf), "%d-%d / %d", gbRomScroll + 1, lastShown, gbRomCount);
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - 30), static_cast<int16_t>(kRomPageY + 12));
+  gfx->print(buf);
+}
+
+bool hitTestRomPagePrev(int16_t x, int16_t y) {
+  return inBox(x, y, kMargin, kRomPageY, kRomPageBtnW, kRomPageH);
+}
+bool hitTestRomPageNext(int16_t x, int16_t y) {
+  return inBox(x, y, static_cast<int16_t>(kScreenSize - kMargin - kRomPageBtnW), kRomPageY, kRomPageBtnW, kRomPageH);
 }
 
 void drawRetroPage() {
@@ -1707,9 +1759,18 @@ void drawRetroPage() {
 
   if (gbRomCount > 0) {
     drawSubHeader("JEUX - choisis une ROM", kPalette[2]);
-    for (uint8_t i = 0; i < gbRomCount; ++i) {
+    if (gbRomScroll > 0 && gbRomScroll >= gbRomCount) {
+      gbRomScroll = 0;  // securite si la liste a change depuis (rescan)
+    }
+    // Efface toute la zone de liste avant de redessiner -- la derniere
+    // page peut avoir moins de lignes que kRomVisibleRows, sinon
+    // d'anciennes lignes resteraient affichees en dessous.
+    gfx->fillRect(kMargin, kRomRowTop, kScreenSize - 2 * kMargin, kRomListH, RGB565_BLACK);
+    const uint8_t lastVisible = static_cast<uint8_t>(min<int>(gbRomScroll + kRomVisibleRows, gbRomCount));
+    for (uint8_t i = gbRomScroll; i < lastVisible; ++i) {
       drawRomRow(i);
     }
+    drawRomPageRow();
     return;
   }
 
@@ -2008,6 +2069,7 @@ void goTo(Screen s) {
   // dans une liste de rom pas uniquement un jeux").
   if (s == Screen::Retro && !gbIsLoaded()) {
     gbRomCount = gbScanRoms(gbRomNames);
+    gbRomScroll = 0;
   } else if (s != Screen::Retro && gbIsLoaded()) {
     gbUnload();
   }
@@ -3011,11 +3073,19 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
     if (gbRomCount > 0) {
       // Liste de ROM affichee : toucher une ligne la charge et demarre
       // le jeu (demande 2026-09-15, "une liste de rom pas uniquement
-      // un jeux").
-      const int8_t rowIndex = hitTestRomRow(x, y);
-      if (rowIndex >= 0) {
-        if (gbLoadRom(gbRomNames[rowIndex])) {
-          drawRetroPage();
+      // un jeux"). Pagination (2026-09-17) : fleches +/- une page.
+      if (hitTestRomPagePrev(x, y) && gbRomScroll > 0) {
+        gbRomScroll = static_cast<uint8_t>(gbRomScroll >= kRomVisibleRows ? gbRomScroll - kRomVisibleRows : 0);
+        drawRetroPage();
+      } else if (hitTestRomPageNext(x, y) && gbRomScroll + kRomVisibleRows < gbRomCount) {
+        gbRomScroll = static_cast<uint8_t>(gbRomScroll + kRomVisibleRows);
+        drawRetroPage();
+      } else {
+        const int8_t rowIndex = hitTestRomRow(x, y);
+        if (rowIndex >= 0) {
+          if (gbLoadRom(gbRomNames[rowIndex])) {
+            drawRetroPage();
+          }
         }
       }
     } else {

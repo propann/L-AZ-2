@@ -18,7 +18,12 @@
 // vraies cartes exposent des noms longs -- 40 caracteres suffit pour
 // rester lisible a l'ecran de toute facon, tronque au-dela).
 constexpr uint8_t kGbRomNameLen = 40;
-constexpr uint8_t kGbMaxRoms = 16;
+// Releve de 16 a 40 le 2026-09-17 (demande "met en plus des trucs cool
+// ... genre 20 30") -- 16 coupait silencieusement le scan avant de
+// trouver toute une collection perso plus fournie. Voir kRomVisibleRows
+// dans main.cpp pour la pagination a l'ecran (8 lignes visibles a la
+// fois, un peu de marge au-dela de kGbMaxRoms).
+constexpr uint8_t kGbMaxRoms = 40;
 
 // Scanne /games sur la carte SD pour les fichiers .gb/.gbc (jusqu'a
 // kGbMaxRoms), remplit `names` (kGbMaxRoms x kGbRomNameLen, deja
