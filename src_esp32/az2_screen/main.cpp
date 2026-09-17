@@ -1986,6 +1986,15 @@ constexpr int16_t kCfgRowY = 140;
 constexpr int16_t kCfgRowH = 50;
 constexpr int16_t kCfgBtnW = 60;
 constexpr int16_t kScaleRowY = kCfgRowY + kCfgRowH + 40;
+constexpr int16_t kSwingRowY = kScaleRowY + kCfgRowH + 40;
+
+// Swing/shuffle (SWING:, priorite #3 de la liste indispensable) -- 0-127,
+// pas de granularite fine cote Teensy (4 ticks/pas max, voir
+// handleSwingCommand() et le commentaire de swingAmount la-bas) donc pas
+// a pas de 32 ici (127/4) pour que chaque appui +/- change reellement
+// quelque chose d'audible plutot que des crans invisibles.
+uint8_t swingValue = 0;
+constexpr uint8_t kSwingStep = 32;
 
 // Gammes (demande 2026-09-15, "on ajoute les gammes accord") --
 // verrouillage a la saisie : quand on transpose une note (croix HAUT/
@@ -2085,6 +2094,26 @@ void drawConfigPage() {
   gfx->setTextColor(kDim);
   gfx->setCursor(kMargin, static_cast<int16_t>(kScaleRowY - 20));
   gfx->print("GAMME (croix/pas du sequenceur en tonalite de C)");
+
+  // Swing (voir swingValue plus haut) -- 0 = pas de swing (comportement
+  // d'origine).
+  gfx->fillRect(kMargin, kSwingRowY, kScreenSize - 2 * kMargin, kCfgRowH, RGB565_BLACK);
+  gfx->drawRect(minusX, kSwingRowY, kCfgBtnW, kCfgRowH, kFaint);
+  gfx->drawRect(plusX, kSwingRowY, kCfgBtnW, kCfgRowH, kFaint);
+  gfx->setTextSize(3);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(static_cast<int16_t>(minusX + 20), static_cast<int16_t>(kSwingRowY + 10));
+  gfx->print('-');
+  gfx->setCursor(static_cast<int16_t>(plusX + 20), static_cast<int16_t>(kSwingRowY + 10));
+  gfx->print('+');
+  snprintf(buf, sizeof(buf), "%3d", swingValue);
+  gfx->setTextSize(2);
+  gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - 30), static_cast<int16_t>(kSwingRowY + 15));
+  gfx->print(buf);
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(kMargin, static_cast<int16_t>(kSwingRowY - 20));
+  gfx->print("SWING (0 = aucun)");
 }
 
 bool hitTestCfgMinus(int16_t x, int16_t y) {
@@ -2099,6 +2128,13 @@ bool hitTestScaleMinus(int16_t x, int16_t y) {
 }
 bool hitTestScalePlus(int16_t x, int16_t y) {
   return inBox(x, y, static_cast<int16_t>(kScreenSize - kMargin - kCfgBtnW), kScaleRowY, kCfgBtnW, kCfgRowH);
+}
+
+bool hitTestSwingMinus(int16_t x, int16_t y) {
+  return inBox(x, y, kMargin, kSwingRowY, kCfgBtnW, kCfgRowH);
+}
+bool hitTestSwingPlus(int16_t x, int16_t y) {
+  return inBox(x, y, static_cast<int16_t>(kScreenSize - kMargin - kCfgBtnW), kSwingRowY, kCfgBtnW, kCfgRowH);
 }
 
 // ---------------------------------------------------------------------
@@ -2186,6 +2222,7 @@ void saveProject(uint8_t slot) {
   f.printf("BPM:%d\n", static_cast<int>(seqBpm + 0.5f));
   f.printf("DIV:%d\n", seqStepsPerBeat);
   f.printf("SCALE:%d\n", currentScaleIndex);
+  f.printf("SWING:%d\n", swingValue);
   f.printf("SONGMODE:%d\n", songMode ? 1 : 0);
   f.printf("SONGLEN:%d\n", songLen);
   for (uint8_t i = 0; i < songLen; ++i) {
@@ -2249,6 +2286,13 @@ void loadProject(uint8_t slot) {
       sendToTeensy(msg);
     } else if (line.startsWith("SCALE:")) {
       currentScaleIndex = static_cast<uint8_t>(afterColon(line).toInt() % kScaleCount);
+    } else if (line.startsWith("SWING:")) {
+      // Absent des projets sauvegardes avant cet ajout -- swingValue
+      // reste a sa valeur courante (0 par defaut) dans ce cas, meme
+      // esprit que les champs optionnels des lignes TRACK:.
+      swingValue = static_cast<uint8_t>(constrain(afterColon(line).toInt(), 0, 127));
+      snprintf(msg, sizeof(msg), "SWING:%d", swingValue);
+      sendToTeensy(msg);
     } else if (line.startsWith("SONGMODE:")) {
       const int v = afterColon(line).toInt();
       snprintf(msg, sizeof(msg), "SONGMODE:%d", v);
@@ -2932,6 +2976,11 @@ void handleTeensyLine(const String &line) {
       if (currentScreen == Screen::Sequencer && !screensaverActive) {
         drawTrkControls();
       }
+    }
+  } else if (line.startsWith("SWING:")) {
+    swingValue = static_cast<uint8_t>(constrain(line.substring(6).toInt(), 0, 127));
+    if (currentScreen == Screen::Config && !screensaverActive) {
+      drawConfigPage();
     }
   } else if (line.startsWith("PATTERN:")) {
     const uint8_t value = static_cast<uint8_t>(line.substring(8).toInt());
@@ -3619,6 +3668,13 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
     } else if (hitTestScalePlus(x, y)) {
       currentScaleIndex = static_cast<uint8_t>((currentScaleIndex + 1) % kScaleCount);
       drawConfigPage();
+    } else if (hitTestSwingMinus(x, y) || hitTestSwingPlus(x, y)) {
+      const int delta = hitTestSwingPlus(x, y) ? kSwingStep : -kSwingStep;
+      swingValue = static_cast<uint8_t>(constrain(static_cast<int>(swingValue) + delta, 0, 127));
+      drawConfigPage();
+      char msg[16];
+      snprintf(msg, sizeof(msg), "SWING:%d", swingValue);
+      sendToTeensy(msg);
     }
   } else if (currentScreen == Screen::Retro && !gbIsLoaded()) {
     if (gbRomCount > 0) {

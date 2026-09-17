@@ -556,6 +556,20 @@ uint8_t songPos = 0;
 constexpr uint8_t kTicksPerStep = 4;
 volatile uint8_t currentTick = 0;
 
+// Swing/shuffle (SWING:, priorite #3 de la liste indispensable,
+// AZ2_BENCHMARK_CONCURRENCE.md). Piege trouve le 2026-09-16 (voir
+// AZ2_FEUILLE_DE_ROUTE.md) : reconfigurer sequencerTimer depuis sa
+// propre ISR est delicat (jitter, securite). Evite completement ici --
+// sequencerTimer garde sa periode FIXE pour toujours (jamais
+// d'appel a .update() pour le swing) : seul le nombre de ticks qui
+// composent le pas EN COURS varie (ticksForCurrentStep, recalcule a
+// chaque debut de pas dans advanceTick()) -- pas pairs raccourcis, pas
+// impairs allonges d'autant, tempo moyen exact sur toute paire de pas.
+// 0-3 (kTicksPerStep-1 max, jamais 0 tick pour un pas). 0 = pas de
+// swing (comportement d'origine, tous les pas a kTicksPerStep pile).
+uint8_t swingAmount = 0;
+uint8_t ticksForCurrentStep = kTicksPerStep;
+
 // Horloge du sequenceur : sur IntervalTimer (interruption materielle),
 // comme MicroDexed-touch (voir src_teensy/microdexed-touch/MicroDexed-touch/
 // MicroDexed-touch.ino, "PeriodicTimer sequencer_timer" + dexed_sd.cpp:4823
@@ -626,6 +640,15 @@ void announceHello() {
   az2::printBpm(Serial1, bpm);
   az2::printDivision(Serial, stepsPerBeat);
   az2::printDivision(Serial1, stepsPerBeat);
+  {
+    // Reconstruit une valeur 0-127 representative depuis swingAmount
+    // (0-(kTicksPerStep-1) en interne, voir handleSwingCommand()) --
+    // conversion avec perte (127 valeurs -> 4 crans) comme a l'aller,
+    // suffisant pour reafficher un cran coherent a la reconnexion.
+    char swingMsg[16];
+    snprintf(swingMsg, sizeof(swingMsg), "SWING:%d", (swingAmount * 127) / (kTicksPerStep - 1));
+    relayLine(swingMsg);
+  }
   for (uint8_t t = 0; t < kTrackCount; ++t) {
     az2::printEngineSelect(Serial, t, trackEngine[t]);
     az2::printEngineSelect(Serial1, t, trackEngine[t]);
@@ -761,6 +784,13 @@ void advanceTick() {
     allTrackNotesOff();
 
     currentStep = static_cast<uint8_t>((currentStep + 1) % kStepCount);
+    // Swing : voir le commentaire de swingAmount plus haut -- pas pairs
+    // raccourcis, impairs allonges (classique "shuffle" de boite a
+    // rythme, delai des "contretemps"). swingAmount est deja borne a
+    // kTicksPerStep-1 max par handleSwingCommand(), jamais 0 tick ici.
+    ticksForCurrentStep = (currentStep % 2 == 0)
+                              ? static_cast<uint8_t>(kTicksPerStep - swingAmount)
+                              : static_cast<uint8_t>(kTicksPerStep + swingAmount);
     if (currentStep == 0) {
       ++currentBar;
       // Fin du pattern joue : avance dans la song si le mode song est
@@ -803,7 +833,7 @@ void advanceTick() {
     }
   }
 
-  currentTick = static_cast<uint8_t>((currentTick + 1) % kTicksPerStep);
+  currentTick = static_cast<uint8_t>((currentTick + 1) % ticksForCurrentStep);
 }
 
 // Appelee depuis loop() : se contente d'imprimer le CLOCK: en attente
@@ -1034,6 +1064,22 @@ void handleDivCommand(const String &line) {
   if (playing) {
     sequencerTimer.update(tickIntervalUs());
   }
+  relayLine(line);
+}
+
+// SWING:<0-127> -- voir le commentaire de swingAmount plus haut. Mappe
+// 0-127 (convention UI, meme echelle que FILT:/ENV:) vers 0-(kTicksPerStep-1)
+// en interne (seule resolution utile vu le decoupage en ticks). Ne
+// touche PAS sequencerTimer -- prend effet des le prochain debut de pas
+// (ticksForCurrentStep n'est recalcule qu'a ce moment-la), jamais en
+// cours de pas.
+void handleSwingCommand(const String &line) {
+  const int idx = line.indexOf(':');
+  if (idx < 0) {
+    return;
+  }
+  const int raw = constrain(line.substring(idx + 1).toInt(), 0, 127);
+  swingAmount = static_cast<uint8_t>((raw * (kTicksPerStep - 1)) / 127);
   relayLine(line);
 }
 
@@ -1743,6 +1789,11 @@ void handleCommand(const String &line) {
 
   if (line.startsWith("DIV:")) {
     handleDivCommand(line);
+    return;
+  }
+
+  if (line.startsWith("SWING:")) {
+    handleSwingCommand(line);
     return;
   }
 

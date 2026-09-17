@@ -182,7 +182,7 @@ memes items) :
 | ---: | --- | --- |
 | 1 | Mute/solo par piste | **[FAIT le 2026-09-17]** -- voir section dediee plus bas (le piege Braids trouve le 2026-09-16 est resolu, mute/demute immediat meme sur Braids) |
 | 2 | Sauvegarde/chargement de projet complet (patterns+song+BPM+scale) | **[FAIT le 2026-09-17]** page PROJET, 4 emplacements, `/projects/N.proj` sur la SD de l'ESP32 -- voir section dediee plus bas |
-| 3 | Swing/groove global | **PAS FAIT** -- piege timer trouve le 2026-09-16, voir note plus bas |
+| 3 | Swing/groove global | **[FAIT le 2026-09-17]** -- voir section dediee plus bas. Piege timer du 2026-09-16 EVITE (jamais de `sequencerTimer.update()` pour le swing) |
 | 4 | Volume par piste | **[FAIT le 2026-09-17]**, voir section dediee plus bas. **Pan : PAS FAIT** -- chaine mono de bout en bout (patchOutL/patchOutR dupliquent le meme mixMaster), un vrai pan demanderait de refaire les bus en stereo |
 | 5 | Sampler (moteur audio a partir d'echantillons) | **Capture (phase 1) FAITE et confirmee en reel** (carte SD Teensy presente/fonctionnelle, teste par serie le 2026-09-17). Reste : vue d'onde/decoupage/nommage (phase 2), puis le moteur de LECTURE `AudioPlaySdWav`/`AudioPlaySdRaw` (phase 3, pas commence) |
 | 6 | MIDI notes IN | **[FAIT le 2026-09-17]** -- voir section dediee plus bas. Sync horloge/MIDI OUT/routage vers une piste du sequenceur : pas fait |
@@ -190,7 +190,7 @@ memes items) :
 | 8 | Clavier tactile comme editeur live de note | **[FAIT le 2026-09-17]** -- voir section dediee plus bas |
 | 9 | Wi-Fi (config web, transfert fichiers) | **PAS FAIT**, pas dans le classement du benchmark -- rien de bloquant, jamais redemande depuis la Phase 5, reste bas dans la pile tant que le musical n'est pas complet |
 
-Etat au 2026-09-17 : **5/8 faits** (#1, #2, #4, #6, #8), tous
+Etat au 2026-09-17 (fin de journee) : **6/8 faits** (#1, #2, #3, #4, #6, #8), tous
 compiles mais **PAS ENCORE verifies en reel** (aucun board branche ce
 jour-la). Restent #3 (swing), #5 phase 2/3 (sampler), #7 (accords) --
 les 3 demandent le materiel sous la main (pieges timer/donnees trouves
@@ -460,13 +460,31 @@ implemente en multipliant le meme gain de groupe -- meme prudence
 requise (verifier avec une piste Braids qui joue en continu pendant
 qu'on bouge le volume).
 
-**Swing/groove (item 3) a aussi un piege different, trouve en y
-regardant** : le tempo est pilote par un seul `IntervalTimer` a periode
-FIXE (`tickIntervalUs()`, recalculee seulement quand BPM/division
-changent). Un vrai swing doit alterner 2 durees de tick (pas
-long/court) -- ca veut dire rappeler `.update()` sur le timer DEPUIS
-L'ISR elle-meme selon la parite du pas courant, ce qui est plus delicat
-a rendre fiable (jitter, sécurité de reconfigurer un timer depuis sa
-propre interruption) qu'un simple "decalage" comme note initialement.
-A verifier en reel avec un oscilloscope/analyseur logique sur l'horloge
-avant de considerer ca "fait", pas juste a l'oreille.
+**Swing/groove (item 3) -- piege evite, FAIT le 2026-09-17.** Le piege
+identifie le 2026-09-16 (reconfigurer `sequencerTimer` DEPUIS sa propre
+ISR pour alterner 2 durees de tick) a ete contourne completement plutot
+que resolu au prix du risque initial :
+
+- `sequencerTimer` garde sa periode FIXE **pour toujours** -- jamais un
+  seul appel a `.update()` lie au swing. L'ISR (`advanceTick()`) tourne
+  exactement a la meme cadence qu'avant.
+- A la place, seul le **seuil logiciel de fin de pas** varie :
+  `ticksForCurrentStep` (nouvelle variable, recalculee UNE fois au
+  debut de chaque pas) vaut `kTicksPerStep - swingAmount` pour les pas
+  pairs et `kTicksPerStep + swingAmount` pour les pas impairs -- classique
+  "shuffle" de boite a rythme (delai des contretemps), tempo moyen
+  exact sur toute paire de pas puisque le total de ticks sur 2 pas ne
+  change jamais.
+- `SWING:<0-127>` (convention UI) mappe en interne sur 0 a
+  `kTicksPerStep-1` (3 max, seule resolution utile vu le decoupage a 4
+  ticks/pas) -- `handleSwingCommand()`.
+- ESP32 : nouvelle ligne SWING sur la page CONFIGURATION (memes +/-
+  que l'ecran de veille/la gamme juste au-dessus), pas de 32 (127/4)
+  pour que chaque appui change reellement quelque chose. Inclus dans
+  la sauvegarde de projet.
+
+Compile verifie (3 environnements), **PAS ENCORE flashe ni teste en
+reel** -- ecrit sans materiel branche. A verifier en priorite : le
+tempo moyen reste-t-il exact sur plusieurs mesures (pas de derive), et
+la sensation de swing est-elle audible/musicale aux positions
+extremes (32, 64, 96, 127) ?
