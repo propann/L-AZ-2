@@ -3716,17 +3716,35 @@ void loop() {
     screensaverStep();
   }
 
-  // Emulateur Game Boy (page JEUX, voir gb_emulator.h) : cadence a
+  // Emulateur Game Boy (page JEUX, voir gb_emulator.h) : cadence CIBLE
   // ~59,7 images/s (periode Game Boy reelle) tant qu'une ROM est chargee
-  // et que cette page est affichee -- pas de garantie que l'ESP32-S3
-  // tienne cette cadence en pratique (pas encore mesure faute de ROM
-  // disponible pour tester), c'est juste la cible, pas un benchmark.
+  // et que cette page est affichee. Le "if >= 17" est un LIMITEUR, pas
+  // un ordonnanceur -- il ne fait que plafonner la cadence, il ne
+  // rattrape jamais un retard. Si l'ESP32-S3 met plus de 17ms pour
+  // finir un tour de loop() (rendu + emulation + reseau), la cadence
+  // REELLE tombe sous 59,7 im/s -- le jeu ET sa musique (meme horloge
+  // interne) tournent alors au ralenti. Compteur ajoute le 2026-09-17
+  // (retour utilisateur : "c'est cote vitesse qu'on est pas bon" sur
+  // les jeux GBC) pour MESURER la cadence reelle au lieu de deviner --
+  // imprime "GB:FPS:<n>" une fois par seconde pendant une partie.
   static uint32_t lastGbFrameMs = 0;
+  static uint32_t gbFrameCount = 0;
+  static uint32_t gbFpsWindowStartMs = 0;
   if (currentScreen == Screen::Retro && gbIsLoaded() && !screensaverActive) {
     if (now - lastGbFrameMs >= 17) {
       lastGbFrameMs = now;
       gbRunFrame();
+      ++gbFrameCount;
     }
+    if (now - gbFpsWindowStartMs >= 1000) {
+      Serial.print("GB:FPS:");
+      Serial.println(gbFrameCount);
+      gbFrameCount = 0;
+      gbFpsWindowStartMs = now;
+    }
+  } else {
+    gbFrameCount = 0;
+    gbFpsWindowStartMs = now;
   }
 
   if (now - lastHeartbeatMs >= 1000) {
