@@ -173,20 +173,28 @@ clavier live comme editeur).
 
 ## Phase 8 (nouvelle) -- combler les trous face au marche
 
-Reprend la liste priorisee du benchmark concurrence, dans le meme
-ordre :
+Reprend la liste priorisee du benchmark concurrence, **meme
+numerotation que AZ2_BENCHMARK_CONCURRENCE.md** (corrige le 2026-09-17,
+les deux tableaux avaient derive avec des numeros differents pour les
+memes items) :
 
-| Priorite | Tache | Bloque par |
+| # | Tache | Etat |
 | ---: | --- | --- |
 | 1 | Mute/solo par piste | **[FAIT le 2026-09-17]** -- voir section dediee plus bas (le piege Braids trouve le 2026-09-16 est resolu, mute/demute immediat meme sur Braids) |
 | 2 | Sauvegarde/chargement de projet complet (patterns+song+BPM+scale) | **[FAIT le 2026-09-17]** page PROJET, 4 emplacements, `/projects/N.proj` sur la SD de l'ESP32 -- voir section dediee plus bas |
-| 3 | Swing/groove global | Piege timer trouve le 2026-09-16, voir note plus bas |
+| 3 | Swing/groove global | **PAS FAIT** -- piege timer trouve le 2026-09-16, voir note plus bas |
 | 4 | Volume par piste | **[FAIT le 2026-09-17]**, voir section dediee plus bas. **Pan : PAS FAIT** -- chaine mono de bout en bout (patchOutL/patchOutR dupliquent le meme mixMaster), un vrai pan demanderait de refaire les bus en stereo |
-| 5 | Accords (plusieurs notes par pas depuis l'ecran) | Rien cote Teensy (`kNotesPerTrack=2` deja la) -- juste l'UI colonne NOTE a etendre |
-| 6 | Clavier tactile comme editeur live de note | **[FAIT le 2026-09-17]** -- voir section dediee plus bas |
-| 7 | Sampler (moteur audio a partir d'echantillons) | **Capture (phase 1) faite le 2026-09-17**, voir section dediee plus bas. Reste : verifier en reel (carte SD Teensy inseree ?), puis vue d'onde/decoupage/nommage (phase 2), puis le moteur de LECTURE `AudioPlaySdWav`/`AudioPlaySdRaw` (phase 3, pas commence) |
-| 8 | MIDI notes IN | **[FAIT le 2026-09-17]** -- voir section dediee plus bas. Sync horloge/MIDI OUT/routage vers une piste du sequenceur : pas fait |
-| 9 | Wi-Fi (config web, transfert fichiers) | Rien de bloquant, jamais redemande depuis la Phase 5 -- rester bas dans la pile tant que le musical n'est pas complet |
+| 5 | Sampler (moteur audio a partir d'echantillons) | **Capture (phase 1) FAITE et confirmee en reel** (carte SD Teensy presente/fonctionnelle, teste par serie le 2026-09-17). Reste : vue d'onde/decoupage/nommage (phase 2), puis le moteur de LECTURE `AudioPlaySdWav`/`AudioPlaySdRaw` (phase 3, pas commence) |
+| 6 | MIDI notes IN | **[FAIT le 2026-09-17]** -- voir section dediee plus bas. Sync horloge/MIDI OUT/routage vers une piste du sequenceur : pas fait |
+| 7 | Accords (plusieurs notes par pas depuis l'ecran) | **PAS FAIT, plus gros que prevu** -- `kNotesPerTrack` est la polyphonie interne du moteur, pas une 2e note par pas dans les donnees du sequenceur. Touche le meme code que le bug de gel deja rencontre cette session -- voir la correction 2026-09-16 dans AZ2_BENCHMARK_CONCURRENCE.md |
+| 8 | Clavier tactile comme editeur live de note | **[FAIT le 2026-09-17]** -- voir section dediee plus bas |
+| 9 | Wi-Fi (config web, transfert fichiers) | **PAS FAIT**, pas dans le classement du benchmark -- rien de bloquant, jamais redemande depuis la Phase 5, reste bas dans la pile tant que le musical n'est pas complet |
+
+Etat au 2026-09-17 : **5/8 faits** (#1, #2, #4, #6, #8), tous
+compiles mais **PAS ENCORE verifies en reel** (aucun board branche ce
+jour-la). Restent #3 (swing), #5 phase 2/3 (sampler), #7 (accords) --
+les 3 demandent le materiel sous la main (pieges timer/donnees trouves
+a l'avance, ou design d'ecran a faire les yeux dessus).
 
 Critere de sortie de cette phase : AZ-2 n'a plus aucun "trou" flagrant
 par rapport a une groovebox d'entree de gamme (mute/solo + sauvegarde +

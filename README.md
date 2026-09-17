@@ -10,15 +10,21 @@ sauvegarde SD et l'emulation GB/GBC.
 
 - **8 pistes**, chacune avec son propre moteur au choix (Dexed FM,
   mda ePiano, Braids, Karplus-Strong, oscillateur analogique), filtre
-  resonant et ADSR editables en direct, avec un oscilloscope pour voir
-  l'onde changer en reglant les parametres.
+  resonant, ADSR et volume editables en direct, avec un oscilloscope
+  pour voir l'onde changer en reglant les parametres. Reglages propres
+  au Dexed (algorithme/feedback DX7). **Mute/solo par piste.**
 - **Tracker** a la LSDJ/M8 : colonnes NOTE/INST/FX/VAL par pas, 8
   patterns, chainage en mode "song", effets par pas (arpege, coupe,
-  retrig), gammes (verrouillage a la saisie de note).
-- **Sauvegarde de patch** (moteur + patch + filtre + ADSR) sur la carte
-  SD de l'ESP32, en plusieurs emplacements.
+  retrig), gammes (verrouillage a la saisie de note). Le clavier
+  tactile peut aussi servir a poser une note directement sur un pas.
+- **Sauvegarde** de patch (moteur+patch+filtre+ADSR, plusieurs
+  emplacements) ET de projet complet (patterns+song+tempo+gamme+sons,
+  4 emplacements), sur la carte SD de l'ESP32.
 - **Emulateur Game Boy/GBC** (Walnut-CGB), son du jeu route jusqu'au
-  DAC du Teensy, sauvegarde de la RAM de cartouche sur la SD.
+  DAC du Teensy, sauvegarde de la RAM de cartouche sur la SD, liste de
+  ROM paginee. Sampler (capture REC/STOP -> `.wav` sur la SD dediee du
+  Teensy) -- capture faite, lecture pas encore.
+- **MIDI notes IN** (USB) vers la voix live.
 - **Croix + 4 boutons + 3 encodeurs rotatifs** (avec bouton integre)
   cables directement sur le Teensy -- navigation dans les menus,
   manette pour le mode Jeux, reglages volume/reverb/delay.

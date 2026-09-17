@@ -82,17 +82,23 @@ declenchement, independant du reste).
 
 ## Recommandation de mise en oeuvre (ordre)
 
-1. **Ticks internes au pas** cote Teensy (`kTicksPerStep`, ex. 4) sur
-   la meme `IntervalTimer` -- fondation necessaire pour ARP/CUT/RET.
-2. **Colonnes NOTE/INST/FX/VAL par pas**, stockage etendu
+**[Mise a jour 2026-09-17 : les 4 etapes ci-dessous sont FAITES]** --
+gardees telles quelles pour l'historique de la decision, voir
+AZ2_ETAT_DES_LIEUX.md pour le detail verifie-en-reel vs
+seulement-compile de chacune.
+
+1. **[FAIT]** Ticks internes au pas cote Teensy (`kTicksPerStep`, ex. 4)
+   sur la meme `IntervalTimer` -- fondation necessaire pour ARP/CUT/RET.
+2. **[FAIT]** Colonnes NOTE/INST/FX/VAL par pas, stockage etendu
    (`stepPatch[]`, `stepFx[]`, `stepFxVal[]` par piste), protocole
    `INST:` et un nouveau prefixe pour les effets de pas (`SFX:` --
    `FX:` deja pris par les effets du bus maitre reverb/delay).
-3. **Vue "detail piste"** cote ecran (colonnes NOTE/INST/FX/VAL pour LA
-   piste selectionnee, comme l'ecran phrase de LSDJ) en plus de la
-   grille 8 pistes existante -- navigable croix/encodeurs.
-4. Chainage de patterns (song) -- **repousse a une etape suivante**,
-   une fois le detail par pas solide et teste en reel.
+3. **[FAIT, et devenue la vue UNIQUE du sequenceur le 2026-09-16]** Vue
+   "detail piste" cote ecran (colonnes NOTE/INST/FX/VAL pour LA piste
+   selectionnee, comme l'ecran phrase de LSDJ) -- l'ancienne grille
+   8 pistes a ete completement retiree, pas juste completee par celle-ci.
+4. **[FAIT, 2026-09-15]** Chainage de patterns (song) -- page SONG,
+   8 patterns, `PATTERN:`/`SONGSET:`/`SONGLEN:`/`SONGMODE:`.
 
 ## Extension demandee le 2026-09-15 (suite a l'etude) : gammes/accords,
 ## clavier live, projets
@@ -101,34 +107,28 @@ Apres validation du plan ci-dessus, 3 ajouts explicites ("on ajoute les
 gammes/accords, que notre clavier tactile serve a editer en live les
 sons, qu'on puisse creer facilement un projet, le sauvegarder") :
 
-5. **Gammes/accords** : verrouillage de gamme a la saisie (courant chez
-   Polyend/Elektron -- "scale lock") -- une gamme choisie (majeure,
-   mineure, pentatonique, etc.) filtre/aligne les notes entrees sur la
-   page SEQUENCEUR (croix haut/bas) pour rester dans la tonalite, sans
-   empecher la saisie chromatique libre si on veut. Accords : poser
-   plusieurs notes sur le meme pas (deja possible via `kNotesPerTrack`
-   cote Teensy, 2 notes/piste -- juste pas exploitable depuis l'ecran
-   actuellement, colonne NOTE d'un pas a etendre a 2 notes).
-6. **Page AUDIO (clavier tactile 16 pads) comme editeur live** : au
-   lieu de juste "jouer" une voix live independante, taper un pad
-   pendant qu'un pas de sequenceur est selectionne doit pouvoir POSER
-   cette note sur le pas (au lieu de/en plus de croix haut/bas pour
-   transposer) -- plus rapide et plus musical pour composer que
-   incrementer/decrementer un demi-ton a la fois.
-7. **Projets : creer/sauvegarder** : serialiser tout l'etat compose
-   (BPM/division, moteur+patch par piste, contenu des pas -- note(s)/
-   instrument/effet, plus tard le chainage) dans un fichier sur une
-   carte SD (celle de l'ESP32, deja en place pour les ROM GB, ou celle
-   du Teensy une fois montee pour les samples -- a trancher a
-   l'implementation) et pouvoir le recharger. Gros morceau a part,
-   plutot une fois le detail par pas (etapes 1-3 plus haut) solide et
-   teste, pour ne pas serialiser un format qui va encore bouger.
+5. **Gammes [FAIT] / accords [PAS FAIT, plus gros que prevu]** :
+   verrouillage de gamme a la saisie (courant chez Polyend/Elektron --
+   "scale lock") -- fait le 2026-09-15, 5 gammes, page CONFIGURATION.
+   Accords : l'idee "deja possible via `kNotesPerTrack`" ci-dessous
+   etait **inexacte** (correction 2026-09-16, voir
+   AZ2_BENCHMARK_CONCURRENCE.md) -- `kNotesPerTrack` est la polyphonie
+   interne du moteur, pas une 2e note par pas dans les donnees du
+   sequenceur. Un vrai accord demande d'etendre `stepNote` partout
+   (Teensy ET ESP32), pas juste l'UI -- pas fait.
+6. **[FAIT, 2026-09-17]** Page AUDIO (clavier tactile 16 pads) comme
+   editeur live : bouton D bascule entre "jouer en direct" et "poser la
+   note sur le pas selectionne du sequenceur".
+7. **[FAIT, 2026-09-17]** Projets : page PROJET, 4 emplacements,
+   `/projects/N.proj` sur la SD de l'ESP32 (tranche : ESP32, pas
+   Teensy -- celle du Teensy sert aux samples uniquement).
 
-Ordre retenu : **1-2-3 (fondation tick + colonnes) d'abord**, puis 5-6
-(gammes/accords + clavier live, s'appuient directement sur les colonnes
-NOTE/INST) une fois la fondation testee, puis 7 (projets) une fois le
-format de donnees stabilise. 4 (chainage de patterns) et le reste de
-l'etude passent apres.
+Ordre retenu a l'origine : 1-2-3 d'abord, puis 5-6, puis 7, le
+chainage de patterns (4) et le reste de l'etude apres. **Dans les
+faits, l'ordre reel a ete 1-2-3, 4 (chainage), 5 (gammes), puis une
+grosse session le 2026-09-17 qui a fait 6 et 7 d'un coup** -- les
+accords (moitie de l'etape 5) restent le seul point de cette liste pas
+encore fait.
 
 ## Ce qu'on ne copie PAS (hors-sujet pour AZ-2)
 

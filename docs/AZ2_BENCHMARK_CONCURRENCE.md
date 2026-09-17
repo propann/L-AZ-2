@@ -131,10 +131,10 @@ AZ-2 doit separer les modes:
 | Sujet | Decision v0 |
 | --- | --- |
 | Audio | Teensy 4.1 + PCM5102A, pas ESP32 audio |
-| Controle | ESP32-S3 ecran + pads + LEDs + SD + Wi-Fi |
+| Controle | **[Revu 2026-09-17]** ESP32-S3 ecran tactile + croix/boutons/encodeurs physiques cables sur le Teensy (pas de matrice/LEDs physiques, abandonnees le 2026-09-14) + SD. Wi-Fi jamais commence |
 | Protocole | UART texte compact au debut, binaire versionne ensuite si necessaire |
-| MIDI/CV | Hors v0, architecture prevue mais pas bloquante |
-| Samples | SD cote ESP32, transfert vers Teensy a definir |
+| MIDI/CV | **[Revu 2026-09-17]** notes IN faites (USB MIDI -> voix live) ; sync/OUT/CV toujours hors v0 |
+| Samples | **[Revu 2026-09-17]** finalement carte SD DEDIEE sur le Teensy (`BUILTIN_SDCARD`), pas de transfert depuis l'ESP32 -- capture (phase 1) faite |
 | MicroDexed | Source d'inspiration moteur, pas firmware final tel quel |
 | Retro-Go | Bonus isole, jamais melange au firmware musical principal |
 
@@ -151,17 +151,23 @@ cables directement sur le Teensy. PSRAM 16 Mo confirmee mais pas encore
 utilisee (pas de sampleur). Pas de MIDI, pas de sauvegarde persistante,
 pas de carte SD branchee.
 
-### Ce qui manque le plus, par rapport aux concurrents ci-dessus
+### Ce qui manquait le plus le 2026-09-15 (table HISTORIQUE, perimee)
 
-| Manque | Present chez | Effort estime | Priorite |
+**[Perimee, gardee pour l'historique]** -- cette table date du tout
+premier topo concurrence. Chaque ligne a ete soit faite, soit
+remplacee par une estimation plus juste dans la table priorisee du
+2026-09-16/17 plus bas (section "Liste des ameliorations
+indispensables") -- s'y referer, pas a celle-ci, pour l'etat reel.
+
+| Manque | Present chez | Effort estime (2026-09-15) | Statut reel |
 | --- | --- | --- | --- |
-| Mute/solo par piste | Quasi tous (Digitakt, Circuit Tracks, M8...) | Faible -- juste un gain a 0 par piste, mapping bouton a definir | **Haute** |
-| Sauvegarde/rechargement (patterns+patchs survivent a une coupure) | Tous, meme les moins chers | Moyen -- PSRAM ou flash interne Teensy, format a definir | **Haute** |
-| Swing/groove (decalage d'un pas sur deux) | Quasi tous | Faible -- decalage de timing dans advanceSequencer() | **Haute** |
-| Volume/pan reglable PAR piste (pas juste le bus maitre) | Tous | Moyen -- deja identifie feuille de route etape 4 | Moyenne |
-| MIDI (sync/notes in-out) | Digitakt, Circuit Tracks, M8, MPC... quasi tous | Moyen-eleve -- USB MIDI natif dispo sur Teensy (classe audio+MIDI) | Moyenne |
-| Sons samples/drums | Digitakt, MPC, Blackbox, EP-133 (tous orientes sample) | Eleve -- demande une carte SD (voir roadmap etape 6) | Basse (bloque par le materiel) |
-| Enchainement de patterns / mode song | M8, Digitakt, Circuit Tracks | Eleve -- refonte du sequenceur (patterns multiples par piste) | Basse |
+| Mute/solo par piste | Quasi tous (Digitakt, Circuit Tracks, M8...) | Faible -- juste un gain a 0 par piste, mapping bouton a definir | **[FAIT le 2026-09-17]**, effort reel : moyen (piege Braids, voir plus bas) |
+| Sauvegarde/rechargement (patterns+patchs survivent a une coupure) | Tous, meme les moins chers | Moyen -- PSRAM ou flash interne Teensy, format a definir | **[FAIT le 2026-09-17]** (patch le 2026-09-16, projet complet le 2026-09-17), sur SD ESP32 pas PSRAM/flash interne |
+| Swing/groove (decalage d'un pas sur deux) | Quasi tous | Faible -- decalage de timing dans advanceSequencer() | **PAS FAIT**, effort reel : moyen (piege timer/ISR, voir plus bas) |
+| Volume/pan reglable PAR piste (pas juste le bus maitre) | Tous | Moyen -- deja identifie feuille de route etape 4 | Volume **[FAIT le 2026-09-17]**, pan pas fait (chaine mono) |
+| MIDI (sync/notes in-out) | Digitakt, Circuit Tracks, M8, MPC... quasi tous | Moyen-eleve -- USB MIDI natif dispo sur Teensy (classe audio+MIDI) | Notes IN **[FAIT le 2026-09-17]**, sync/MIDI OUT pas fait |
+| Sons samples/drums | Digitakt, MPC, Blackbox, EP-133 (tous orientes sample) | Eleve -- demande une carte SD (voir roadmap etape 6) | Carte SD Teensy confirmee, capture (phase 1) **[FAITE le 2026-09-17]**, lecture (phase 3) pas commencee |
+| Enchainement de patterns / mode song | M8, Digitakt, Circuit Tracks | Eleve -- refonte du sequenceur (patterns multiples par piste) | **[FAIT le 2026-09-15]** (8 patterns + chainage song, page SONG) |
 
 ### Ce qu'on supprime (nettoyage, pas de perte fonctionnelle reelle)
 
@@ -174,15 +180,19 @@ pas de carte SD branchee.
   demarrage -- voir AZ2_EMULATION_JEUX.md), jamais le chemin retenu
   (Walnut-CGB). Reste dans l'historique git si jamais utile de le
   retrouver.
-- **`kHelloKeypad`** dans AZ2_Protocol.h : plus emis par personne depuis
-  l'abandon du Pico -- laisse par prudence (verifie encore le
-  2026-09-15, toujours candidat a la suppression si rien ne le
-  reutilise, mais lie a `src_pico/` garde volontairement pour
-  reference, voir ci-dessous).
-- **`src_pico/`** : deja hors des builds par defaut (voir
-  `platformio.ini`), garde uniquement pour reference -- a
-  supprimer completement si on est surs de ne jamais y revenir (pour
-  l'instant garde par prudence, cout de stockage negligeable).
+- ~~**`kHelloKeypad`**~~ dans AZ2_Protocol.h -- **[FAIT, 2026-09-16]**
+  supprime (plus personne ne l'emettait depuis l'abandon du Pico,
+  confirme par grep avant suppression).
+- ~~**`src_pico/`**~~ -- **[FAIT, 2026-09-16]** supprime (`git rm -r`).
+  Le cablage/diagnostic reste documente en prose dans
+  AZ2_CABLAGE_PICO.md, le code reste dans l'historique git si jamais
+  utile de le retrouver.
+- ~~**`src_esp32/Launcher_lvgl-master/`**~~ (75 Mo, exemple vendore d'un
+  fournisseur, jamais reference dans le build) -- **[FAIT, 2026-09-16]**
+  supprime.
+- ~~**Stubs vides `src_esp32/main.cpp` / `src_teensy/main.cpp`**~~ --
+  **[FAIT, 2026-09-16]** supprimes (hors `build_src_filter`, sans
+  reference nulle part).
 
 ### Ce qui distingue deja AZ-2 (a ne pas perdre en avancant)
 
@@ -231,15 +241,20 @@ valable dans l'ensemble) avec la recherche fraiche ci-dessus :
 | # | Amelioration | Pourquoi indispensable | Effort estime |
 | ---: | --- | --- | --- |
 | 1 | **Mute/solo par piste** | Present chez TOUS les concurrents cites, y compris les moins chers (Circuit Tracks) ; sans ca on ne peut pas "jouer" en scene, juste programmer | **[FAIT le 2026-09-17]** -- voir AZ2_FEUILLE_DE_ROUTE.md. C/D (page MOTEURS) = mute/solo, mute/demute immediat meme sur Braids |
-| 2 | **Sauvegarde/chargement de PROJET complet** (pas juste un patch) | Tous les concurrents survivent a une coupure ; on a la sauvegarde de patch (2026-09-16) mais pas patterns+song+BPM+scale en un fichier | Moyen -- meme mecanique que savePatchSlot()/loadPatchSlot(), format a etendre (JSON ou texte simple sur SD) |
+| 2 | **Sauvegarde/chargement de PROJET complet** (pas juste un patch) | Tous les concurrents survivent a une coupure ; on a la sauvegarde de patch (2026-09-16) mais pas patterns+song+BPM+scale en un fichier | **[FAIT le 2026-09-17]** -- voir AZ2_FEUILLE_DE_ROUTE.md. Page PROJET, 4 emplacements, `/projects/N.proj` |
 | 3 | **Swing/groove** | Present chez quasi tous (Polyend, LSDJ "groove screen", M8) ; sans lui le sequenceur sonne mecanique | **Correction 2026-09-16** : moyen, pas faible -- le tempo est un seul `IntervalTimer` a periode fixe, un vrai swing alterne 2 durees de tick et doit reconfigurer le timer depuis sa propre ISR (voir note dans AZ2_FEUILLE_DE_ROUTE.md) -- a verifier avec un analyseur logique, pas juste a l'oreille |
 | 4 | **Volume par piste** | Tous les concurrents, y compris les moins chers | **[FAIT le 2026-09-17]** -- voir AZ2_FEUILLE_DE_ROUTE.md. Pan pas fait (chaine mono de bout en bout) |
-| 5 | **Micro/sampler integre** (ou a defaut, sampler-depuis-GB deja prevu) | M8, Polyend Tracker Mini, Blackbox, EP-133 -- tous orientes sample en 2026 | Eleve -- bloque par la carte SD Teensy (preparee le 2026-09-16, FAT32, a inserer et verifier), + nouveau moteur `AudioPlaySdWav`/`AudioPlaySdRaw` |
+| 5 | **Micro/sampler integre** (ou a defaut, sampler-depuis-GB deja prevu) | M8, Polyend Tracker Mini, Blackbox, EP-133 -- tous orientes sample en 2026 | **Capture (phase 1) FAITE le 2026-09-17** -- carte SD Teensy confirmee presente et fonctionnelle (teste en reel), REC/STOP -> `.wav`. Reste : phase 2 (vue d'onde/decoupage/nommage) + phase 3 (moteur de LECTURE `AudioPlaySdWav`/`AudioPlaySdRaw`, encore Eleve) |
 | 6 | **MIDI notes IN** | Quasi tous les concurrents cites | **[FAIT le 2026-09-17]** -- voir AZ2_FEUILLE_DE_ROUTE.md. Sync horloge + MIDI OUT + routage vers une piste : pas fait |
 | 7 | **Accords / plusieurs notes par pas** | LSDJ/M8 le permettent en partie, demande deja documentee (AZ2_TRACKER_ETUDE.md etape 5) | **Correction 2026-09-16** : plus gros que prevu -- `kNotesPerTrack=2` n'est QUE la polyphonie interne du moteur (Dexed/EPiano), pas une 2e note par pas dans les donnees du sequenceur (`stepNote[kStepCount]` est un seul octet par pas). Un vrai accord demande d'etendre `stepNote` a 2 notes partout (Teensy ET ESP32 : protocole NOTE:, tracker, sauvegarde) -- touche le meme code que le bug de gel deja rencontre cette session (`advanceTick()`). A faire avec du materiel pour verifier, pas a l'aveugle |
 | 8 | **Clavier tactile comme editeur live** (poser une note sur le pas selectionne en tapant un pad) | Aucun concurrent direct ne fait exactement ca, mais c'est un gain de vitesse d'edition documente (etape 6 de l'etude tracker) | **[FAIT le 2026-09-17]** -- voir AZ2_FEUILLE_DE_ROUTE.md |
 
-Le classement change peu depuis le 2026-09-15 : mute/solo et sauvegarde
-de projet restent les 2 trous les plus visibles face a n'importe quel
-concurrent, meme un low-cost.
+**Mise a jour 2026-09-17** : 5 des 8 items (#1, #2, #4, #6, #8) sont
+faits (compiles, pas encore verifies en reel -- aucun board branche ce
+jour-la). Restent, dans l'ordre de priorite reelle desormais : **#3
+swing** et **#7 accords** (tous deux "plus gros que prevu", pieges
+documentes dans AZ2_FEUILLE_DE_ROUTE.md, a faire avec le materiel sous
+la main) et **#5 sampler phase 2/3** (design d'ecran a faire les yeux
+dessus). Voir [AZ2_ETAT_DES_LIEUX.md](AZ2_ETAT_DES_LIEUX.md) pour le
+detail verifie-en-reel vs seulement-compile.
 
