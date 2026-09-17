@@ -179,9 +179,12 @@ sauvegarder les patchs ... un sampleur ... a integrer") :
   le Teensy n'etait pas accessible en USB depuis cette machine au
   moment du dev (relie a l'ESP32 par l'UART Serial1 seulement, ce qui
   explique le lien "TEENSY_AUDIO:READY" toujours vu au reboot ESP32).
-  Tant que ce flash n'est pas fait, les commandes DXP: envoyees par
-  l'ESP32 sont silencieusement ignorees par le Teensy (prefixe inconnu),
-  sans consequence audio -- juste pas encore audible.
+  **[2026-09-17] Flashe et verifie en reel** : `CPU:usage=8.6%:max=9.9%`,
+  `MEM:blocks=133:max=141/200` (identique aux mesures d'avant, aucune
+  regression). `DXP:0:0:5`/`DXP:0:1:3` testes en direct par serie USB --
+  bien relayes/appliques. Rechargement de patch (`PATCH:0:0`) confirme
+  ecraser l'algo/feedback avec ceux de la banque (`DXP:0:0:4`/
+  `DXP:0:1:0`), comportement voulu et documente.
 - **Page MOTEURS, navigation croix** (demande "j'ai pas le controle
   joystick pour choisir et regler les moteurs") : HAUT/BAS choisissent
   la piste (surlignage blanc), GAUCHE/DROITE changent la valeur de la
