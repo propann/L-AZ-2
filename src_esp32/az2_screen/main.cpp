@@ -616,7 +616,7 @@ int8_t hitTestAudioPad(int16_t x, int16_t y) {
 // cote Teensy (src_teensy/az2_audio/main.cpp).
 constexpr uint8_t kSeqTrackCount = 8;
 constexpr uint8_t kSeqStepCount = 16;
-// Bord droit commun a la vue tracker (colonnes NOTE/INST/FX/VAL, voir
+// Bord droit commun a la vue tracker (colonnes NOTE/INST/FX/VAL/PROB/COND, voir
 // plus bas) -- meme marge que le reste de l'appli (kMargin), plus de
 // grille a aligner dessus depuis le retrait de l'ancienne vue ON/OFF
 // (2026-09-16, voir plus bas).
@@ -678,7 +678,7 @@ uint8_t seqStepsPerBeat = 4;
 int8_t selectedSeqTrack = 0;
 int8_t selectedSeqStep = 0;
 
-// Vue tracker (colonnes NOTE/INST/FX/VAL d'UNE piste, comme l'ecran
+// Vue tracker (colonnes NOTE/INST/FX/VAL/PROB/COND d'UNE piste, comme l'ecran
 // phrase de LSDJ/M8 -- voir AZ2_TRACKER_ETUDE.md) -- devenue la SEULE
 // vue de la page SEQUENCEUR le 2026-09-16 (retour utilisateur : "on a
 // pas de tracker a la M8 LSDJ", la grille ON/OFF + double-tap pour
@@ -693,7 +693,7 @@ bool seqDetailMode = true;
 int8_t seqDetailCol = 0;
 
 // ---------------------------------------------------------------------
-// Vue tracker (colonnes NOTE/INST/FX/VAL d'une piste, voir
+// Vue tracker (colonnes NOTE/INST/FX/VAL/PROB/COND d'une piste, voir
 // docs/AZ2_TRACKER_ETUDE.md) -- devenue la vue PRINCIPALE ET UNIQUE de
 // la page SEQUENCEUR le 2026-09-16 (retour utilisateur : "on a pas de
 // tracker a la M8 LSDJ" -- chez ces references, l'ecran affiche
@@ -882,7 +882,7 @@ void drawDetailRow(uint8_t step) {
 }
 
 // Selecteur de piste ("< PISTE N >", meme motif que la page PATCH) --
-// desormais AU-DESSUS de la colonne NOTE/INST/FX/VAL, toujours visible
+// desormais AU-DESSUS des colonnes NOTE/INST/FX/VAL/PROB/COND, toujours visible
 // (plus besoin de toucher deux fois un pas pour changer de piste).
 void drawTrkTrackRow() {
   gfx->fillRect(kMargin, kTrkTrackRowY, kScreenSize - 2 * kMargin, kTrkTrackRowH, RGB565_BLACK);
