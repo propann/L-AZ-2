@@ -1619,6 +1619,30 @@ void handlePadCommand(const String &line) {
   }
 }
 
+// MIDI IN (priorite #6 de la liste indispensable,
+// AZ2_BENCHMARK_CONCURRENCE.md) -- USB_MIDI_SERIAL deja actif dans
+// platformio.ini (usbtype du Teensy), rien a cabler, `usbMIDI` est
+// fourni par le core des que ce mode USB est choisi. MVP volontairement
+// modeste : notes MIDI (n'importe quel canal) declenchent la voix live
+// `liveVoice`, meme chemin que les pads tactiles/ecran -- pas de
+// synchro d'horloge MIDI, pas de MIDI OUT, pas de routage vers une
+// piste du sequenceur pour l'instant (voir AZ2_FEUILLE_DE_ROUTE.md).
+void updateMidiIn() {
+  while (usbMIDI.read()) {
+    const uint8_t type = usbMIDI.getType();
+    const uint8_t note = usbMIDI.getData1();
+    const uint8_t velocity = usbMIDI.getData2();
+    if (type == usbMIDI.NoteOn && velocity > 0) {
+      liveVoice.keydown(note, velocity);
+    } else if (type == usbMIDI.NoteOff || (type == usbMIDI.NoteOn && velocity == 0)) {
+      // velocity 0 sur un NoteOn = note-off (convention MIDI standard,
+      // beaucoup de controleurs l'envoient ainsi plutot qu'un vrai
+      // message NoteOff).
+      liveVoice.keyup(note);
+    }
+  }
+}
+
 void handleMacroCommand(const String &line) {
   const int firstColon = line.indexOf(':');
   const int secondColon = line.indexOf(':', firstColon + 1);
@@ -2192,6 +2216,7 @@ void setup() {
 
 void loop() {
   readSerialCommands();
+  updateMidiIn();
   feedGbAudioQueue();
   updateScope();
   updateSequencer();

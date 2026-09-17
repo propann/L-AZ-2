@@ -185,7 +185,7 @@ ordre :
 | 5 | Accords (plusieurs notes par pas depuis l'ecran) | Rien cote Teensy (`kNotesPerTrack=2` deja la) -- juste l'UI colonne NOTE a etendre |
 | 6 | Clavier tactile comme editeur live de note | **[FAIT le 2026-09-17]** -- voir section dediee plus bas |
 | 7 | Sampler (moteur audio a partir d'echantillons) | **Capture (phase 1) faite le 2026-09-17**, voir section dediee plus bas. Reste : verifier en reel (carte SD Teensy inseree ?), puis vue d'onde/decoupage/nommage (phase 2), puis le moteur de LECTURE `AudioPlaySdWav`/`AudioPlaySdRaw` (phase 3, pas commence) |
-| 8 | MIDI in/out | Rien de bloquant technique (USB_MIDI_SERIAL deja dans platformio.ini) -- juste pas encore cable au sequenceur |
+| 8 | MIDI notes IN | **[FAIT le 2026-09-17]** -- voir section dediee plus bas. Sync horloge/MIDI OUT/routage vers une piste du sequenceur : pas fait |
 | 9 | Wi-Fi (config web, transfert fichiers) | Rien de bloquant, jamais redemande depuis la Phase 5 -- rester bas dans la pile tant que le musical n'est pas complet |
 
 Critere de sortie de cette phase : AZ-2 n'a plus aucun "trou" flagrant
@@ -291,6 +291,31 @@ correctement dans un lecteur audio classique sur ordinateur).
 (`REC:START`/`REC:STOP`) -- presente et fonctionnelle, fichier `.wav`
 cree avec succes. Reste a verifier le contenu audio avec un vrai jeu
 qui joue du son pendant l'enregistrement.
+
+### MIDI notes IN (2026-09-17)
+
+Priorite #6, MVP volontairement modeste -- `USB_MIDI_SERIAL` etait deja
+dans `platformio.ini` depuis le debut du projet (jamais exploite avant
+aujourd'hui) : c'est le mode USB "Serial + MIDI" du Teensy, l'objet
+global `usbMIDI` est fourni automatiquement par le core des que ce mode
+est choisi, rien a cabler physiquement (MIDI arrive par le meme cable
+USB que le firmware/le moniteur serie).
+
+- `updateMidiIn()` (boucle `usbMIDI.read()`) route les messages
+  NoteOn/NoteOff MIDI (n'importe quel canal) vers `liveVoice` -- EXACT
+  MEME chemin que les pads tactiles de l'ecran (`liveVoice.keydown()/
+  keyup()`), donc zero risque nouveau sur le graphe audio.
+- NoteOn avec velocite 0 traite comme NoteOff (convention MIDI standard
+  utilisee par beaucoup de controleurs).
+- Explicitement PAS fait : synchro d'horloge MIDI (Start/Stop/Clock),
+  MIDI OUT, routage vers une piste du sequenceur au lieu de la voix
+  live (les pistes ont un moteur fixe chacune -- router une note MIDI
+  vers UNE piste precise demanderait de choisir laquelle, pas encore
+  concu).
+
+Compile verifie (master_teensy), **PAS ENCORE flashe ni teste en
+reel** -- ecrit sans materiel branche, et surtout **jamais teste avec
+un vrai controleur MIDI branche** (aucun disponible pendant l'ecriture).
 
 ### Mute/solo par piste (2026-09-17) -- resolution du piege Braids
 
