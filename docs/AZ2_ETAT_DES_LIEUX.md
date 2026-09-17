@@ -282,6 +282,31 @@ aujourd'hui.
   decoupage automatique, clavier de nom, moteur de lecture) : pas
   commencees, detaillees dans AZ2_FEUILLE_DE_ROUTE.md.
 
+## Teensy reflashe et VERIFIE EN REEL (2026-09-17, soir)
+
+Tout le paquet du jour (mute/solo, volume, sauvegarde de projet, MIDI
+IN, swing, sampler) flashe sur le Teensy et teste directement en
+serie :
+
+- Boot propre, `CPU:usage=8.6%:max=9.9%`, `MEM:blocks=133:max=141/200`
+  -- identique a avant tous ces ajouts, aucune regression.
+- `SWING:64`, `MUTE:0:1/0`, `SOLO:0:1/0`, `VOL:0:100` : tous acceptes
+  et relayes correctement.
+- **Test critique swing** : `SWING:96` (quasi maximum) puis `PLAY`
+  pendant 5 secondes -- le sequenceur a avance plusieurs mesures sans
+  aucun gel, CPU/memoire strictement identiques a l'avant. Tempo moyen
+  visuellement correct (progression des CLOCK: coherente avec le BPM
+  malgre l'asymetrie forte des pas). **Le mecanisme "ticksForCurrentStep
+  variable, timer jamais reconfigure" tient la route en reel.**
+- `REC:START`/`REC:STOP` (sampler) toujours fonctionnel apres tous ces
+  ajouts (`SAMPLE_002.wav` cree).
+
+**Mute/solo sur une piste Braids en train de jouer une note tenue**
+(le cas precis que le piege d'origine aurait casse) : PAS ENCORE testE
+manuellement (demande de jouer une note et de mute/demute pendant
+qu'elle sonne, pas juste d'envoyer les commandes a vide) -- a faire au
+prochain test avec le son.
+
 ## Bugs reels trouves en jouant (2026-09-17, utilisateur de retour)
 
 Premier vrai test manette en main apres le flash de l'ESP32 -- 2 bugs
