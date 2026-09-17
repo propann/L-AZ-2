@@ -184,7 +184,7 @@ ordre :
 | 4 | Volume/pan par piste | Meme piege que mute/solo si implemente sur le meme gain (voir note plus bas) |
 | 5 | Accords (plusieurs notes par pas depuis l'ecran) | Rien cote Teensy (`kNotesPerTrack=2` deja la) -- juste l'UI colonne NOTE a etendre |
 | 6 | Clavier tactile comme editeur live de note | Rien -- routage a ecrire (pad -> NOTE: si un pas est selectionne) |
-| 7 | Sampler (moteur audio a partir d'echantillons) | Carte SD Teensy preparee le 2026-09-16 (FAT32) -- reste a l'inserer physiquement et confirmer `SDTEENSY:READY`, puis ecrire le moteur `AudioPlaySdWav`/`AudioPlaySdRaw` |
+| 7 | Sampler (moteur audio a partir d'echantillons) | **Capture (phase 1) faite le 2026-09-17**, voir section dediee plus bas. Reste : verifier en reel (carte SD Teensy inseree ?), puis vue d'onde/decoupage/nommage (phase 2), puis le moteur de LECTURE `AudioPlaySdWav`/`AudioPlaySdRaw` (phase 3, pas commence) |
 | 8 | MIDI in/out | Rien de bloquant technique (USB_MIDI_SERIAL deja dans platformio.ini) -- juste pas encore cable au sequenceur |
 | 9 | Wi-Fi (config web, transfert fichiers) | Rien de bloquant, jamais redemande depuis la Phase 5 -- rester bas dans la pile tant que le musical n'est pas complet |
 
@@ -233,6 +233,59 @@ Facon correcte de le faire (a ecrire, PAS fait) :
 Rien de tout ca n'a ete ecrit aujourd'hui (pas de materiel branche pour
 verifier un changement sur le chemin audio) -- juste le piege identifie
 pour ne pas le decouvrir en prod la prochaine fois.
+
+### Sampler GB -- capture phase 1 (2026-09-17)
+
+Demande : "il faut un bouton, un des encodeurs celui qui est libre,
+lance un [enregistrement] avec un bouton REC/STOP ... il nous faut une
+routine pour capter les sons de l'emulateur, sans la SD du Teensy [sur
+la SD du Teensy]".
+
+Fait, compile verifie, **PAS ENCORE teste en reel** (ni Teensy ni ESP32
+branches au moment d'ecrire ce code) :
+
+- **Teensy** (`gbRecStart()`/`gbRecPush()`/`gbRecStop()`/
+  `writeWavHeader()`, pres de `handleGbAudioPacket()`) : capture le son
+  GB tel qu'il arrive (8kHz mono, AVANT le sur-echantillonnage vers
+  44.1kHz fait pour la lecture -- fichier plus petit, fidele a la
+  vraie qualite source), ecrit un `.wav` PCM 16 bits standard dans
+  `/samples/SAMPLE_NNN.wav` sur la carte SD DEDIEE du Teensy
+  (`BUILTIN_SDCARD`, PAS celle de l'ESP32 qui garde les ROM/patches).
+  Nouvelles commandes protocole `REC:START`/`REC:STOP`
+  (`handleRecCommand()`), echo `REC:STARTED:<fichier>` /
+  `REC:STOPPED:samples=<n>` / `REC:ERROR:<fichier>`. Garde-fou : arret
+  automatique a 30s (`kGbRecMaxSamples`) si jamais on oublie STOP.
+- **ESP32** : encodeur 0 (Volume, bouton integre -- libre jusqu'ici,
+  reserve pour ca depuis le 2026-09-15) bascule REC/STOP en jeu (page
+  JEUX, ROM chargee). Indicateur "REC" rouge discret en haut a gauche
+  pendant l'ecran de jeu, mis a jour uniquement par l'echo confirme du
+  Teensy (meme prudence que FILT:/ENV: -- le Teensy peut aussi arreter
+  tout seul via le garde-fou 30s, l'ESP32 doit le refleter).
+
+**Explicitement PAS fait (phase 2/3, plus gros, demande de la vue en
+reel pour bien faire)** :
+
+- Vue d'onde EN DIRECT pendant l'enregistrement ("un truc pour couper
+  l'onde comme on veut en tactile"). Piste retenue : reutiliser
+  l'infrastructure SCOPE deja construite et verifiee pour la page
+  PATCH (meme decimation/paquet binaire), juste une nouvelle source
+  (le flux GB au lieu d'une piste) et un nouvel affichage (page JEUX au
+  lieu de PATCH).
+- Decoupage tactile du debut/fin de l'onde (glisser des marqueurs sur
+  le tracer).
+- Decoupage automatique (detection de silence, a definir : seuil
+  d'amplitude ? duree minimale de silence ?).
+- Clavier tactile a l'ecran pour nommer le sample (actuellement
+  `SAMPLE_001.wav`, `SAMPLE_002.wav`... auto-incremente, pas de nom
+  personnalise).
+- Le moteur de LECTURE du sample dans le sequenceur (item 7 du tableau
+  plus haut) -- capturer un sample et le JOUER comme un 6e moteur sont
+  deux chantiers distincts, celui-ci ne fait que la capture.
+
+Prochaine etape utile : verifier `SDTEENSY:READY` au boot (carte SD
+Teensy inseree ?), puis tester REC/START en jouant a un jeu, confirmer
+le fichier `.wav` cree/lisible (taille coherente avec la duree, joue
+correctement dans un lecteur audio classique sur ordinateur).
 
 **Le meme piege s'applique au volume/pan par piste (item 4)** si
 implemente en multipliant le meme gain de groupe -- meme prudence

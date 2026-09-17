@@ -1740,6 +1740,37 @@ bool hitTestRomPageNext(int16_t x, int16_t y) {
   return inBox(x, y, static_cast<int16_t>(kScreenSize - kMargin - kRomPageBtnW), kRomPageY, kRomPageBtnW, kRomPageH);
 }
 
+// Sampler GB (demande 2026-09-15 "sampler la Game Boy", precisee
+// 2026-09-17 "REC/STOP, capter les sons de l'emulateur") -- encodeur 0
+// (Volume, bouton integre) demarre/arrete l'enregistrement cote Teensy
+// (REC:START/REC:STOP, voir handleRecCommand() dans src_teensy/
+// az2_audio/main.cpp -- ecrit un .wav sur LA SD DU TEENSY, pas celle-ci).
+// gbRecActive suit l'etat CONFIRME par l'echo REC:STARTED:/REC:STOPPED:
+// (voir handleTeensyLine()), jamais mis a jour de facon optimiste --
+// meme convention que FILT:/ENV:, important ici car le Teensy peut
+// aussi arreter tout seul (garde-fou 30s, voir kGbRecMaxSamples).
+// Phase 1 : demarrer/arreter + indicateur seulement. PAS FAIT (voir
+// AZ2_FEUILLE_DE_ROUTE.md) : vue d'onde en direct, decoupage tactile,
+// decoupage automatique, clavier de nom personnalise.
+bool gbRecActive = false;
+
+void drawGbRecIndicator() {
+  if (!gbIsLoaded()) {
+    return;
+  }
+  constexpr int16_t kRecX = kMargin;
+  constexpr int16_t kRecY = 16;
+  gfx->fillRect(kRecX, kRecY, 90, 12, RGB565_BLACK);
+  if (gbRecActive) {
+    // Pas de glyphe rond (police GFX par defaut non verifiee pour ca) --
+    // "REC" seul en rouge suffit a etre visible/comprehensible.
+    gfx->setTextSize(1);
+    gfx->setTextColor(RGB565_RED);
+    gfx->setCursor(kRecX, kRecY);
+    gfx->print("REC");
+  }
+}
+
 void drawRetroPage() {
   if (gbIsLoaded()) {
     // Le rendu du jeu lui-meme vient de gbBlitLine(), appelee par
@@ -1754,6 +1785,7 @@ void drawRetroPage() {
     // "il faut un truc pour sortir de l'emulateur", 2026-09-17).
     gfx->setCursor(static_cast<int16_t>(kScreenSize - kMargin - 48), 4);
     gfx->print("C:MENU");
+    drawGbRecIndicator();
     return;
   }
 
@@ -2346,8 +2378,9 @@ void handleTeensyLine(const String &line) {
     // page JEUX : encodeur 1 (Reverb) -> SELECT, encodeur 2 (Delay) ->
     // START (demande 2026-09-15, "faut les config sur les encodeurs ...
     // comme ca on a a/b, start/select et les gachettes" -- libere C/D
-    // pour un futur role de gachette). Encodeur 0 (Volume) reserve au
-    // declencheur d'enregistrement de sample (voir gb_audio.h).
+    // pour un futur role de gachette). Encodeur 0 (Volume) declenche
+    // desormais l'enregistrement de sample (voir drawGbRecIndicator()
+    // et REC:START/REC:STOP, 2026-09-17).
     const int firstColon = line.indexOf(':');
     const int secondColon = line.indexOf(':', firstColon + 1);
     if (firstColon >= 0 && secondColon >= 0) {
@@ -2367,6 +2400,11 @@ void handleTeensyLine(const String &line) {
             gbSetButton(GbButton::Select, pressed);
           } else if (index == 2) {
             gbSetButton(GbButton::Start, pressed);
+          } else if (index == 0 && pressed) {
+            // Sampler (voir drawGbRecIndicator()) : un appui = bascule
+            // demarrer/arreter -- l'etat visuel n'est mis a jour qu'a
+            // l'echo REC:STARTED:/REC:STOPPED: du Teensy, pas ici.
+            sendToTeensy(gbRecActive ? "REC:STOP" : "REC:START");
           }
         }
       }
@@ -2622,6 +2660,19 @@ void handleTeensyLine(const String &line) {
           drawTrkSidePanel();
         }
       }
+    }
+  } else if (line.startsWith("REC:STARTED:")) {
+    gbRecActive = true;
+    if (currentScreen == Screen::Retro && !screensaverActive) {
+      drawGbRecIndicator();
+    }
+  } else if (line.startsWith("REC:STOPPED:") || line.startsWith("REC:ERROR:")) {
+    // ERROR arrive quand gbRecStart() echoue (SD absente/pleine) -- deja
+    // false cote ESP32 dans ce cas (jamais passe a true), le mettre a
+    // jour quand meme ne fait pas de mal et couvre STOPPED normalement.
+    gbRecActive = false;
+    if (currentScreen == Screen::Retro && !screensaverActive) {
+      drawGbRecIndicator();
     }
   }
 

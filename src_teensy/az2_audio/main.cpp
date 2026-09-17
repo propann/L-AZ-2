@@ -1514,6 +1514,8 @@ void handleMacroCommand(const String &line) {
   }
 }
 
+void handleRecCommand(const String &line);  // definie plus bas, pres de handleGbAudioPacket()
+
 void handleCommand(const String &line) {
   if (line == az2::kPlay) {
     startSequencer();
@@ -1639,6 +1641,11 @@ void handleCommand(const String &line) {
     return;
   }
 
+  if (line.startsWith("REC:")) {
+    handleRecCommand(line);
+    return;
+  }
+
   if (line == "CPU?") {
     reportCpuUsage();
     return;
@@ -1674,12 +1681,151 @@ void gbRingPush(int16_t sample) {
   gbRingHead = next;
 }
 
+// ---------------------------------------------------------------------
+// Sampler : enregistrer le son de l'emulateur GB dans un fichier .wav
+// sur la carte SD DEDIEE du Teensy (BUILTIN_SDCARD, voir
+// setupSampleSd() -- distincte de celle de l'ESP32 qui garde les ROM).
+// Demande d'origine (2026-09-15, "la possibilite de sampler la Game Boy
+// avec un des boutons des encodeurs et les samples se rangent direct
+// dans la SD du Teensy") + precisee le 2026-09-17 ("REC/STOP, ... une
+// routine pour capter les sons de l'emulateur"). Capture au format
+// NATIF de la source (8kHz mono 16 bits signe, avant le
+// sur-echantillonnage vers 44.1kHz fait pour gbRing/gbAudioQueue plus
+// haut) -- fichiers plus petits, honnete sur la vraie qualite de la
+// source, pas de perte a upsampler puis re-downsampler plus tard.
+//
+// Phase 1 (2026-09-17) : demarrer/arreter + ecrire un .wav nomme
+// automatiquement. PAS FAIT ICI (demande plus large, pas encore
+// implementee, voir AZ2_FEUILLE_DE_ROUTE.md) : decoupage tactile de
+// l'onde, decoupage automatique, clavier de nom personnalise, vue
+// d'onde en direct pendant l'enregistrement -- tout ca cote ESP32,
+// viendra une fois cette base testee en reel.
+// ---------------------------------------------------------------------
+bool gbRecording = false;
+File gbRecFile;
+uint32_t gbRecSampleCount = 0;
+int16_t gbRecBuf[512];
+size_t gbRecBufLen = 0;
+// Garde-fou phase 1 -- arrete tout seul plutot que de remplir la carte
+// ou de tourner indefiniment si jamais l'utilisateur oublie STOP.
+constexpr uint32_t kGbRecMaxSamples = az2::kGbAudioSampleRate * 30;  // 30s
+
+void gbRecFlushBuf() {
+  if (gbRecBufLen == 0 || !gbRecFile) {
+    return;
+  }
+  gbRecFile.write(reinterpret_cast<const uint8_t *>(gbRecBuf), gbRecBufLen * sizeof(int16_t));
+  gbRecSampleCount += static_cast<uint32_t>(gbRecBufLen);
+  gbRecBufLen = 0;
+}
+
+// En-tete WAV PCM standard (44 octets), mono 16 bits, kGbAudioSampleRate
+// -- ecrit deux fois : un placeholder a l'ouverture (tailles a 0, pour
+// que le fichier ait deja la bonne forme si jamais on plante avant
+// STOP), puis reecrit avec les vraies tailles a la fermeture (seek(0)).
+void writeWavHeader(File &f, uint32_t dataBytes) {
+  uint8_t h[44] = {};
+  const uint32_t riffSize = 36 + dataBytes;
+  const uint32_t sampleRate = az2::kGbAudioSampleRate;
+  const uint32_t byteRate = sampleRate * 2;  // mono, 16 bits = 2 octets/echantillon
+  memcpy(h, "RIFF", 4);
+  memcpy(h + 8, "WAVEfmt ", 8);
+  h[16] = 16;                  // taille du sous-bloc fmt
+  h[20] = 1;                   // format = PCM
+  h[22] = 1;                   // 1 canal (mono)
+  memcpy(h + 24, &sampleRate, 4);
+  memcpy(h + 28, &byteRate, 4);
+  h[32] = 2;                   // block align (octets par trame)
+  h[34] = 16;                  // bits par echantillon
+  memcpy(h + 36, "data", 4);
+  memcpy(h + 4, &riffSize, 4);
+  memcpy(h + 40, &dataBytes, 4);
+  f.seek(0);
+  f.write(h, sizeof(h));
+}
+
+// "SAMPLE_001.wav", "SAMPLE_002.wav"... premier numero libre dans
+// /samples (cree si besoin).
+String nextSampleName() {
+  SD.mkdir("/samples");
+  for (int n = 1; n <= 999; ++n) {
+    char path[24];
+    snprintf(path, sizeof(path), "/samples/SAMPLE_%03d.wav", n);
+    if (!SD.exists(path)) {
+      return String(path);
+    }
+  }
+  return String("/samples/SAMPLE_999.wav");  // improbable (999 samples), ecrase plutot que planter
+}
+
+void gbRecStop();  // definie juste apres -- gbRecPush() l'appelle si le garde-fou est atteint
+
+void gbRecPush(int16_t sample) {
+  if (!gbRecording) {
+    return;
+  }
+  gbRecBuf[gbRecBufLen++] = sample;
+  if (gbRecBufLen >= sizeof(gbRecBuf) / sizeof(gbRecBuf[0])) {
+    gbRecFlushBuf();
+  }
+  if (gbRecSampleCount + gbRecBufLen >= kGbRecMaxSamples) {
+    gbRecStop();
+  }
+}
+
+void gbRecStart() {
+  if (gbRecording) {
+    return;
+  }
+  const String path = nextSampleName();
+  gbRecFile = SD.open(path.c_str(), FILE_WRITE);
+  if (!gbRecFile) {
+    Serial.print("REC:ERROR:");
+    Serial.println(path);
+    Serial1.print("REC:ERROR:");
+    Serial1.println(path);
+    return;
+  }
+  uint8_t placeholder[44] = {};
+  gbRecFile.write(placeholder, sizeof(placeholder));
+  gbRecSampleCount = 0;
+  gbRecBufLen = 0;
+  gbRecording = true;
+  Serial.print("REC:STARTED:");
+  Serial.println(path);
+  Serial1.print("REC:STARTED:");
+  Serial1.println(path);
+}
+
+void gbRecStop() {
+  if (!gbRecording) {
+    return;
+  }
+  gbRecFlushBuf();
+  writeWavHeader(gbRecFile, gbRecSampleCount * sizeof(int16_t));
+  gbRecFile.close();
+  gbRecording = false;
+  Serial.print("REC:STOPPED:samples=");
+  Serial.println(gbRecSampleCount);
+  Serial1.print("REC:STOPPED:samples=");
+  Serial1.println(gbRecSampleCount);
+}
+
+void handleRecCommand(const String &line) {
+  if (line == "REC:START") {
+    gbRecStart();
+  } else if (line == "REC:STOP") {
+    gbRecStop();
+  }
+}
+
 float gbUpsamplePhase = 0.0f;
 const float kGbSamplesOutPerIn = 44100.0f / static_cast<float>(az2::kGbAudioSampleRate);
 
 void handleGbAudioPacket(const uint8_t *pcm, uint8_t len) {
   for (uint8_t i = 0; i < len; ++i) {
     const int16_t sample16 = static_cast<int16_t>((static_cast<int>(pcm[i]) - 128) << 8);
+    gbRecPush(sample16);  // capture native 8kHz, avant le sur-echantillonnage ci-dessous
     gbUpsamplePhase += kGbSamplesOutPerIn;
     while (gbUpsamplePhase >= 1.0f) {
       gbRingPush(sample16);
