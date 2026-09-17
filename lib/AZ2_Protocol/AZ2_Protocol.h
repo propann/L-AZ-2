@@ -49,7 +49,6 @@ constexpr const char *kHelloControl = "HELLO:ESP32_CONTROL";
 constexpr const char *kHelloAudio = "HELLO:TEENSY_AUDIO";
 constexpr const char *kPlay = "PLAY";
 constexpr const char *kStop = "STOP";
-constexpr const char *kRecToggle = "REC:TOGGLE";
 constexpr const char *kStatusReady = "READY";
 constexpr const char *kStatusPlaying = "PLAYING";
 constexpr const char *kStatusStopped = "STOPPED";

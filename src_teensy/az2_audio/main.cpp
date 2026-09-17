@@ -958,8 +958,12 @@ void handleStepFxCommand(const String &line) {
 
 // PATTERN:<0-7> -- choisit le pattern EDITE (STEP:/NOTE:/INST:/SFX:
 // s'appliquent a celui-ci). En mode boucle simple (songMode false),
-// c'est aussi celui qui joue, effectif au prochain pas (voir
-// advanceTick()) -- pas de coupure/glitch immediat, juste quantifie.
+// c'est aussi celui qui joue -- mais PAS au prochain pas : advanceTick()
+// ne recopie playingPattern = currentPattern que quand currentStep
+// revient a 0, donc au prochain REDEMARRAGE du pattern (jusqu'a 16 pas
+// plus tard selon ou on en est), pas au pas suivant. Comportement
+// voulu (pas de saut audible en plein pattern), commentaire corrige le
+// 2026-09-17 (trouve trop optimiste lors d'un audit de code).
 void handlePatternCommand(const String &line) {
   const int idx = line.indexOf(':');
   if (idx < 0) {

@@ -307,6 +307,36 @@ manuellement (demande de jouer une note et de mute/demute pendant
 qu'elle sonne, pas juste d'envoyer les commandes a vide) -- a faire au
 prochain test avec le son.
 
+## Audit complet du code (2026-09-17)
+
+Relecture ligne par ligne des 2 firmwares + protocole (~6800 lignes)
+demandee par l'utilisateur pour recouper avec des analyses d'autres IA.
+3 corrections rapides appliquees (sans risque, pas besoin de materiel) :
+
+- **Message trompeur a l'ecran** : la page JEUX sans ROM disait encore
+  "Pas de son pour l'instant" -- corrige (le son GB fonctionne depuis
+  longtemps).
+- **Code mort** : `kRecToggle` (AZ2_Protocol.h) jamais utilise nulle
+  part, decrivait en plus une convention ("toggle") differente de celle
+  reellement implementee (REC:START/REC:STOP explicites) -- supprime.
+- **Commentaire trompeur** : `handlePatternCommand()` disait qu'un
+  changement de pattern edite est "effectif au prochain pas" -- en
+  realite `advanceTick()` ne bascule qu'au prochain redemarrage de
+  pattern (jusqu'a 16 pas plus tard), pas au pas suivant. Comportement
+  voulu, juste le commentaire corrige.
+
+3 points restants, notes pour plus tard (pas de risque immediat) :
+setup() ESP32 s'arrete net si l'ecran ne s'initialise pas (Teensy/SD
+jamais inities dans ce cas) ; aucune commande Teensy hors bornes ne
+renvoie d'erreur (silencieusement ignoree) ; a swing maximum, les pas
+raccourcis (1 tick) ne laissent plus de fenetre aux effets CUT/RETRIG.
+
+Piste specifiquement verifiee et ECARTEE : `frame_skip` (Walnut-CGB)
+pourrait desynchroniser l'audio de la vitesse du jeu -- verifie dans le
+code source (`walnut_cgb.h`, VBlank pose `gb->gb_frame=true` a CHAQUE
+frame reelle quel que soit `frame_skip`, qui ne saute QUE le rendu
+pixel) : pas de bug la-dedans, confirme.
+
 ## Bugs reels trouves en jouant (2026-09-17, utilisateur de retour)
 
 Premier vrai test manette en main apres le flash de l'ESP32 -- 2 bugs
