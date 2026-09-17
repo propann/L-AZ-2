@@ -31,7 +31,7 @@ Pourquoi GPLv3 et pas une licence permissive (MIT/Apache) :
 | --- | --- | --- | --- |
 | Synth_Dexed | `master_teensy` (moteur DEXED) | Apache-2.0 OU GPLv3 (double licence upstream) | `src_teensy/microdexed-touch/third-party/Synth_Dexed/` |
 | Synth_MDA_EPiano | `master_teensy` (moteur EPIANO) | **GPLv3 uniquement** | `src_teensy/microdexed-touch/third-party/Synth_MDA_EPiano/` |
-| Synth_Braids | `master_teensy` (moteur BRAIDS) | **Non documentee dans ce vendoring** -- l'original Mutable Instruments Braids est MIT, mais aucun fichier LICENSE n'accompagne ce portage Teensy. **A verifier/documenter avant toute distribution binaire plus large.** | `src_teensy/microdexed-touch/third-party/Synth_Braids/` |
+| Synth_Braids | `master_teensy` (moteur BRAIDS) | **MIT** (verifie le 2026-09-17 : chaque fichier du coeur DSP -- `macro_oscillator.*`, `digital_oscillator.*`, `analog_oscillator.*`, `resources.*`, `settings.*`, `dsp.h`, `stmlib.h`, `svf.h`, `random.*`, `excitation.h`, `parameter_interpolation.h` -- porte l'entete MIT original "Copyright 2012/2013 Emilie/Olivier Gillet" de Mutable Instruments ; `murmurhash3.h` est domaine public. Seul le fin wrapper Teensy `synth_braids.h/.cpp` n'a pas d'entete propre, mais son `README.md` cite ses sources -- `github.com/pichenettes/eurorack` (MIT) et `github.com/modlfo/teensy-braids` -- confirmant la meme origine MIT.) | `src_teensy/microdexed-touch/third-party/Synth_Braids/` |
 | MIDI (FortySevenEffects/Arduino MIDI Library) | `master_teensy` (`lib_deps`, USB MIDI IN) | MIT | Registre PlatformIO |
 | Teensy Audio Library, Encoder, SD (SdFat) | `master_teensy` (framework Teensy) | Majoritairement MIT/PJRC (voir `framework-arduinoteensy`) | Fournis par la plateforme `teensy`, pas vendored dans ce depot |
 | GFX Library for Arduino (moononournation, ex-Arduino_GFX) | `screen_esp` (pilote ecran RGB parallele + tactile) | MIT | Registre PlatformIO, version figee `@1.6.7` |
@@ -72,10 +72,6 @@ dessines a la main via GFX Library for Arduino, pas LVGL).
 
 ## Ce qui reste a faire
 
-- **Confirmer la licence exacte de Synth_Braids** avant toute
-  distribution binaire au-dela du prototype (contacter/verifier aupres
-  du portage Teensy d'origine, ou aupres de Mutable Instruments pour
-  `macro_oscillator.h`).
 - Si un jour AZ-2 distribue des binaires precompiles (pas seulement le
   code source), rappeler dans les notes de version que le firmware
   Teensy integre du code GPLv3 (Synth_MDA_EPiano) et que le firmware
