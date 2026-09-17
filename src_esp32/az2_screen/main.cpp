@@ -3383,14 +3383,19 @@ void setup() {
   pinMode(kPinBacklight, OUTPUT);
   digitalWrite(kPinBacklight, HIGH);
 
-  if (!gfx->begin()) {
+  // Si l'ecran ne s'initialise pas, on continue quand meme le reste du
+  // setup() (Serial1 vers le Teensy, tactile, SD) au lieu de tout arreter
+  // net : un ecran en panne ne doit pas priver aussi le suivi serie du
+  // lien Teensy/tactile/SD (seul l'intro + le premier menu, qui ont
+  // besoin de l'ecran, sont sautes).
+  const bool displayReady = gfx->begin();
+  if (displayReady) {
+    Serial.println("DISPLAY:READY");
+    runIntro();
+    goTo(Screen::Menu);
+  } else {
     Serial.println("DISPLAY:ERROR:BEGIN_FAILED");
-    return;
   }
-
-  Serial.println("DISPLAY:READY");
-  runIntro();
-  goTo(Screen::Menu);
 
   Serial1.begin(az2::kControlBaud, SERIAL_8N1, kTeensyRxPin, kTeensyTxPin);
   sendToTeensy(az2::kHelloControl);

@@ -331,6 +331,19 @@ jamais inities dans ce cas) ; aucune commande Teensy hors bornes ne
 renvoie d'erreur (silencieusement ignoree) ; a swing maximum, les pas
 raccourcis (1 tick) ne laissent plus de fenetre aux effets CUT/RETRIG.
 
+**2026-09-17 (suite) -- 1er point corrige** : `setup()` ESP32 continue
+maintenant Serial1 (lien Teensy)/tactile/SD meme si `gfx->begin()`
+echoue -- seuls l'intro et le premier affichage (qui ont besoin de
+l'ecran) sont sautes. Avant, un ecran en panne coupait aussi tout
+diagnostic serie du Teensy/tactile/SD, avec une seule ligne
+`DISPLAY:ERROR:BEGIN_FAILED` comme unique symptome. Compile verifie
+(`pio run -e screen_esp`) ; a verifier sur materiel reel le jour ou
+l'ecran a un vrai probleme d'init (pas teste, pas facile a provoquer
+sans debrancher l'ecran expres). Les 2 autres points (pas de NACK
+protocole, fenetre CUT/RETRIG a swing max) restent en attente --
+touchent au protocole/au comportement audio, veulent une verification
+sur materiel plus poussee.
+
 Piste specifiquement verifiee et ECARTEE : `frame_skip` (Walnut-CGB)
 pourrait desynchroniser l'audio de la vitesse du jeu -- verifie dans le
 code source (`walnut_cgb.h`, VBlank pose `gb->gb_frame=true` a CHAQUE
