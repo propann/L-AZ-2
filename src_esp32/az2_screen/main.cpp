@@ -687,7 +687,10 @@ int8_t selectedSeqStep = 0;
 // navigation/edition deja ecrit autour, mais rien ne la remet plus a
 // false -- plus de grille a laquelle "revenir".
 bool seqDetailMode = true;
-int8_t seqDetailCol = 0;  // 0=NOTE 1=INST 2=FX 3=VAL, voir kSeqDetailColNames
+// 0=NOTE 1=INST 2=FX 3=VAL 4=PROB 5=COND (les 2 derniers ajoutes le
+// 2026-09-17) -- voir detailColX()/drawDetailRow() pour l'affichage et
+// le switch(seqDetailCol) dans le gestionnaire de croix pour l'edition.
+int8_t seqDetailCol = 0;
 
 // ---------------------------------------------------------------------
 // Vue tracker (colonnes NOTE/INST/FX/VAL d'une piste, voir
