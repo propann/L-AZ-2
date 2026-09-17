@@ -132,10 +132,17 @@ Suite a "y'a rien dans jeux, c'est le moment de mettre l'emulateur" :
    `ENC:`, voir AZ2_CABLAGE_MASTER.md) : croix -> directions Game Boy,
    A/B -> A/B, encodeur 1 (Reverb) -> SELECT, encodeur 2 (Delay) ->
    START (demande : "faut les config sur les encodeurs ... comme ca on
-   a a/b, start/select et les gachettes"). C/D liberes (futur role de
-   gachette, pas encore assigne) ; encodeur 0 (Volume) reserve au
-   declencheur d'enregistrement de sample (voir plus bas, capture
-   audio).
+   a a/b, start/select et les gachettes"). Tous les boutons d'une vraie
+   Game Boy (pas de L/R sur le materiel original) sont donc couverts --
+   verifie le 2026-09-17 apres relecture complete du mapping. C reste
+   libre pendant le jeu (la GB d'origine n'a pas de bouton C) : **[FAIT,
+   2026-09-17]** utilise pour quitter proprement la partie
+   (`goTo(Screen::Menu)`, sauvegarde la RAM cartouche via `gbUnload()`
+   avant de liberer la ROM -- demande "il faut un truc pour sortir de
+   l'emulateur cote code", B etant deja pris par le bouton B du jeu).
+   D reste libre (futur role de gachette, pas encore assigne) ;
+   encodeur 0 (Volume) reserve au declencheur d'enregistrement de
+   sample (voir plus bas, capture audio).
 5. **[FAIT]** Page JEUX (`Screen::Retro`) mise a jour : affiche le jeu
    si une ROM est chargee (`gbRunFrame()` appelee depuis `loop()`,
    cadencee a ~59,7 images/s -- cible theorique, PAS mesuree en reel

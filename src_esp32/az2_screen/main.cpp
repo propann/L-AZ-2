@@ -1698,6 +1698,10 @@ void drawRetroPage() {
     gfx->setTextColor(kDim);
     gfx->setCursor(kMargin, 4);
     gfx->print(gbRomTitle());
+    // Rappel discret : C quitte la partie (voir le commentaire pres de
+    // "il faut un truc pour sortir de l'emulateur", 2026-09-17).
+    gfx->setCursor(static_cast<int16_t>(kScreenSize - kMargin - 48), 4);
+    gfx->print("C:MENU");
     return;
   }
 
@@ -1746,8 +1750,15 @@ void drawAboutPage() {
       "Ecran: VIEWE UEDX48480040E-WB (GC9503V)",
       "Tactile: FT6336U",
       "Audio: Teensy 4.1, 5 moteurs, 8 pistes, FX maitre",
-      "Controle: croix + 4 boutons + 3 potards (Teensy)",
-      "Build: screen_esp, 2026-09-15",
+      "Controle: croix + 4 boutons + 3 encodeurs rotatifs",
+      "",
+      "Manette Game Boy (page JEUX) :",
+      "  Croix = D-pad, A/B = A/B",
+      "  Encodeur 1 (bouton) = SELECT",
+      "  Encodeur 2 (bouton) = START",
+      "  C = quitter la partie (D libre)",
+      "",
+      "Build: screen_esp, 2026-09-17",
   };
   gfx->setTextSize(1);
   gfx->setTextColor(RGB565_WHITE);
@@ -2203,6 +2214,17 @@ void handleTeensyLine(const String &line) {
       if (currentScreen == Screen::Retro && index < 2) {
         static const GbButton kGbMap[2] = {GbButton::A, GbButton::B};
         gbSetButton(kGbMap[index], pressed);
+      }
+      // Sortir d'une partie : demande 2026-09-17 ("il faut un truc pour
+      // sortir de l'emulateur cote code") -- B est deja pris par le jeu
+      // (voir plus bas) donc pas utilisable comme "retour menu" ici. La
+      // Game Boy d'origine n'a pas de boutons L/R : C et D restent donc
+      // libres meme en pleine partie (voir AZ2_TODO_PICO.md, "gachette"
+      // jamais assignee) -- C sert desormais a quitter proprement
+      // (goTo(Screen::Menu) sauvegarde la RAM cartouche via gbUnload()
+      // avant de liberer la ROM, meme chemin que changer de page).
+      if (pressed && letter == 'C' && inGbGame) {
+        goTo(Screen::Menu);
       }
       // Menu principal : A confirme la selection surlignee par la
       // croix (voir menuSelected ci-dessus) -- demande 2026-09-15.
