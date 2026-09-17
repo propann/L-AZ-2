@@ -181,7 +181,7 @@ ordre :
 | 1 | Mute/solo par piste | **Piege trouve le 2026-09-16, voir note ci-dessous** -- pas "juste un gain a 0", a faire avec precaution sur le vrai materiel |
 | 2 | Sauvegarde/chargement de projet complet (patterns+song+BPM+scale) | **[FAIT le 2026-09-17]** page PROJET, 4 emplacements, `/projects/N.proj` sur la SD de l'ESP32 -- voir section dediee plus bas |
 | 3 | Swing/groove global | Piege timer trouve le 2026-09-16, voir note plus bas |
-| 4 | Volume/pan par piste | Meme piege que mute/solo si implemente sur le meme gain (voir note plus bas) |
+| 4 | Volume par piste | **[FAIT le 2026-09-17]**, voir section dediee plus bas. **Pan : PAS FAIT** -- chaine mono de bout en bout (patchOutL/patchOutR dupliquent le meme mixMaster), un vrai pan demanderait de refaire les bus en stereo |
 | 5 | Accords (plusieurs notes par pas depuis l'ecran) | Rien cote Teensy (`kNotesPerTrack=2` deja la) -- juste l'UI colonne NOTE a etendre |
 | 6 | Clavier tactile comme editeur live de note | Rien -- routage a ecrire (pad -> NOTE: si un pas est selectionne) |
 | 7 | Sampler (moteur audio a partir d'echantillons) | **Capture (phase 1) faite le 2026-09-17**, voir section dediee plus bas. Reste : verifier en reel (carte SD Teensy inseree ?), puis vue d'onde/decoupage/nommage (phase 2), puis le moteur de LECTURE `AudioPlaySdWav`/`AudioPlaySdRaw` (phase 3, pas commence) |
@@ -291,6 +291,38 @@ correctement dans un lecteur audio classique sur ordinateur).
 (`REC:START`/`REC:STOP`) -- presente et fonctionnelle, fichier `.wav`
 cree avec succes. Reste a verifier le contenu audio avec un vrai jeu
 qui joue du son pendant l'enregistrement.
+
+### Volume par piste (2026-09-17)
+
+Priorite #4, implementee EN RESPECTANT le piege trouve plus haut (le
+gain du mixeur de groupe sert de porte note-on/off pour BRAIDS) :
+
+- `VOL:<piste>:<0-127>` (Teensy, `handleVolCommand()`), `trackVolume[]`
+  par piste (defaut 127 = plein volume, comportement d'origine).
+- Pour les moteurs AUTRES que Braids : le gain de groupe est statique
+  hors note-on/off, donc `handleVolCommand()` le recalcule et le
+  reapplique immediatement (`0.5f * volume/127`).
+- Pour Braids : `handleVolCommand()` ne touche PAS le gain -- le
+  nouveau volume n'est applique qu'a la PROCHAINE note jouee
+  (`trackNoteOn()`, `kBraidsActiveGain * volume/127`). Limite connue et
+  acceptee : si une note Braids est deja en train de sonner (tenue),
+  changer le volume ne s'entend qu'a la prochaine transition note-on/
+  off, pas immediatement. Pas un bug -- documente ici pour ne pas le
+  redecouvrir en pensant que c'est casse.
+- Page PATCH : nouvelle ligne VOLUME (7e ligne, meme style +/- que les
+  6 au-dessus mais VOLONTAIREMENT hors du systeme patchParamRef() --
+  le volume ne depend pas du moteur, pas la peine de le meler a cette
+  logique conditionnelle). Page redessinee pour laisser la place
+  (verifie tenir sur les 480px de haut, calcul fait a la main -- PAS vu
+  a l'oeil, aucun ecran branche en ecrivant ce code).
+- Ajoute aussi au format de sauvegarde de PROJET (12e champ des lignes
+  TRACK:, retro-compatible avec les fichiers a 11 champs sauvegardes
+  avant cet ajout).
+
+Compile verifie (master_teensy + screen_esp), **PAS ENCORE flashe ni
+teste en reel** -- ecrit sans materiel branche, y compris la mise en
+page de la ligne VOLUME (calcul de coordonnees seulement, jamais vue
+sur l'ecran reel).
 
 ### Sauvegarde de projet complet (2026-09-17)
 

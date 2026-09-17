@@ -1349,15 +1349,70 @@ void sendPatchDxp(uint8_t index) {
   sendToTeensy(msg);
 }
 
+// Volume par piste (VOL:, priorite #4 de la liste indispensable,
+// AZ2_BENCHMARK_CONCURRENCE.md) -- 7e ligne, VOLONTAIREMENT separee du
+// systeme patchParamRef()/patchRowLabel() des 6 lignes filtre/ADSR-ou-
+// DXP au-dessus (celui-ci change de sens selon le moteur, le volume
+// s'applique lui a TOUS les moteurs de la meme facon -- pas la peine de
+// le meler a cette logique conditionnelle). Voir trackVolume[] et le
+// commentaire du piege Braids cote Teensy (AZ2_FEUILLE_DE_ROUTE.md).
+uint8_t trackVolume[kSeqTrackCount] = {127, 127, 127, 127, 127, 127, 127, 127};
+constexpr int16_t kVolRowY = kPatchRowTop + 6 * kPatchRowH;
+constexpr int16_t kVolRowH = kPatchRowH - 4;
+
+void drawVolRow() {
+  const uint8_t t = static_cast<uint8_t>(patchTrack);
+  const int16_t minusX = static_cast<int16_t>(kScreenSize - kMargin - 2 * kPatchBtnW - 4);
+  const int16_t plusX = static_cast<int16_t>(kScreenSize - kMargin - kPatchBtnW);
+
+  gfx->fillRect(kMargin, kVolRowY, kScreenSize - 2 * kMargin, kVolRowH, RGB565_BLACK);
+  gfx->drawRect(kMargin, kVolRowY, kScreenSize - 2 * kMargin, kVolRowH, kFaint);
+  gfx->drawRect(minusX, kVolRowY, kPatchBtnW, kVolRowH, kFaint);
+  gfx->drawRect(plusX, kVolRowY, kPatchBtnW, kVolRowH, kFaint);
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(static_cast<int16_t>(kMargin + 6), static_cast<int16_t>(kVolRowY + 4));
+  gfx->print("VOLUME");
+
+  char buf[6];
+  snprintf(buf, sizeof(buf), "%3d", trackVolume[t]);
+  gfx->setTextSize(2);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(static_cast<int16_t>(kMargin + 130), static_cast<int16_t>(kVolRowY + 2));
+  gfx->print(buf);
+
+  gfx->setCursor(static_cast<int16_t>(minusX + 12), static_cast<int16_t>(kVolRowY + 4));
+  gfx->print('-');
+  gfx->setCursor(static_cast<int16_t>(plusX + 12), static_cast<int16_t>(kVolRowY + 4));
+  gfx->print('+');
+}
+
+bool hitTestVolMinus(int16_t x, int16_t y) {
+  return inBox(x, y, static_cast<int16_t>(kScreenSize - kMargin - 2 * kPatchBtnW - 4), kVolRowY, kPatchBtnW,
+               kVolRowH);
+}
+bool hitTestVolPlus(int16_t x, int16_t y) {
+  return inBox(x, y, static_cast<int16_t>(kScreenSize - kMargin - kPatchBtnW), kVolRowY, kPatchBtnW, kVolRowH);
+}
+
+void sendPatchVol() {
+  char msg[16];
+  snprintf(msg, sizeof(msg), "VOL:%d:%d", patchTrack, trackVolume[static_cast<uint8_t>(patchTrack)]);
+  sendToTeensy(msg);
+}
+
 // Sauvegarde/chargement de patch (demande 2026-09-16 : "on doit
 // pouvoir sauvegarder les patch") -- un "patch" ici = moteur + patch
 // integre + filtre + ADSR de la piste affichee (patchTrack), ecrit sur
 // la carte SD de l'ESP32 (deja utilisee pour les ROM GB) dans
 // /patches/N.txt, format simple "moteur,patch,cutoff,reso,a,d,s,r".
-// 8 emplacements numerotes, comme les patterns.
+// 8 emplacements numerotes, comme les patterns. Decale d'une ligne
+// (kPatchRowTop + 7*... au lieu de 6*...) depuis l'ajout de la ligne
+// VOLUME juste au-dessus.
 constexpr uint8_t kPatchSlotCount = 8;
 uint8_t patchSlot = 0;
-constexpr int16_t kPatchSlotY = kPatchRowTop + 6 * kPatchRowH + 6;
+constexpr int16_t kPatchSlotY = kPatchRowTop + 7 * kPatchRowH + 2;
 constexpr int16_t kPatchSlotH = 32;
 constexpr int16_t kPatchSlotBtnW = (kScreenSize - 2 * kMargin) / 3;
 
@@ -1488,6 +1543,7 @@ void drawPatchPage() {
   for (uint8_t i = 0; i < 6; ++i) {
     drawPatchRow(i);
   }
+  drawVolRow();
   drawPatchSlotRow();
 }
 
@@ -2086,9 +2142,9 @@ void saveProject(uint8_t slot) {
     f.printf("SONGSET:%d:%d\n", i, songPatterns[i]);
   }
   for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
-    f.printf("TRACK:%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", t, trackEngine[t], trackPatch[t], trackCutoff[t],
+    f.printf("TRACK:%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", t, trackEngine[t], trackPatch[t], trackCutoff[t],
              trackReso[t], trackAttack[t], trackDecay[t], trackSustain[t], trackRelease[t], trackAlgo[t],
-             trackFeedback[t]);
+             trackFeedback[t], trackVolume[t]);
   }
   for (uint8_t p = 0; p < kPatternCount; ++p) {
     for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
@@ -2156,16 +2212,19 @@ void loadProject(uint8_t slot) {
         sendToTeensy(msg);
       }
     } else if (line.startsWith("TRACK:")) {
-      int vals[11] = {};
+      // 12 champs depuis l'ajout de VOL: (volume par piste) -- fichiers
+      // a 11 champs (avant) restent lisibles, volume laisse a sa valeur
+      // courante (deja 127 par defaut) dans ce cas.
+      int vals[12] = {};
       int idx = 0, start = 0;
       const String rest = afterColon(line);
-      for (int i = 0; i <= rest.length() && idx < 11; ++i) {
+      for (int i = 0; i <= rest.length() && idx < 12; ++i) {
         if (i == rest.length() || rest.charAt(i) == ',') {
           vals[idx++] = rest.substring(start, i).toInt();
           start = i + 1;
         }
       }
-      if (idx == 11) {
+      if (idx >= 11) {
         const int t = vals[0];
         snprintf(msg, sizeof(msg), "ENGINE:%d:%d", t, vals[1]);
         sendToTeensy(msg);
@@ -2179,6 +2238,10 @@ void loadProject(uint8_t slot) {
         sendToTeensy(msg);
         snprintf(msg, sizeof(msg), "DXP:%d:1:%d", t, vals[10]);
         sendToTeensy(msg);
+        if (idx == 12) {
+          snprintf(msg, sizeof(msg), "VOL:%d:%d", t, vals[11]);
+          sendToTeensy(msg);
+        }
       }
     } else if (line.startsWith("STEP:")) {
       int vals[8] = {};
@@ -2874,6 +2937,20 @@ void handleTeensyLine(const String &line) {
         }
       }
     }
+  } else if (line.startsWith("VOL:")) {
+    // Echo du volume par piste (voir handleVolCommand() cote Teensy).
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    if (i1 >= 0 && i2 >= 0) {
+      const uint8_t track = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
+      const uint8_t vol = static_cast<uint8_t>(line.substring(i2 + 1).toInt());
+      if (track < kSeqTrackCount) {
+        trackVolume[track] = vol;
+        if (currentScreen == Screen::Patch && track == patchTrack && !screensaverActive) {
+          drawVolRow();
+        }
+      }
+    }
   } else if (line.startsWith("DXP:")) {
     // Echo des reglages Dexed (voir handleDexedParamCommand() cote
     // Teensy et le commentaire de trackAlgo[] plus haut) -- arrive apres
@@ -3300,6 +3377,12 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
         } else {
           sendPatchEnv();
         }
+      } else if (hitTestVolMinus(x, y) || hitTestVolPlus(x, y)) {
+        const int delta = hitTestVolPlus(x, y) ? 1 : -1;
+        uint8_t &vol = trackVolume[t];
+        vol = static_cast<uint8_t>(constrain(static_cast<int>(vol) + delta, 0, 127));
+        drawVolRow();
+        sendPatchVol();
       } else if (hitTestPatchSlotNum(x, y)) {
         patchSlot = static_cast<uint8_t>((patchSlot + 1) % kPatchSlotCount);
         drawPatchSlotRow();

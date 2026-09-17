@@ -191,6 +191,21 @@ uint8_t trackEngine[kTrackCount] = {
 };
 uint8_t trackPatch[kTrackCount] = {0, 0, 0, 0, 0, 0, 0, 0};
 
+// Volume par piste (VOL:, demande 2026-09-16/17, priorite #4 de la
+// liste indispensable) -- 0-127, 127 = plein volume (comportement
+// d'origine si jamais touche). ATTENTION piege trouve en l'ecrivant
+// (voir AZ2_FEUILLE_DE_ROUTE.md, "piege mute/solo") : le gain du
+// mixeur de groupe sert DEJA de porte note-on/off pour BRAIDS -- ce
+// volume ne peut PAS juste multiplier ce gain n'importe quand. Pour
+// Braids, le volume ne prend effet qu'A LA PROCHAINE transition
+// note-on/off (voir trackNoteOn()) ; pour tous les autres moteurs (le
+// gain de groupe est statique hors note-on/off), il est recalcule et
+// reapplique immediatement (voir handleVolCommand()). Pas de vrai
+// panoramique pour l'instant : la chaine est MONO de bout en bout
+// (patchOutL/patchOutR dupliquent le meme mixMaster, voir plus haut) --
+// un vrai pan demanderait de refaire les bus en stereo, hors scope ici.
+uint8_t trackVolume[kTrackCount] = {127, 127, 127, 127, 127, 127, 127, 127};
+
 // 8 voix DX7 choisies a la main dans la banque vendored (voir
 // src_teensy/microdexed-touch/third-party/Synth_Dexed/examples/Banks/
 // banks.h, "RitCh1.syx") pour leur diversite timbrale -- format "voice
@@ -386,7 +401,10 @@ void setTrackEngine(uint8_t track, uint8_t engine) {
   }
 
   applyTrackPatch(track);
-  group.gain(channel, engine == az2::kEngineBraids ? 0.0f : 0.5f);
+  // engine == Braids : 0.0f (silence tant qu'aucune note n'est jouee,
+  // voir trackNoteOn()) -- le volume ne s'applique qu'a ce moment-la
+  // pour ce moteur, voir le commentaire de trackVolume[] plus haut.
+  group.gain(channel, engine == az2::kEngineBraids ? 0.0f : 0.5f * (static_cast<float>(trackVolume[track]) / 127.0f));
 }
 
 // Deux entrees possibles pour le protocole AZ2 (architecture a 2 cerveaux
@@ -602,7 +620,11 @@ void trackNoteOn(uint8_t track, uint8_t note, uint8_t velocity) {
     case az2::kEngineEPiano: trackEPianoEngine[track].noteOn(note, velocity); break;
     case az2::kEngineBraids:
       trackBraidsEngine[track].set_braids_pitch(static_cast<int16_t>(note) << 7);
-      trackGroupMixer(track).gain(trackGroupChannel(track), kBraidsActiveGain);
+      // Volume applique ICI (voir trackVolume[]) -- c'est le seul
+      // moment sur ce moteur ou toucher ce gain est sans danger pour
+      // la porte note-on/off.
+      trackGroupMixer(track).gain(trackGroupChannel(track),
+                                   kBraidsActiveGain * (static_cast<float>(trackVolume[track]) / 127.0f));
       break;
     case az2::kEngineKarplus:
       trackKarplusEngine[track].noteOn(midiNoteToFreq(note), static_cast<float>(velocity) / 127.0f);
@@ -1059,6 +1081,31 @@ void handleFxCommand(const String &line) {
 // lineaire sur la plage acceptee par AudioFilterStateVariable (0.7-5.0,
 // voir filter_variable.h). 127/0 = grand ouvert/neutre = aucun filtrage
 // audible, comportement par defaut avant tout FILT:.
+// VOL:<piste 0-7>:<volume 0-127> -- voir le commentaire de trackVolume[]
+// plus haut pour le piege Braids (gain de groupe = porte note-on/off
+// pour ce moteur specifiquement).
+void handleVolCommand(const String &line) {
+  const int idx1 = line.indexOf(':');
+  const int idx2 = line.indexOf(':', idx1 + 1);
+  if (idx1 < 0 || idx2 < 0) {
+    return;
+  }
+  const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+  if (track >= kTrackCount) {
+    return;
+  }
+  const int vol = constrain(line.substring(idx2 + 1).toInt(), 0, 127);
+  trackVolume[track] = static_cast<uint8_t>(vol);
+
+  if (trackEngine[track] != az2::kEngineBraids) {
+    trackGroupMixer(track).gain(trackGroupChannel(track), 0.5f * (static_cast<float>(vol) / 127.0f));
+  }
+  // Piste Braids : rien a faire ici, voir trackNoteOn() -- le nouveau
+  // volume s'appliquera a la PROCHAINE note jouee sur cette piste.
+
+  relayLine(line);
+}
+
 void handleFiltCommand(const String &line) {
   const int idx1 = line.indexOf(':');
   const int idx2 = line.indexOf(':', idx1 + 1);
@@ -1618,6 +1665,11 @@ void handleCommand(const String &line) {
 
   if (line.startsWith("FX:")) {
     handleFxCommand(line);
+    return;
+  }
+
+  if (line.startsWith("VOL:")) {
+    handleVolCommand(line);
     return;
   }
 
