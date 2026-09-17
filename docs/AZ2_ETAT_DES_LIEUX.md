@@ -40,6 +40,17 @@ TRACKERS_GROOVEBOXES_2026.md) face a Elektron/Digitakt.
   sans toucher a l'ecran.
 - `randomSeed(micros())` ajoute dans `setup()` Teensy (sinon `random()`
   rejoue exactement le meme motif a chaque mise sous tension).
+- **Bug reel corrige** : `gbRecStart()` n'appelait pas `SD.remove()`
+  avant `SD.open(path, FILE_WRITE)` -- sans consequence dans le cas
+  normal (nextSampleName() trouve un nom LIBRE), mais dans le cas
+  improbable ou les 999 noms `SAMPLE_NNN.wav` sont deja pris,
+  `nextSampleName()` renvoie alors `SAMPLE_999.wav` en sachant qu'il
+  existe deja -- `FILE_WRITE` sur SdFat OUVRE EN AJOUT sur un fichier
+  existant (pas en ecrasement), donc la nouvelle capture se serait
+  ajoutee APRES l'ancien contenu au lieu de le remplacer (wav corrompu/
+  demesure). Note lors de l'audit du code du 2026-09-17 matin, deprioritise
+  puis corrige ce soir (meme convention que savePatchSlot()/
+  saveProject(), qui font deja ce remove()). Compile verifie.
 
 **[2026-09-17, important pour toute future analyse externe]** `main`
 etait reste fige au tout premier commit du projet (`b3eeae8`, 13

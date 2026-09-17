@@ -2206,6 +2206,16 @@ void gbRecStart() {
     return;
   }
   const String path = nextSampleName();
+  // SD.remove() avant open() -- meme convention que savePatchSlot()/
+  // saveProject(). No-op si le fichier n'existe pas encore (cas normal,
+  // nextSampleName() a trouve un nom libre) ; INDISPENSABLE dans le cas
+  // improbable ou les 999 noms sont pris (nextSampleName() renvoie alors
+  // SAMPLE_999.wav en le sachant deja pris) -- BUG REEL potentiel note
+  // lors de l'audit du 2026-09-17, corrige ici : FILE_WRITE sur un
+  // fichier EXISTANT ouvre en AJOUT (pas en ecrasement) sur SdFat, donc
+  // sans ce remove() la nouvelle capture se serait ajoutee APRES
+  // l'ancien contenu au lieu de le remplacer -- wav corrompu/demesure.
+  SD.remove(path.c_str());
   gbRecFile = SD.open(path.c_str(), FILE_WRITE);
   if (!gbRecFile) {
     Serial.print("REC:ERROR:");
