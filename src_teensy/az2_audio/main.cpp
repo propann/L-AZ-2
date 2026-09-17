@@ -1681,6 +1681,16 @@ void updateDigitalControls() {
       } else {
         az2::printBtn(Serial, c.label[0], raw);
         az2::printBtn(Serial1, c.label[0], raw);
+        // BTN D = "fill" maintenu (2026-09-17, voir kStepCondFill/
+        // fillActive) -- D etait libre ("usage futur"), croix+A-D cablee
+        // DIRECTEMENT sur le Teensy donc plus simple/plus reactif de
+        // piloter fillActive ici que via un aller-retour ESP32 (FILL:
+        // reste disponible en plus, pour l'ESP32/un futur bouton dedie).
+        // N'interfere pas avec BTN:D relaye ci-dessus (page JEUX ne
+        // mappe que A/B, voir handleTouchDown() cote ESP32).
+        if (c.label[0] == 'D') {
+          fillActive = raw;
+        }
       }
     }
   }

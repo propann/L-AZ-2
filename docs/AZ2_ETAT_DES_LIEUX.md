@@ -32,6 +32,14 @@ TRACKERS_GROOVEBOXES_2026.md) face a Elektron/Digitakt.
   parait trop serre a l'oeil.
 - Compile verifie pour les 3 environnements
   (`pio run -e master_teensy -e screen_esp -e ui_esp` -> SUCCESS).
+- **BTN D = "fill" maintenu**, cable directement dans
+  `updateDigitalControls()` cote Teensy (D etait libre, croix+A-D deja
+  cablee sur le Teensy -- plus simple/plus reactif que de faire un
+  aller-retour par l'ESP32). `FILL:0/1` reste dispo en plus pour
+  l'ESP32/un futur bouton dedie. Rend la fonction jouable des demain
+  sans toucher a l'ecran.
+- `randomSeed(micros())` ajoute dans `setup()` Teensy (sinon `random()`
+  rejoue exactement le meme motif a chaque mise sous tension).
 
 **[2026-09-17, important pour toute future analyse externe]** `main`
 etait reste fige au tout premier commit du projet (`b3eeae8`, 13
