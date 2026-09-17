@@ -2398,6 +2398,12 @@ void sendStatus() {
 void setup() {
   Serial.begin(az2::kControlBaud);
   Serial1.begin(az2::kControlBaud);
+  // Graine pour random() (PROB:, voir advanceTick()) -- micros() au boot
+  // varie assez d'un demarrage a l'autre (delais SD/audio/etc. avant ici)
+  // pour eviter de rejouer EXACTEMENT le meme motif "aleatoire" a chaque
+  // mise sous tension. Pas une vraie source d'entropie, suffisant pour
+  // une probabilite de declenchement (pas un usage cryptographique).
+  randomSeed(micros());
   // 200 (au lieu de 48) depuis le passage a 8 pistes + le bus d'effets
   // maitre : AudioEffectDelay retient ses blocs dans ce pool partage,
   // proportionnellement au temps de delay configure (350ms ~= 121 blocs a
