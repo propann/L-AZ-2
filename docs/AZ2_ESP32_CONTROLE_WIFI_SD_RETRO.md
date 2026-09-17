@@ -2,6 +2,16 @@
 
 Objectif: utiliser au mieux l'ESP32-S3 de l'ecran. Il ne sert pas seulement a afficher: il devient la tete de controle de la groovebox.
 
+**[Note 2026-09-17]** Document de planification PRECOCE, en partie
+perime : l'arborescence SD proposee plus bas (`/az2/...`,
+`/retro-go/...`) n'est PAS celle reellement utilisee (voir plus bas --
+en pratique : `/games/`, `/patches/`, `/projects/` a la racine de la
+carte). Retro-Go (mentionne dans "Game Boy / Retro-Go" ci-dessous) a
+ete etudie puis ECARTE le 2026-09-14 (ESP-IDF natif incompatible avec
+l'ecran RGB parallele) -- l'emulateur reellement utilise est
+Walnut-CGB, voir [AZ2_EMULATION_JEUX.md](AZ2_EMULATION_JEUX.md). Le
+Wi-Fi reste tel que decrit ici (jamais commence, pas prioritaire).
+
 ## Capacites ESP32 retenues
 
 | Ressource | Usage AZ-2 |
