@@ -320,4 +320,82 @@ inline void printPatchSelect(Print &out, uint8_t track, uint8_t patch) {
   out.println(patch);
 }
 
+// ---------------------------------------------------------------------
+// Conditions de declenchement par pas (trig conditions, cf. Elektron) --
+// ajoute le 2026-09-17 ("on travaille le tracker on fait un truc qui
+// eclate tout", fonction la plus citee dans l'etude concurrence face a
+// Elektron/M8). PROB:<piste>:<pas>:<0-100> (probabilite en %) et
+// COND:<piste>:<pas>:<octet ci-dessous> sont geres cote Teensy
+// (handleProbCommand()/handleCondCommand() dans src_teensy/az2_audio/
+// main.cpp) ; l'encodage vit ici pour que l'ESP32 puisse afficher les
+// memes labels sans dupliquer la logique.
+//
+// Encodage d'un octet de condition (0-255) :
+//   kStepCondAlways (0)   = aucune condition, comportement d'origine.
+//   1..0x88 (nibbles)     = "K:N" -- ne joue que la Keme fois sur N
+//                           passages du pattern (nibble bas = K, nibble
+//                           haut = N, 1 <= K <= N <= 8). Le compteur de
+//                           passages (voir patternLoopCount cote Teensy)
+//                           avance de 1 a chaque redemarrage du pattern
+//                           (currentStep revient a 0), commun a TOUS les
+//                           pas/pistes -- pas un compteur par pas.
+//   kStepCondFill (0xFE)  = ne joue que si un "fill" est actif (FILL:1).
+//   kStepCondNotFill(0xFF)= ne joue que si PAS de fill actif.
+constexpr uint8_t kStepCondAlways = 0;
+constexpr uint8_t kStepCondFill = 0xFE;
+constexpr uint8_t kStepCondNotFill = 0xFF;
+
+inline uint8_t stepConditionEncode(uint8_t k, uint8_t n) {
+  if (n < 1 || n > 8 || k < 1 || k > n) {
+    return kStepCondAlways;  // entree hors bornes -> ne bloque jamais plutot que produire un octet invalide
+  }
+  return static_cast<uint8_t>((n << 4) | k);
+}
+
+inline bool stepConditionMet(uint8_t cond, uint32_t loopCount, bool fillActive) {
+  if (cond == kStepCondAlways) {
+    return true;
+  }
+  if (cond == kStepCondFill) {
+    return fillActive;
+  }
+  if (cond == kStepCondNotFill) {
+    return !fillActive;
+  }
+  const uint8_t n = static_cast<uint8_t>(cond >> 4);
+  const uint8_t k = static_cast<uint8_t>(cond & 0x0F);
+  if (n == 0 || k == 0 || k > n) {
+    return true;  // octet jamais produit par stepConditionEncode(), mais ne bloque jamais si recu tel quel
+  }
+  return (loopCount % n) == static_cast<uint32_t>(k - 1);
+}
+
+// Cycle ordonne propose cote UI (ESP32, voir seqDetailCol) -- ALWAYS, les
+// ratios classiques jusqu'a 4 (comme un premier jeu de trig conditions
+// Elektron), puis FILL/NOT FILL. Volontairement PAS tous les octets
+// valides (jusqu'a 8:8) pour rester rapide a parcourir a l'ecran ; rien
+// n'empeche d'envoyer un octet en dehors de ce cycle directement en COND:.
+constexpr uint8_t kStepConditionCycle[] = {
+    kStepCondAlways,
+    0x21, 0x22,              // 1:2, 2:2
+    0x31, 0x32, 0x33,        // 1:3, 2:3, 3:3
+    0x41, 0x42, 0x43, 0x44,  // 1:4, 2:4, 3:4, 4:4
+    kStepCondFill, kStepCondNotFill,
+};
+constexpr uint8_t kStepConditionCycleCount = sizeof(kStepConditionCycle) / sizeof(kStepConditionCycle[0]);
+
+inline void stepConditionLabel(uint8_t cond, char *out, size_t outSize) {
+  if (cond == kStepCondAlways) {
+    snprintf(out, outSize, "---");
+  } else if (cond == kStepCondFill) {
+    snprintf(out, outSize, "FILL");
+  } else if (cond == kStepCondNotFill) {
+    snprintf(out, outSize, "!FIL");
+  } else {
+    const uint8_t n = static_cast<uint8_t>(cond >> 4);
+    const uint8_t k = static_cast<uint8_t>(cond & 0x0F);
+    snprintf(out, outSize, "%d:%d", k, n);
+  }
+}
+
 } // namespace az2

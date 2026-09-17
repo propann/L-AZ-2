@@ -1,5 +1,38 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-17, soir]** Nouvelle fonction tracker : **probabilite +
+condition par pas** (PROB:/COND:/FILL:, voir AZ2_Protocol.h et
+`SequencerTrack::stepProb/stepCondition` cote Teensy). Demandee par
+l'utilisateur pour "faire un truc qui eclate tout" sur le tracker --
+fonction la plus citee dans l'etude concurrence (AZ2_ETUDE_CONCURRENCE_
+TRACKERS_GROOVEBOXES_2026.md) face a Elektron/Digitakt.
+
+- Chaque pas ON garde son declenchement normal par defaut (prob=100%,
+  cond=kStepCondAlways) -- **aucun changement de comportement sur un
+  pattern existant** tant qu'on ne touche pas ces 2 nouveaux champs.
+- Probabilite 0-100% : `random(100) < prob` a chaque passage, evalue
+  dans `advanceTick()` (Teensy) avant de declencher le pas.
+- Conditions "K sur N" (style Elektron, ex. 1:2/2:4/3:4) + FILL/!FILL,
+  evaluees contre un compteur global de passages du pattern
+  (`patternLoopCount`, incremente a chaque redemarrage de pattern) et
+  un etat `fillActive` pilotable par `FILL:0/1`. Encodage sur un seul
+  octet partage ESP32/Teensy (`az2::stepConditionEncode()`/
+  `stepConditionMet()`/`stepConditionLabel()` dans AZ2_Protocol.h) pour
+  ne pas dupliquer la logique.
+- Cote ESP32 : 2 nouvelles colonnes tracker (PRB/CND), cycle
+  `seqDetailCol` etendu de 4 a 6, echo `PROB:`/`COND:` mirrorees dans
+  `seqStepProb[]`/`seqStepCondition[]`, format de sauvegarde projet
+  etendu de 8 a 10 champs (retro-compatible : un ancien fichier a 8
+  champs se relit avec prob=100/cond=0 par defaut).
+- **PAS VERIFIE A L'ECRAN** (compile seulement, pas de materiel branche
+  cette session) -- les 2 nouvelles colonnes retrecissent le panneau
+  "patch actif" a droite du tracker de ~194px a ~106px (voir
+  `kTrkSideX`/`kDetailProbW`/`kDetailCondW` dans `main.cpp`) : **premiere
+  chose a regarder au prochain flash reel**, ajuster les largeurs si ca
+  parait trop serre a l'oeil.
+- Compile verifie pour les 3 environnements
+  (`pio run -e master_teensy -e screen_esp -e ui_esp` -> SUCCESS).
+
 **[2026-09-17, important pour toute future analyse externe]** `main`
 etait reste fige au tout premier commit du projet (`b3eeae8`, 13
 septembre -- Teensy = 134 lignes, un seul oscillateur sinus ; le

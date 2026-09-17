@@ -531,6 +531,14 @@ struct SequencerTrack {
   uint8_t stepPatch[kStepCount];        // 0xFF par defaut, voir seedDefaultNotes()
   uint8_t stepFx[kStepCount] = {};      // StepFx, 0 = aucun
   uint8_t stepFxVal[kStepCount] = {};   // ARP: xy (nibbles, demi-tons) ; CUT/RETRIG: nb de ticks
+  // Probabilite/condition par pas (2026-09-17, "on travaille le tracker on
+  // fait un truc qui eclate tout" -- fonction la plus citee dans l'etude
+  // concurrence face a Elektron). Values par defaut = comportement
+  // ORIGINAL exact (100 = joue toujours, 0/kStepCondAlways = aucune
+  // condition) : un pattern deja sauvegarde avant cet ajout continue de
+  // jouer identique tant qu'on n'y touche pas.
+  uint8_t stepProb[kStepCount];         // 0-100 (%), 100 par defaut -- voir seedDefaultNotes()
+  uint8_t stepCondition[kStepCount] = {};  // encode az2::stepConditionEncode()/kStepCond*, voir AZ2_Protocol.h
   uint8_t playingNote = 0;  // note reellement tenue, pour l'extinction correcte
   bool stepPlaying = false;
   // Etat d'effet du pas EN COURS (recalcule a chaque declenchement,
@@ -623,6 +631,15 @@ float bpm = 120.0f;
 uint8_t stepsPerBeat = 4;
 volatile uint8_t currentStep = 0;
 volatile uint16_t currentBar = 1;
+// Compteur de passages du pattern (2026-09-17, PROB:/COND:) -- voir le
+// commentaire dans advanceTick(), incremente uniquement dans l'ISR.
+volatile uint32_t patternLoopCount = 0;
+// Etat "fill" (2026-09-17, condition kStepCondFill/kStepCondNotFill) --
+// pas de bouton dedie pour l'instant : pilote uniquement par FILL:0/1
+// depuis l'ESP32/serie (voir handleFillCommand()). Meme convention que
+// `playing` (bool simple, pas de section critique -- lecture/ecriture
+// d'un bool est atomique sur Cortex-M7).
+bool fillActive = false;
 // L'ISR ne fait AUCUN Serial.print (trop lent/imprevisible en interruption) :
 // elle se contente de positionner ce drapeau, et announceClock() reste
 // appele depuis loop() (voir updateSequencer()).
@@ -639,6 +656,7 @@ void seedDefaultNotes() {
       for (uint8_t s = 0; s < kStepCount; ++s) {
         patterns[p][t].stepNote[s] = kDefaultNotes[t];
         patterns[p][t].stepPatch[s] = 0xFF;  // 0xFF = patch par defaut de la piste (voir INST, plus haut)
+        patterns[p][t].stepProb[s] = 100;    // 100% = joue toujours, comportement d'origine (voir PROB:)
       }
     }
   }
@@ -831,6 +849,14 @@ void advanceTick() {
                               : static_cast<uint8_t>(kTicksPerStep + swingAmount);
     if (currentStep == 0) {
       ++currentBar;
+      // Compteur de passages du pattern (2026-09-17, PROB:/COND:) -- avance
+      // de 1 a chaque redemarrage, COMMUN a tous les pas/pistes (pas un
+      // compteur par pas). Utilise par az2::stepConditionMet() pour les
+      // conditions "K sur N" (ex: 1:2 = un pas sur deux). Simplification
+      // assumee : ne se remet PAS a zero quand le pattern JOUE change (song
+      // mode) -- un compteur par pattern aurait demande kPatternCount
+      // compteurs pour un gain marginal a ce stade.
+      ++patternLoopCount;
       // Fin du pattern joue : avance dans la song si le mode song est
       // actif, sinon la piste jouee reste alignee sur celle en cours
       // d'edition (comportement d'origine, boucle simple -- voir
@@ -845,7 +871,17 @@ void advanceTick() {
 
     for (uint8_t t = 0; t < kTrackCount; ++t) {
       SequencerTrack &tr = patterns[playingPattern][t];
-      if (tr.stepOn[currentStep]) {
+      // Probabilite + condition (2026-09-17) : un pas ON peut quand meme ne
+      // pas jouer CE passage-ci -- prob=100 (defaut) et cond=kStepCondAlways
+      // (defaut) reproduisent exactement le comportement d'origine (voir
+      // seedDefaultNotes()). Court-circuite random() sur le chemin le plus
+      // frequent (prob=100) plutot que d'appeler random(100)<100 a chaque
+      // pas de chaque piste pour rien.
+      const uint8_t prob = tr.stepProb[currentStep];
+      const bool probPass = (prob >= 100) || (static_cast<uint8_t>(random(100)) < prob);
+      const bool shouldTrigger = tr.stepOn[currentStep] && probPass &&
+                                  az2::stepConditionMet(tr.stepCondition[currentStep], patternLoopCount, fillActive);
+      if (shouldTrigger) {
         const uint8_t note = tr.stepNote[currentStep];
         trackNoteOn(t, note, 100);
         tr.playingNote = note;
@@ -999,6 +1035,70 @@ void handleStepFxCommand(const String &line) {
 
   patterns[currentPattern][track].stepFx[step] = static_cast<uint8_t>(fx);
   patterns[currentPattern][track].stepFxVal[step] = static_cast<uint8_t>(val);
+  relayLine(line);
+}
+
+// PROB:<piste>:<pas>:<0-100> -- probabilite de declenchement du pas (%),
+// voir le commentaire de SequencerTrack::stepProb et advanceTick(). 100
+// (defaut) = joue toujours, comportement d'origine.
+void handleProbCommand(const String &line) {
+  const int idx1 = line.indexOf(':');
+  const int idx2 = line.indexOf(':', idx1 + 1);
+  const int idx3 = line.indexOf(':', idx2 + 1);
+  if (idx1 < 0 || idx2 < 0 || idx3 < 0) {
+    sendCommandError("PROB", "MALFORMED");
+    return;
+  }
+
+  const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+  const uint8_t step = static_cast<uint8_t>(line.substring(idx2 + 1, idx3).toInt());
+  const int prob = line.substring(idx3 + 1).toInt();
+
+  if (track >= kTrackCount || step >= kStepCount || prob < 0 || prob > 100) {
+    sendCommandError("PROB", "OUT_OF_RANGE");
+    return;
+  }
+
+  patterns[currentPattern][track].stepProb[step] = static_cast<uint8_t>(prob);
+  relayLine(line);
+}
+
+// COND:<piste>:<pas>:<0-255> -- condition de declenchement du pas, voir
+// az2::stepConditionEncode()/stepConditionMet() (AZ2_Protocol.h) pour
+// l'encodage. 0/kStepCondAlways (defaut) = aucune condition.
+void handleCondCommand(const String &line) {
+  const int idx1 = line.indexOf(':');
+  const int idx2 = line.indexOf(':', idx1 + 1);
+  const int idx3 = line.indexOf(':', idx2 + 1);
+  if (idx1 < 0 || idx2 < 0 || idx3 < 0) {
+    sendCommandError("COND", "MALFORMED");
+    return;
+  }
+
+  const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+  const uint8_t step = static_cast<uint8_t>(line.substring(idx2 + 1, idx3).toInt());
+  const int cond = line.substring(idx3 + 1).toInt();
+
+  if (track >= kTrackCount || step >= kStepCount || cond < 0 || cond > 255) {
+    sendCommandError("COND", "OUT_OF_RANGE");
+    return;
+  }
+
+  patterns[currentPattern][track].stepCondition[step] = static_cast<uint8_t>(cond);
+  relayLine(line);
+}
+
+// FILL:<0|1> -- active/desactive l'etat "fill" global, consulte par les
+// pas en condition kStepCondFill/kStepCondNotFill (voir le commentaire de
+// fillActive plus haut). Pas de piste/pas ici, un seul etat global --
+// meme convention que PLAY/STOP.
+void handleFillCommand(const String &line) {
+  const int idx = line.indexOf(':');
+  if (idx < 0) {
+    sendCommandError("FILL", "MALFORMED");
+    return;
+  }
+  fillActive = line.substring(idx + 1).toInt() != 0;
   relayLine(line);
 }
 
@@ -1851,6 +1951,21 @@ void handleCommand(const String &line) {
 
   if (line.startsWith("SFX:")) {
     handleStepFxCommand(line);
+    return;
+  }
+
+  if (line.startsWith("PROB:")) {
+    handleProbCommand(line);
+    return;
+  }
+
+  if (line.startsWith("COND:")) {
+    handleCondCommand(line);
+    return;
+  }
+
+  if (line.startsWith("FILL:")) {
+    handleFillCommand(line);
     return;
   }
 

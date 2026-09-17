@@ -646,6 +646,13 @@ uint8_t seqStepNote[kPatternCount][kSeqTrackCount][kSeqStepCount];
 uint8_t seqStepPatch[kPatternCount][kSeqTrackCount][kSeqStepCount];
 uint8_t seqStepFx[kPatternCount][kSeqTrackCount][kSeqStepCount] = {};
 uint8_t seqStepFxVal[kPatternCount][kSeqTrackCount][kSeqStepCount] = {};
+// Probabilite/condition par pas (2026-09-17, voir PROB:/COND: dans
+// AZ2_Protocol.h et SequencerTrack::stepProb/stepCondition cote Teensy).
+// seqStepProb DOIT etre seede a 100 (pas 0) au boot, sinon l'ecran
+// afficherait "0%" avant le premier echo PROB: -- voir le bloc de seed
+// plus bas (meme endroit que seqStepPatch=0xFF).
+uint8_t seqStepProb[kPatternCount][kSeqTrackCount][kSeqStepCount];
+uint8_t seqStepCondition[kPatternCount][kSeqTrackCount][kSeqStepCount] = {};
 
 // Song : liste ordonnee de patterns a enchainer (voir songPatterns[]
 // cote Teensy). Meme longueur max (kSongLength=16).
@@ -703,6 +710,14 @@ constexpr int16_t kDetailNoteW = 60;
 constexpr int16_t kDetailInstW = 50;
 constexpr int16_t kDetailFxW = 50;
 constexpr int16_t kDetailValW = 44;
+// PRB/CND ajoutees le 2026-09-17 (voir PROB:/COND:) -- largeurs choisies
+// etroites expres ("100%"/"1:2"/"FILL" tiennent a la taille de texte 1)
+// pour rester dans les ~202px encore libres a droite de VAL avant le
+// panneau lateral (voir kTrkSideX plus bas, qui retrecit d'autant).
+// PAS VERIFIE A L'ECRAN (compile seulement, pas de materiel branche
+// cette session) -- premiere chose a regarder au prochain flash reel.
+constexpr int16_t kDetailProbW = 42;
+constexpr int16_t kDetailCondW = 46;
 
 const char *const kNoteNames[12] = {"C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"};
 const char *const kStepFxNames[] = {"---", "ARP", "CUT", "RET"};
@@ -715,14 +730,21 @@ void formatNoteName(uint8_t note, char *out, size_t outSize) {
 
 int16_t detailColX(uint8_t col) {
   // 0=STEP (pas de colonne editable, juste le numero), 1=NOTE, 2=INST,
-  // 3=FX, 4=VAL -- decalage de 1 par rapport a seqDetailCol (qui ne
-  // compte que les colonnes editables).
+  // 3=FX, 4=VAL, 5=PROB, 6=COND (2 dernieres ajoutees le 2026-09-17) --
+  // decalage de 1 par rapport a seqDetailCol (qui ne compte que les
+  // colonnes editables, 0-5).
   switch (col) {
     case 0: return kDetailLeft;
     case 1: return static_cast<int16_t>(kDetailLeft + kDetailStepW);
     case 2: return static_cast<int16_t>(kDetailLeft + kDetailStepW + kDetailNoteW);
     case 3: return static_cast<int16_t>(kDetailLeft + kDetailStepW + kDetailNoteW + kDetailInstW);
-    default: return static_cast<int16_t>(kDetailLeft + kDetailStepW + kDetailNoteW + kDetailInstW + kDetailFxW);
+    case 4: return static_cast<int16_t>(kDetailLeft + kDetailStepW + kDetailNoteW + kDetailInstW + kDetailFxW);
+    case 5:
+      return static_cast<int16_t>(kDetailLeft + kDetailStepW + kDetailNoteW + kDetailInstW + kDetailFxW +
+                                   kDetailValW);
+    default:
+      return static_cast<int16_t>(kDetailLeft + kDetailStepW + kDetailNoteW + kDetailInstW + kDetailFxW +
+                                   kDetailValW + kDetailProbW);
   }
 }
 
@@ -740,6 +762,10 @@ void drawDetailHeader() {
   gfx->print("FX");
   gfx->setCursor(static_cast<int16_t>(detailColX(4) + 2), y);
   gfx->print("VAL");
+  gfx->setCursor(static_cast<int16_t>(detailColX(5) + 2), y);
+  gfx->print("PRB");
+  gfx->setCursor(static_cast<int16_t>(detailColX(6) + 2), y);
+  gfx->print("CND");
 }
 
 void drawDetailRow(uint8_t step) {
@@ -819,6 +845,36 @@ void drawDetailRow(uint8_t step) {
     snprintf(buf, sizeof(buf), "%02X", seqStepFxVal[currentPattern][track][step]);
   }
   gfx->setCursor(static_cast<int16_t>(detailColX(4) + 2), static_cast<int16_t>(y + 6));
+  gfx->print(buf);
+
+  // PROB (colonne editable 4, 2026-09-17) -- masquee ("--") a 100%
+  // (comportement d'origine, pas de bruit visuel sur un pattern qui
+  // n'utilise pas la fonction).
+  const uint8_t prob = seqStepProb[currentPattern][track][step];
+  const bool probSel = rowSelected && seqDetailCol == 4;
+  if (probSel) {
+    gfx->fillRect(detailColX(5), y, kDetailProbW, kDetailRowH, accent);
+  }
+  gfx->setTextColor(probSel ? RGB565_BLACK : (on ? RGB565_WHITE : kFaint));
+  if (prob >= 100) {
+    snprintf(buf, sizeof(buf), "--");
+  } else {
+    snprintf(buf, sizeof(buf), "%d", prob);
+  }
+  gfx->setCursor(static_cast<int16_t>(detailColX(5) + 2), static_cast<int16_t>(y + 6));
+  gfx->print(buf);
+
+  // COND (colonne editable 5, 2026-09-17) -- meme principe visuel que
+  // FX/VAL, label lisible via az2::stepConditionLabel() (partage avec le
+  // Teensy pour ne pas dupliquer l'encodage).
+  const uint8_t cond = seqStepCondition[currentPattern][track][step];
+  const bool condSel = rowSelected && seqDetailCol == 5;
+  if (condSel) {
+    gfx->fillRect(detailColX(6), y, kDetailCondW, kDetailRowH, accent);
+  }
+  gfx->setTextColor(condSel ? RGB565_BLACK : (on ? RGB565_WHITE : kFaint));
+  az2::stepConditionLabel(cond, buf, sizeof(buf));
+  gfx->setCursor(static_cast<int16_t>(detailColX(6) + 2), static_cast<int16_t>(y + 6));
   gfx->print(buf);
 }
 
@@ -927,8 +983,12 @@ extern uint8_t trackAlgo[kSeqTrackCount];
 extern uint8_t trackFeedback[kSeqTrackCount];
 
 constexpr int16_t kTrkSideGap = 8;
+// PRB/CND (2026-09-17) retrecissent ce panneau de ~88px (kDetailProbW +
+// kDetailCondW) -- PAS VERIFIE A L'ECRAN si ce qui reste (~106px) est
+// encore assez large pour le contenu de drawTrkSidePanel(), a l'oeil au
+// prochain flash reel.
 constexpr int16_t kTrkSideX = kDetailLeft + kDetailStepW + kDetailNoteW + kDetailInstW + kDetailFxW + kDetailValW +
-                               kTrkSideGap;
+                               kDetailProbW + kDetailCondW + kTrkSideGap;
 constexpr int16_t kTrkSideW = kSeqRightEdge - kTrkSideX;
 
 constexpr int16_t kTrkSideH = kSeqStepCount * (kDetailRowH + kDetailRowGap);
@@ -2238,8 +2298,12 @@ void saveProject(uint8_t slot) {
   for (uint8_t p = 0; p < kPatternCount; ++p) {
     for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
       for (uint8_t s = 0; s < kSeqStepCount; ++s) {
-        f.printf("STEP:%d,%d,%d,%d,%d,%d,%d,%d\n", p, t, s, seqStepOn[p][t][s] ? 1 : 0, seqStepNote[p][t][s],
-                 seqStepPatch[p][t][s], seqStepFx[p][t][s], seqStepFxVal[p][t][s]);
+        // 10 champs depuis l'ajout de PROB/COND (2026-09-17, 9e/10e champs)
+        // -- voir loadProject() pour la lecture retro-compatible des
+        // fichiers a 8 champs (avant cet ajout).
+        f.printf("STEP:%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", p, t, s, seqStepOn[p][t][s] ? 1 : 0, seqStepNote[p][t][s],
+                 seqStepPatch[p][t][s], seqStepFx[p][t][s], seqStepFxVal[p][t][s], seqStepProb[p][t][s],
+                 seqStepCondition[p][t][s]);
       }
     }
   }
@@ -2344,36 +2408,43 @@ void loadProject(uint8_t slot) {
         }
       }
     } else if (line.startsWith("STEP:")) {
-      int vals[8] = {};
+      // 10 champs depuis l'ajout de PROB/COND (2026-09-17) -- 8 champs
+      // acceptes aussi (fichiers sauvegardes avant cet ajout), prob/cond
+      // gardent alors leur valeur courante deja seedee (100/0).
+      int vals[10] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
       int idx = 0, start = 0;
       const String rest = afterColon(line);
-      for (int i = 0; i <= rest.length() && idx < 8; ++i) {
+      for (int i = 0; i <= rest.length() && idx < 10; ++i) {
         if (i == rest.length() || rest.charAt(i) == ',') {
           vals[idx++] = rest.substring(start, i).toInt();
           start = i + 1;
         }
       }
-      if (idx == 8) {
+      if (idx == 8 || idx == 10) {
         const uint8_t p = static_cast<uint8_t>(vals[0]);
         const uint8_t t = static_cast<uint8_t>(vals[1]);
         const uint8_t s = static_cast<uint8_t>(vals[2]);
-        // STEP:/NOTE:/INST:/SFX: (protocole existant) sont tous par
-        // pattern COURANT cote Teensy -- il faut d'abord basculer sur
-        // le pattern p, sinon on ecrirait dans le mauvais pattern. Le
-        // fichier est trie par pattern croissant (voir saveProject()),
-        // donc un simple "si different du dernier" suffit, pas besoin
-        // de detecter les sauts.
+        // STEP:/NOTE:/INST:/SFX:/PROB:/COND: (protocole existant) sont
+        // tous par pattern COURANT cote Teensy -- il faut d'abord
+        // basculer sur le pattern p, sinon on ecrirait dans le mauvais
+        // pattern. Le fichier est trie par pattern croissant (voir
+        // saveProject()), donc un simple "si different du dernier"
+        // suffit, pas besoin de detecter les sauts.
         if (p != lastPattern) {
           snprintf(msg, sizeof(msg), "PATTERN:%d", p);
           sendToTeensy(msg);
           lastPattern = p;
         }
+        const int prob = (idx == 10) ? vals[8] : 100;
+        const int cond = (idx == 10) ? vals[9] : 0;
         if (p < kPatternCount && t < kSeqTrackCount && s < kSeqStepCount) {
           seqStepOn[p][t][s] = vals[3] != 0;
           seqStepNote[p][t][s] = static_cast<uint8_t>(vals[4]);
           seqStepPatch[p][t][s] = static_cast<uint8_t>(vals[5]);
           seqStepFx[p][t][s] = static_cast<uint8_t>(vals[6]);
           seqStepFxVal[p][t][s] = static_cast<uint8_t>(vals[7]);
+          seqStepProb[p][t][s] = static_cast<uint8_t>(prob);
+          seqStepCondition[p][t][s] = static_cast<uint8_t>(cond);
         }
         snprintf(msg, sizeof(msg), "STEP:%d:%d:%d", t, s, vals[3]);
         sendToTeensy(msg);
@@ -2381,6 +2452,12 @@ void loadProject(uint8_t slot) {
         sendToTeensy(msg);
         if (vals[5] != 0xFF) {
           snprintf(msg, sizeof(msg), "INST:%d:%d:%d", t, s, vals[5]);
+          sendToTeensy(msg);
+        }
+        if (idx == 10) {
+          snprintf(msg, sizeof(msg), "PROB:%d:%d:%d", t, s, prob);
+          sendToTeensy(msg);
+          snprintf(msg, sizeof(msg), "COND:%d:%d:%d", t, s, cond);
           sendToTeensy(msg);
         }
         snprintf(msg, sizeof(msg), "SFX:%d:%d:%d:%d", t, s, vals[6], vals[7]);
@@ -2667,15 +2744,16 @@ void handleTeensyLine(const String &line) {
         // Sur la page SEQUENCEUR (vue tracker, voir seqDetailMode plus
         // haut), la croix edite le pas selectionne -- demande le
         // 2026-09-14 ("prend le sequenceur du dexed touch"), etendue le
-        // 2026-09-15 ("un tracker 8 pistes") : GAUCHE/DROITE choisissent
-        // la colonne (NOTE/INST/FX/VAL), HAUT/BAS modifient sa valeur.
+        // 2026-09-15 ("un tracker 8 pistes"), puis PROB/COND le 2026-09-17 :
+        // GAUCHE/DROITE choisissent la colonne (NOTE/INST/FX/VAL/PROB/COND),
+        // HAUT/BAS modifient sa valeur.
         if (pressed && currentScreen == Screen::Sequencer && selectedSeqTrack >= 0 && selectedSeqStep >= 0) {
           const uint8_t t = static_cast<uint8_t>(selectedSeqTrack);
           const uint8_t s = static_cast<uint8_t>(selectedSeqStep);
           {
             if (index == 2 || index == 3) {
               const int8_t prevCol = seqDetailCol;
-              seqDetailCol = static_cast<int8_t>((seqDetailCol + (index == 3 ? 1 : 3)) % 4);
+              seqDetailCol = static_cast<int8_t>((seqDetailCol + (index == 3 ? 1 : 5)) % 6);
               if (seqDetailCol != prevCol) {
                 drawDetailRow(s);
               }
@@ -2703,9 +2781,35 @@ void handleTeensyLine(const String &line) {
                   sendToTeensy(msg);
                   break;
                 }
-                default: {
+                case 3: {
                   const int newVal = constrain(static_cast<int>(seqStepFxVal[currentPattern][t][s]) + dir, 0, 255);
                   snprintf(msg, sizeof(msg), "SFX:%d:%d:%d:%d", t, s, seqStepFx[currentPattern][t][s], newVal);
+                  sendToTeensy(msg);
+                  break;
+                }
+                case 4: {
+                  // PROB (2026-09-17) -- +-1%, meme granularite "1 unite par
+                  // pression" que VAL ci-dessus.
+                  const int newProb = constrain(static_cast<int>(seqStepProb[currentPattern][t][s]) + dir, 0, 100);
+                  snprintf(msg, sizeof(msg), "PROB:%d:%d:%d", t, s, newProb);
+                  sendToTeensy(msg);
+                  break;
+                }
+                default: {
+                  // COND (2026-09-17) -- cycle dans az2::kStepConditionCycle
+                  // (pas un increment brut d'octet, la plupart des octets ne
+                  // sont pas des conditions valides -- voir AZ2_Protocol.h).
+                  const uint8_t current = seqStepCondition[currentPattern][t][s];
+                  int8_t curIdx = 0;
+                  for (uint8_t i = 0; i < az2::kStepConditionCycleCount; ++i) {
+                    if (az2::kStepConditionCycle[i] == current) {
+                      curIdx = static_cast<int8_t>(i);
+                      break;
+                    }
+                  }
+                  const int8_t nextIdx = static_cast<int8_t>(
+                      (curIdx + dir + az2::kStepConditionCycleCount) % az2::kStepConditionCycleCount);
+                  snprintf(msg, sizeof(msg), "COND:%d:%d:%d", t, s, az2::kStepConditionCycle[nextIdx]);
                   sendToTeensy(msg);
                   break;
                 }
@@ -2919,6 +3023,39 @@ void handleTeensyLine(const String &line) {
       if (track < kSeqTrackCount && step < kSeqStepCount && fx < kStepFxCount) {
         seqStepFx[currentPattern][track][step] = fx;
         seqStepFxVal[currentPattern][track][step] = val;
+        if (currentScreen == Screen::Sequencer && track == selectedSeqTrack && !screensaverActive) {
+          drawDetailRow(step);
+        }
+      }
+    }
+  } else if (line.startsWith("PROB:")) {
+    // Colonne PROB du tracker (voir handleProbCommand() cote Teensy).
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    const int i3 = line.indexOf(':', i2 + 1);
+    if (i1 >= 0 && i2 >= 0 && i3 >= 0) {
+      const uint8_t track = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
+      const uint8_t step = static_cast<uint8_t>(line.substring(i2 + 1, i3).toInt());
+      const uint8_t prob = static_cast<uint8_t>(line.substring(i3 + 1).toInt());
+      if (track < kSeqTrackCount && step < kSeqStepCount && prob <= 100) {
+        seqStepProb[currentPattern][track][step] = prob;
+        if (currentScreen == Screen::Sequencer && track == selectedSeqTrack && !screensaverActive) {
+          drawDetailRow(step);
+        }
+      }
+    }
+  } else if (line.startsWith("COND:")) {
+    // Colonne COND du tracker (voir handleCondCommand() cote Teensy et
+    // az2::stepConditionEncode()/stepConditionLabel() pour l'encodage).
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    const int i3 = line.indexOf(':', i2 + 1);
+    if (i1 >= 0 && i2 >= 0 && i3 >= 0) {
+      const uint8_t track = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
+      const uint8_t step = static_cast<uint8_t>(line.substring(i2 + 1, i3).toInt());
+      const uint8_t cond = static_cast<uint8_t>(line.substring(i3 + 1).toInt());
+      if (track < kSeqTrackCount && step < kSeqStepCount) {
+        seqStepCondition[currentPattern][track][step] = cond;
         if (currentScreen == Screen::Sequencer && track == selectedSeqTrack && !screensaverActive) {
           drawDetailRow(step);
         }
@@ -3365,6 +3502,7 @@ void setup() {
       for (uint8_t s = 0; s < kSeqStepCount; ++s) {
         seqStepNote[p][t][s] = kDefaultNotes[t];
         seqStepPatch[p][t][s] = 0xFF;  // meme defaut que cote Teensy (voir seedDefaultNotes())
+        seqStepProb[p][t][s] = 100;    // idem : 100% = joue toujours
       }
     }
   }
