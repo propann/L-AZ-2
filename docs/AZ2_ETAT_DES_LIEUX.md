@@ -288,3 +288,39 @@ aujourd'hui.
 - Phase 2/3 du sampler (vue d'onde en direct, decoupage tactile,
   decoupage automatique, clavier de nom, moteur de lecture) : pas
   commencees, detaillees dans AZ2_FEUILLE_DE_ROUTE.md.
+
+## Suite du 2026-09-17 -- 5 des 8 priorites indispensables faites
+
+Utilisateur parti travailler ("on attaque la feuille de route, avance
+un max"). Boards absents de cette machine tout le long -- **tout ce qui
+suit est compile-verifie uniquement**, rien vu/entendu sur le vrai
+materiel :
+
+1. **Mute/solo par piste [FAIT]** -- le piege Braids (gain de groupe =
+   porte note-on/off) resolu proprement via `trackNoteHeld[]` +
+   `applyGroupGainNow()` : mute/demute immediat meme sur une note
+   Braids tenue. Boutons C/D (page MOTEURS).
+2. **Sauvegarde/chargement de projet complet [FAIT]** -- page PROJET,
+   4 emplacements, patterns+song+tempo+gamme+moteurs+mute (pas solo).
+   Purement ESP32, zero risque audio.
+3. Swing/groove -- **pas fait** (piege timer trouve, voir feuille de
+   route).
+4. **Volume par piste [FAIT]** -- meme mecanisme que mute/solo (memes
+   fonctions `applyGroupGainNow()`/`trackEffectiveGain()`). Pan pas
+   fait (chaine mono de bout en bout).
+5. Sampler -- **phase 1 confirmee en reel hier** (ecriture SD testee),
+   phases 2/3 (vue d'onde, decoupage, nommage) pas commencees.
+6. **MIDI notes IN [FAIT]** -- MVP, route vers la voix live
+   (`liveVoice`), `USB_MIDI_SERIAL` dormait dans platformio.ini depuis
+   le debut du projet. Pas de synchro horloge, pas de MIDI OUT.
+7. Accords -- **pas fait** (plus gros que prevu, touche le meme code
+   que le bug de gel deja rencontre cette session).
+8. **Clavier tactile comme editeur live [FAIT]** -- bouton D (page
+   AUDIO) bascule "jouer en direct"/"poser sur le pas selectionne".
+
+Reste vraiment a faire, dans l'ordre : tester TOUT ce qui precede en
+reel des que les boards sont disponibles (rien n'a ete verifie
+aujourd'hui, seulement compile), puis swing et accords (les deux
+demandent du soin sur le vrai materiel a cause des pieges trouves),
+puis le sampler phase 2/3 (design UI a faire avec l'ecran sous les
+yeux).
