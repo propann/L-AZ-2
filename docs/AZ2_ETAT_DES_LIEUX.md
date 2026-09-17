@@ -365,10 +365,26 @@ pas une erreur), SONGMODE n'a pas de plage a valider (0/tout le reste
 = false), MACRO n'agit que sur l'index 1 pour l'instant (les autres
 index sont "pas encore cable", pas "invalide").
 
-Le 3e point (fenetre CUT/RETRIG a swing max) reste en attente --
-touche au comportement audio en temps reel, veut une verification sur
-materiel plus poussee (jouer un pattern avec CUT/RETRIG a swing max et
-ecouter/mesurer si l'effet manque).
+**2026-09-17 (suite) -- 3e point corrige (fenetre CUT/RETRIG a swing
+max)** : confirme le mecanisme exact du bug. `triggerStepFx()` (ARP/
+CUT/RETRIG) n'est appelee QUE dans la branche `else` (`currentTick !=
+0`) d'`advanceTick()`. Avec l'ancien plafond (`swingAmount` jusqu'a
+`kTicksPerStep-1` = 3), un pas pair au swing maximum tombait a
+`ticksForCurrentStep = 1` : `currentTick` valait alors toujours 0
+pendant tout le pas, donc cette branche `else` n'etait JAMAIS executee
+-- un CUT ou un RETRIG pose sur ce pas ne se declenchait plus du tout
+(le son jouait entier, coupe seulement par l'`allTrackNotesOff()`
+normal du pas suivant). Fix : plafonne `swingAmount` a
+`kTicksPerStep-2` (jamais moins de 2 ticks par pas) dans
+`handleSwingCommand()` -- garantit au moins UN passage dans la branche
+`else` par pas, donc au moins une chance pour CUT/RETRIG de s'appliquer
+meme sur le pas le plus raccourci. Cout : perd le tout dernier cran de
+swing le plus extreme (127/127 sur l'echelle UI) -- c'etait justement
+celui qui cassait CUT/RETRIG, aucun autre effet de bord attendu.
+Compile verifie (`pio run -e master_teensy`) ; **a confirmer a
+l'oreille sur materiel reel** (poser un CUT ou un RETRIG serre sur un
+pas pair, monter le swing au maximum, verifier que l'effet continue de
+s'entendre au lieu de disparaitre).
 
 Piste specifiquement verifiee et ECARTEE : `frame_skip` (Walnut-CGB)
 pourrait desynchroniser l'audio de la vitesse du jeu -- verifie dans le

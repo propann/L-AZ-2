@@ -582,8 +582,27 @@ volatile uint8_t currentTick = 0;
 // composent le pas EN COURS varie (ticksForCurrentStep, recalcule a
 // chaque debut de pas dans advanceTick()) -- pas pairs raccourcis, pas
 // impairs allonges d'autant, tempo moyen exact sur toute paire de pas.
-// 0-3 (kTicksPerStep-1 max, jamais 0 tick pour un pas). 0 = pas de
-// swing (comportement d'origine, tous les pas a kTicksPerStep pile).
+// 0-2 (kTicksPerStep-2 max, jamais moins de 2 ticks pour un pas -- voir
+// pourquoi juste en dessous). 0 = pas de swing (comportement d'origine,
+// tous les pas a kTicksPerStep pile).
+//
+// BUG REEL trouve lors de l'audit du code du 2026-09-17 : le max
+// autorisait avant kTicksPerStep-1 (=3), ce qui pouvait raccourcir un
+// pas pair a 1 SEUL tick (voir ticksForCurrentStep dans advanceTick()).
+// Or triggerStepFx() (ARP/CUT/RETRIG) n'est appelee QUE dans la branche
+// "sinon" (currentTick != 0) d'advanceTick() -- avec 1 seul tick,
+// currentTick vaut toujours 0 pendant tout le pas, cette branche n'etait
+// donc JAMAIS executee : un CUT ou un RETRIG pose sur un pas qui tombe
+// raccourci au maximum ne se declenchait plus du tout ce tour-la (le
+// son du pas jouait entier -- coupe seulement par l'allTrackNotesOff()
+// normal du pas suivant -- au lieu d'etre coupe/redeclenche comme
+// prevu). Fix : plafonner swingAmount a kTicksPerStep-2 (jamais moins de
+// 2 ticks par pas) garantit au moins UN passage dans la branche "sinon"
+// par pas, donc au moins une chance pour CUT/RETRIG de s'appliquer meme
+// sur le pas le plus raccourci. Perd le tout dernier cran de swing le
+// plus extreme (etait deja celui qui cassait CUT/RETRIG) ; a confirmer
+// a l'oreille sur materiel reel (jouer un pattern avec CUT/RETRIG au
+// swing maximum).
 uint8_t swingAmount = 0;
 uint8_t ticksForCurrentStep = kTicksPerStep;
 
@@ -659,11 +678,11 @@ void announceHello() {
   az2::printDivision(Serial1, stepsPerBeat);
   {
     // Reconstruit une valeur 0-127 representative depuis swingAmount
-    // (0-(kTicksPerStep-1) en interne, voir handleSwingCommand()) --
-    // conversion avec perte (127 valeurs -> 4 crans) comme a l'aller,
+    // (0-(kTicksPerStep-2) en interne, voir handleSwingCommand()) --
+    // conversion avec perte (127 valeurs -> 3 crans) comme a l'aller,
     // suffisant pour reafficher un cran coherent a la reconnexion.
     char swingMsg[16];
-    snprintf(swingMsg, sizeof(swingMsg), "SWING:%d", (swingAmount * 127) / (kTicksPerStep - 1));
+    snprintf(swingMsg, sizeof(swingMsg), "SWING:%d", (swingAmount * 127) / (kTicksPerStep - 2));
     relayLine(swingMsg);
   }
   for (uint8_t t = 0; t < kTrackCount; ++t) {
@@ -804,7 +823,9 @@ void advanceTick() {
     // Swing : voir le commentaire de swingAmount plus haut -- pas pairs
     // raccourcis, impairs allonges (classique "shuffle" de boite a
     // rythme, delai des "contretemps"). swingAmount est deja borne a
-    // kTicksPerStep-1 max par handleSwingCommand(), jamais 0 tick ici.
+    // kTicksPerStep-2 max par handleSwingCommand(), jamais moins de 2
+    // ticks ici (voir le commentaire de swingAmount pour le bug que ca
+    // evite sur CUT/RETRIG).
     ticksForCurrentStep = (currentStep % 2 == 0)
                               ? static_cast<uint8_t>(kTicksPerStep - swingAmount)
                               : static_cast<uint8_t>(kTicksPerStep + swingAmount);
@@ -1109,11 +1130,12 @@ void handleDivCommand(const String &line) {
 }
 
 // SWING:<0-127> -- voir le commentaire de swingAmount plus haut. Mappe
-// 0-127 (convention UI, meme echelle que FILT:/ENV:) vers 0-(kTicksPerStep-1)
-// en interne (seule resolution utile vu le decoupage en ticks). Ne
-// touche PAS sequencerTimer -- prend effet des le prochain debut de pas
-// (ticksForCurrentStep n'est recalcule qu'a ce moment-la), jamais en
-// cours de pas.
+// 0-127 (convention UI, meme echelle que FILT:/ENV:) vers 0-(kTicksPerStep-2)
+// en interne (pas kTicksPerStep-1 : voir le BUG REEL du 2026-09-17 dans
+// le commentaire de swingAmount -- un pas raccourci a 1 seul tick
+// empechait CUT/RETRIG de se declencher). Ne touche PAS sequencerTimer
+// -- prend effet des le prochain debut de pas (ticksForCurrentStep
+// n'est recalcule qu'a ce moment-la), jamais en cours de pas.
 void handleSwingCommand(const String &line) {
   const int idx = line.indexOf(':');
   if (idx < 0) {
@@ -1121,7 +1143,7 @@ void handleSwingCommand(const String &line) {
     return;
   }
   const int raw = constrain(line.substring(idx + 1).toInt(), 0, 127);
-  swingAmount = static_cast<uint8_t>((raw * (kTicksPerStep - 1)) / 127);
+  swingAmount = static_cast<uint8_t>((raw * (kTicksPerStep - 2)) / 127);
   relayLine(line);
 }
 
