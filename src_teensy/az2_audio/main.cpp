@@ -494,6 +494,23 @@ void relayLine(const String &line) {
   Serial1.println(line);
 }
 
+// Point note lors de l'audit du code du 2026-09-17 : une commande mal
+// formee ou hors bornes etait jusqu'ici juste ignoree en silence (return
+// sans rien dire), aucun moyen de savoir cote ESP32/USB qu'une commande
+// a ete rejetee. Reprend la convention deja utilisee par REC:ERROR:
+// (gbRecStart()) : <COMMANDE>:ERROR:<raison>, envoye sur Serial (debug
+// USB) ET Serial1 (vers l'ESP32, qui peut choisir de l'afficher ou de
+// l'ignorer -- ne casse rien pour l'UI actuelle qui ignore deja les
+// lignes non reconnues).
+void sendCommandError(const char *command, const char *reason) {
+  Serial.print(command);
+  Serial.print(":ERROR:");
+  Serial.println(reason);
+  Serial1.print(command);
+  Serial1.print(":ERROR:");
+  Serial1.println(reason);
+}
+
 // ---------------------------------------------------------------------
 // Sequenceur : 16 pas x 4 pistes, une note fixe par piste pour l'instant.
 // ---------------------------------------------------------------------
@@ -867,6 +884,7 @@ void handleStepCommand(const String &line) {
   const int idx2 = line.indexOf(':', idx1 + 1);
   const int idx3 = line.indexOf(':', idx2 + 1);
   if (idx1 < 0 || idx2 < 0 || idx3 < 0) {
+    sendCommandError("STEP", "MALFORMED");
     return;
   }
 
@@ -875,6 +893,7 @@ void handleStepCommand(const String &line) {
   const bool on = line.substring(idx3 + 1).toInt() != 0;
 
   if (track >= kTrackCount || step >= kStepCount) {
+    sendCommandError("STEP", "OUT_OF_RANGE");
     return;
   }
 
@@ -890,6 +909,7 @@ void handleNoteCommand(const String &line) {
   const int idx2 = line.indexOf(':', idx1 + 1);
   const int idx3 = line.indexOf(':', idx2 + 1);
   if (idx1 < 0 || idx2 < 0 || idx3 < 0) {
+    sendCommandError("NOTE", "MALFORMED");
     return;
   }
 
@@ -898,6 +918,7 @@ void handleNoteCommand(const String &line) {
   const int note = line.substring(idx3 + 1).toInt();
 
   if (track >= kTrackCount || step >= kStepCount || note < 0 || note > 127) {
+    sendCommandError("NOTE", "OUT_OF_RANGE");
     return;
   }
 
@@ -914,6 +935,7 @@ void handleInstCommand(const String &line) {
   const int idx2 = line.indexOf(':', idx1 + 1);
   const int idx3 = line.indexOf(':', idx2 + 1);
   if (idx1 < 0 || idx2 < 0 || idx3 < 0) {
+    sendCommandError("INST", "MALFORMED");
     return;
   }
 
@@ -922,6 +944,7 @@ void handleInstCommand(const String &line) {
   const int patch = line.substring(idx3 + 1).toInt();
 
   if (track >= kTrackCount || step >= kStepCount || patch < 0 || patch > 255) {
+    sendCommandError("INST", "OUT_OF_RANGE");
     return;
   }
 
@@ -939,6 +962,7 @@ void handleStepFxCommand(const String &line) {
   const int idx3 = line.indexOf(':', idx2 + 1);
   const int idx4 = line.indexOf(':', idx3 + 1);
   if (idx1 < 0 || idx2 < 0 || idx3 < 0 || idx4 < 0) {
+    sendCommandError("SFX", "MALFORMED");
     return;
   }
 
@@ -948,6 +972,7 @@ void handleStepFxCommand(const String &line) {
   const int val = line.substring(idx4 + 1).toInt();
 
   if (track >= kTrackCount || step >= kStepCount || fx < 0 || fx >= kStepFxCount || val < 0 || val > 255) {
+    sendCommandError("SFX", "OUT_OF_RANGE");
     return;
   }
 
@@ -967,10 +992,12 @@ void handleStepFxCommand(const String &line) {
 void handlePatternCommand(const String &line) {
   const int idx = line.indexOf(':');
   if (idx < 0) {
+    sendCommandError("PATTERN", "MALFORMED");
     return;
   }
   const int pattern = line.substring(idx + 1).toInt();
   if (pattern < 0 || pattern >= kPatternCount) {
+    sendCommandError("PATTERN", "OUT_OF_RANGE");
     return;
   }
   currentPattern = static_cast<uint8_t>(pattern);
@@ -985,11 +1012,13 @@ void handleSongSetCommand(const String &line) {
   const int idx1 = line.indexOf(':');
   const int idx2 = line.indexOf(':', idx1 + 1);
   if (idx1 < 0 || idx2 < 0) {
+    sendCommandError("SONGSET", "MALFORMED");
     return;
   }
   const int pos = line.substring(idx1 + 1, idx2).toInt();
   const int pattern = line.substring(idx2 + 1).toInt();
   if (pos < 0 || pos >= kSongLength || pattern < 0 || pattern >= kPatternCount) {
+    sendCommandError("SONGSET", "OUT_OF_RANGE");
     return;
   }
   songPatterns[pos] = static_cast<uint8_t>(pattern);
@@ -1006,10 +1035,12 @@ void handleSongSetCommand(const String &line) {
 void handleSongLenCommand(const String &line) {
   const int idx = line.indexOf(':');
   if (idx < 0) {
+    sendCommandError("SONGLEN", "MALFORMED");
     return;
   }
   const int len = line.substring(idx + 1).toInt();
   if (len < 0 || len > kSongLength) {
+    sendCommandError("SONGLEN", "OUT_OF_RANGE");
     return;
   }
   songLen = static_cast<uint8_t>(len);
@@ -1021,6 +1052,7 @@ void handleSongLenCommand(const String &line) {
 void handleSongModeCommand(const String &line) {
   const int idx = line.indexOf(':');
   if (idx < 0) {
+    sendCommandError("SONGMODE", "MALFORMED");
     return;
   }
   songMode = line.substring(idx + 1).toInt() != 0;
@@ -1031,24 +1063,28 @@ void handleSongModeCommand(const String &line) {
 void handleBpmCommand(const String &line) {
   const int idx = line.indexOf(':');
   if (idx < 0) {
+    sendCommandError("BPM", "MALFORMED");
     return;
   }
   const float value = line.substring(idx + 1).toFloat();
-  if (value >= 30.0f && value <= 300.0f) {
-    bpm = value;
-    if (playing) {
-      // Reajuste la periode de l'ISR tout de suite, sans couper/reprendre
-      // la lecture (IntervalTimer::update() change juste l'intervalle).
-      sequencerTimer.update(tickIntervalUs());
-    }
-    relayLine(line);  // confirme tel quel, l'UI ESP32/Pico affiche le tempo reel
+  if (value < 30.0f || value > 300.0f) {
+    sendCommandError("BPM", "OUT_OF_RANGE");
+    return;
   }
+  bpm = value;
+  if (playing) {
+    // Reajuste la periode de l'ISR tout de suite, sans couper/reprendre
+    // la lecture (IntervalTimer::update() change juste l'intervalle).
+    sequencerTimer.update(tickIntervalUs());
+  }
+  relayLine(line);  // confirme tel quel, l'UI ESP32/Pico affiche le tempo reel
 }
 
 // DIV:<pas par temps -- doit etre une des valeurs de az2::kDivisionOptions>
 void handleDivCommand(const String &line) {
   const int idx = line.indexOf(':');
   if (idx < 0) {
+    sendCommandError("DIV", "MALFORMED");
     return;
   }
   const uint8_t value = static_cast<uint8_t>(line.substring(idx + 1).toInt());
@@ -1061,6 +1097,7 @@ void handleDivCommand(const String &line) {
     }
   }
   if (!valid) {
+    sendCommandError("DIV", "OUT_OF_RANGE");
     return;
   }
 
@@ -1080,6 +1117,7 @@ void handleDivCommand(const String &line) {
 void handleSwingCommand(const String &line) {
   const int idx = line.indexOf(':');
   if (idx < 0) {
+    sendCommandError("SWING", "MALFORMED");
     return;
   }
   const int raw = constrain(line.substring(idx + 1).toInt(), 0, 127);
@@ -1092,11 +1130,13 @@ void handleEngineCommand(const String &line) {
   const int idx1 = line.indexOf(':');
   const int idx2 = line.indexOf(':', idx1 + 1);
   if (idx1 < 0 || idx2 < 0) {
+    sendCommandError("ENGINE", "MALFORMED");
     return;
   }
   const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
   const uint8_t engine = static_cast<uint8_t>(line.substring(idx2 + 1).toInt());
   if (track >= kTrackCount || engine >= az2::kEngineCount) {
+    sendCommandError("ENGINE", "OUT_OF_RANGE");
     return;
   }
 
@@ -1114,11 +1154,17 @@ void handlePatchCommand(const String &line) {
   const int idx1 = line.indexOf(':');
   const int idx2 = line.indexOf(':', idx1 + 1);
   if (idx1 < 0 || idx2 < 0) {
+    sendCommandError("PATCH", "MALFORMED");
     return;
   }
   const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+  if (track >= kTrackCount) {
+    sendCommandError("PATCH", "OUT_OF_RANGE");
+    return;
+  }
   const uint8_t patch = static_cast<uint8_t>(line.substring(idx2 + 1).toInt());
-  if (track >= kTrackCount || patch >= az2::enginePatchCount(trackEngine[track])) {
+  if (patch >= az2::enginePatchCount(trackEngine[track])) {
+    sendCommandError("PATCH", "OUT_OF_RANGE");
     return;
   }
 
@@ -1148,6 +1194,7 @@ void handleFxCommand(const String &line) {
   const int idx1 = line.indexOf(':');
   const int idx2 = line.indexOf(':', idx1 + 1);
   if (idx1 < 0 || idx2 < 0) {
+    sendCommandError("FX", "MALFORMED");
     return;
   }
   const String param = line.substring(idx1 + 1, idx2);
@@ -1159,6 +1206,7 @@ void handleFxCommand(const String &line) {
   } else if (param == "delay") {
     delayWet = wet;
   } else {
+    sendCommandError("FX", "UNKNOWN_PARAM");
     return;
   }
   applyMasterMix();
@@ -1180,10 +1228,12 @@ void handleVolCommand(const String &line) {
   const int idx1 = line.indexOf(':');
   const int idx2 = line.indexOf(':', idx1 + 1);
   if (idx1 < 0 || idx2 < 0) {
+    sendCommandError("VOL", "MALFORMED");
     return;
   }
   const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
   if (track >= kTrackCount) {
+    sendCommandError("VOL", "OUT_OF_RANGE");
     return;
   }
   trackVolume[track] = static_cast<uint8_t>(constrain(line.substring(idx2 + 1).toInt(), 0, 127));
@@ -1202,10 +1252,12 @@ void handleMuteCommand(const String &line) {
   const int idx1 = line.indexOf(':');
   const int idx2 = line.indexOf(':', idx1 + 1);
   if (idx1 < 0 || idx2 < 0) {
+    sendCommandError("MUTE", "MALFORMED");
     return;
   }
   const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
   if (track >= kTrackCount) {
+    sendCommandError("MUTE", "OUT_OF_RANGE");
     return;
   }
   trackMuted[track] = line.substring(idx2 + 1).toInt() != 0;
@@ -1217,10 +1269,12 @@ void handleSoloCommand(const String &line) {
   const int idx1 = line.indexOf(':');
   const int idx2 = line.indexOf(':', idx1 + 1);
   if (idx1 < 0 || idx2 < 0) {
+    sendCommandError("SOLO", "MALFORMED");
     return;
   }
   const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
   if (track >= kTrackCount) {
+    sendCommandError("SOLO", "OUT_OF_RANGE");
     return;
   }
   trackSoloed[track] = line.substring(idx2 + 1).toInt() != 0;
@@ -1235,12 +1289,14 @@ void handleFiltCommand(const String &line) {
   const int idx2 = line.indexOf(':', idx1 + 1);
   const int idx3 = line.indexOf(':', idx2 + 1);
   if (idx1 < 0 || idx2 < 0 || idx3 < 0) {
+    sendCommandError("FILT", "MALFORMED");
     return;
   }
   const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
   const int cutoff = constrain(line.substring(idx2 + 1, idx3).toInt(), 0, 127);
   const int res = constrain(line.substring(idx3 + 1).toInt(), 0, 127);
   if (track >= kTrackCount) {
+    sendCommandError("FILT", "OUT_OF_RANGE");
     return;
   }
 
@@ -1272,10 +1328,12 @@ void handleEnvCommand(const String &line) {
   const int idx4 = line.indexOf(':', idx3 + 1);
   const int idx5 = line.indexOf(':', idx4 + 1);
   if (idx1 < 0 || idx2 < 0 || idx3 < 0 || idx4 < 0 || idx5 < 0) {
+    sendCommandError("ENV", "MALFORMED");
     return;
   }
   const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
   if (track >= kTrackCount) {
+    sendCommandError("ENV", "OUT_OF_RANGE");
     return;
   }
   const int a = constrain(line.substring(idx2 + 1, idx3).toInt(), 0, 127);
@@ -1311,11 +1369,13 @@ void handleDexedParamCommand(const String &line) {
   const int idx2 = line.indexOf(':', idx1 + 1);
   const int idx3 = line.indexOf(':', idx2 + 1);
   if (idx1 < 0 || idx2 < 0 || idx3 < 0) {
+    sendCommandError("DXP", "MALFORMED");
     return;
   }
   const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
   const int index = line.substring(idx2 + 1, idx3).toInt();
   if (track >= kTrackCount) {
+    sendCommandError("DXP", "OUT_OF_RANGE");
     return;
   }
 
@@ -1326,6 +1386,7 @@ void handleDexedParamCommand(const String &line) {
     const int fb = constrain(line.substring(idx3 + 1).toInt(), 0, 7);
     trackDexedEngine[track].setVoiceDataElement(DEXED_VOICE_OFFSET + DEXED_FEEDBACK, static_cast<uint8_t>(fb));
   } else {
+    sendCommandError("DXP", "UNKNOWN_INDEX");
     return;
   }
 
@@ -1339,6 +1400,7 @@ void handleDexedParamCommand(const String &line) {
 void handleScopeCommand(const String &line) {
   const int idx = line.indexOf(':');
   if (idx < 0) {
+    sendCommandError("SCOPE", "MALFORMED");
     return;
   }
   const String param = line.substring(idx + 1);
@@ -1352,6 +1414,7 @@ void handleScopeCommand(const String &line) {
   } else {
     const int track = param.toInt();
     if (track < 0 || track >= kTrackCount) {
+      sendCommandError("SCOPE", "OUT_OF_RANGE");
       return;
     }
     scopeTrack = static_cast<int8_t>(track);
@@ -1644,11 +1707,13 @@ void handlePadCommand(const String &line) {
   const int firstColon = line.indexOf(':');
   const int secondColon = line.indexOf(':', firstColon + 1);
   if (firstColon < 0 || secondColon < 0) {
+    sendCommandError("PAD", "MALFORMED");
     return;
   }
 
   const uint8_t pad = static_cast<uint8_t>(line.substring(firstColon + 1, secondColon).toInt());
   if (!az2::validPad(pad)) {
+    sendCommandError("PAD", "OUT_OF_RANGE");
     return;
   }
 
@@ -1697,6 +1762,7 @@ void handleMacroCommand(const String &line) {
   const int firstColon = line.indexOf(':');
   const int secondColon = line.indexOf(':', firstColon + 1);
   if (firstColon < 0 || secondColon < 0) {
+    sendCommandError("MACRO", "MALFORMED");
     return;
   }
 

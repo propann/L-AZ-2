@@ -339,10 +339,36 @@ diagnostic serie du Teensy/tactile/SD, avec une seule ligne
 `DISPLAY:ERROR:BEGIN_FAILED` comme unique symptome. Compile verifie
 (`pio run -e screen_esp`) ; a verifier sur materiel reel le jour ou
 l'ecran a un vrai probleme d'init (pas teste, pas facile a provoquer
-sans debrancher l'ecran expres). Les 2 autres points (pas de NACK
-protocole, fenetre CUT/RETRIG a swing max) restent en attente --
-touchent au protocole/au comportement audio, veulent une verification
-sur materiel plus poussee.
+sans debrancher l'ecran expres).
+
+**2026-09-17 (suite) -- 2e point corrige (retour d'erreur cote
+protocole)** : les ~22 handlers de commandes texte cote Teensy
+(STEP/NOTE/INST/SFX/PATTERN/SONGSET/SONGLEN/SONGMODE/BPM/DIV/SWING/
+ENGINE/PATCH/FX/VOL/MUTE/SOLO/FILT/ENV/DXP/SCOPE/PAD/MACRO) qui
+ignoraient silencieusement une commande malformee ou hors bornes
+envoient maintenant `<COMMANDE>:ERROR:<raison>` (raison =
+`MALFORMED`, `OUT_OF_RANGE` ou `UNKNOWN_PARAM`/`UNKNOWN_INDEX` selon le
+cas) sur Serial (USB) ET Serial1 (vers l'ESP32) via le nouveau helper
+`sendCommandError()`. Reprend la convention deja existante pour
+`REC:ERROR:` (gbRecStart()), ne l'invente pas. L'ESP32 ne traite pas
+encore ces lignes specifiquement (il ignore deja les lignes non
+reconnues, donc rien ne casse), mais elles sont visibles au moins sur
+le moniteur serie USB du Teensy des maintenant -- suffisant pour le
+diagnostic manuel/les recoupements d'analyse en cours. Compile verifie
+(`pio run -e master_teensy`) ; pas de changement de comportement sur
+le chemin valide (memes conditions de validation qu'avant, juste un
+message en plus quand ca echoue) -- a confirmer sur materiel avec de
+vraies commandes hors bornes envoyees depuis l'ESP32/un script de test.
+SWING:/SONGMODE:/MACRO: n'ont qu'une erreur "MALFORMED" (ligne sans le
+bon nombre de `:`) : SWING clampe deja sa valeur (comportement voulu,
+pas une erreur), SONGMODE n'a pas de plage a valider (0/tout le reste
+= false), MACRO n'agit que sur l'index 1 pour l'instant (les autres
+index sont "pas encore cable", pas "invalide").
+
+Le 3e point (fenetre CUT/RETRIG a swing max) reste en attente --
+touche au comportement audio en temps reel, veut une verification sur
+materiel plus poussee (jouer un pattern avec CUT/RETRIG a swing max et
+ecouter/mesurer si l'effet manque).
 
 Piste specifiquement verifiee et ECARTEE : `frame_skip` (Walnut-CGB)
 pourrait desynchroniser l'audio de la vitesse du jeu -- verifie dans le
