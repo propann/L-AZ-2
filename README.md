@@ -105,3 +105,10 @@ pio run -e screen_esp -t upload
 ```
 
 Headers partages dans `lib/` (`AZ2_Protocol.h`).
+
+## Licence
+
+Code AZ-2 sous **GNU GPLv3** (voir `LICENSE`). Voir
+[`docs/AZ2_LICENCES.md`](docs/AZ2_LICENCES.md) pour la licence et la
+provenance de chaque composant tiers vendored (moteurs synthese,
+pilote ecran, emulateur Game Boy).

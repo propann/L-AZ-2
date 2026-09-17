@@ -26,6 +26,43 @@ sequenceur, protocole verse/CRC/ack, etude concurrentielle M8/Polyend/
 Elektron/etc.) restent valables et utiles independamment du bug de
 branche.
 
+**[2026-09-17, suite]** Chantier "hygiene du depot" demande par
+l'utilisateur suite a l'audit externe ("on reste libre pour la licence
+et on fait tout ce qu'il faut") :
+
+- **Licence** : `LICENSE` (GPLv3) ajoute a la racine + inventaire complet
+  dans `docs/AZ2_LICENCES.md` -- GPLv3 choisi parce que `Synth_MDA_EPiano`
+  (moteur EPIANO, GPLv3 uniquement) est deja reellement compile dans le
+  binaire `master_teensy`, ce n'etait donc pas un choix arbitraire.
+  Point ouvert note dans ce doc : la licence de `Synth_Braids` n'est pas
+  documentee dans ce vendoring, a verifier avant toute distribution
+  binaire plus large.
+- **Plateformes PlatformIO figees** : `platform = teensy` ->
+  `teensy@6.0.0`, et les deux environnements ESP32 pointent maintenant
+  explicitement vers le meme tag de release pioarduino
+  (`55.03.311`) au lieu de l'alias mouvant `stable` (ou de
+  `espressif32` nu, qui resolvait silencieusement vers ce meme fork
+  installe localement -- pas reproductible tel quel sur une autre
+  machine).
+- **Dependance morte retiree** : `lvgl` (declaree dans `screen_esp`
+  depuis le debut du projet, jamais utilisee -- 0 reference a `lv_`/
+  `lvgl.h` dans `az2_screen/`, le menu/tracker sont dessines a la main
+  via GFX Library for Arduino) + `include/lv_conf.h` (784 lignes,
+  meme sort).
+- **~89 Mo de bloat vendored supprimes** : 2 manuels PDF de
+  MicroDexed-touch (66+3.2 Mo, doc de l'UI d'origine qu'on ne garde pas)
+  et `drumsamples.h` (20 Mo, jamais compile). `retro-go-master`/
+  `Launcher_lvgl-master` etaient deja supprimes avant.
+- **CI ajoutee** (`.github/workflows/build.yml`) : compile les 3
+  environnements (`master_teensy`, `screen_esp`, `ui_esp`) a chaque push/
+  PR sur GitHub Actions. Ne remplace pas un test materiel, mais
+  detecte automatiquement une regression de compilation au lieu de la
+  decouvrir des semaines plus tard.
+
+Compile verifie en local pour les 3 environnements apres tous ces
+changements (`pio run -e master_teensy -e screen_esp -e ui_esp` ->
+SUCCESS) avant de pousser.
+
 **[Rafraichi le 2026-09-17]** -- ce document a commence comme un topo
 ponctuel (2026-09-15) puis est devenu un journal chronologique (sections
 datees plus bas, gardees pour l'historique). Les 3 sections qui suivent
