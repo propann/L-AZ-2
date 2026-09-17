@@ -51,6 +51,18 @@ TRACKERS_GROOVEBOXES_2026.md) face a Elektron/Digitakt.
   demesure). Note lors de l'audit du code du 2026-09-17 matin, deprioritise
   puis corrige ce soir (meme convention que savePatchSlot()/
   saveProject(), qui font deja ce remove()). Compile verifie.
+- **Licence Synth_Braids resolue** : MIT confirme en lisant les entetes
+  des fichiers vendored (Mutable Instruments, Emilie/Olivier Gillet) --
+  voir AZ2_LICENCES.md, plus de point ouvert.
+- **Premiers tests automatises AZ-2** (`env:native`, `test/
+  test_protocol/`, voir "Tests et integration continue : absents"
+  dans l'audit) : 9 tests unitaires sur la logique PURE de
+  AZ2_Protocol.h (encodage PROB:/COND:, tables division/moteur/pad),
+  tournent sur CETTE machine via `pio test -e native` (ArduinoFake
+  fournit un Arduino.h factice, le header partage n'est pas modifie).
+  `pio test -e native` -> 9/9 PASSED. Hors `default_envs`, n'affecte
+  pas les 3 environnements materiels (recompiles avec succes juste
+  apres pour confirmer).
 
 **[2026-09-17, important pour toute future analyse externe]** `main`
 etait reste fige au tout premier commit du projet (`b3eeae8`, 13

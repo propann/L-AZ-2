@@ -1,0 +1,133 @@
+// Tests unitaires natifs (tournent sur CETTE machine, pas sur du materiel
+// AZ2 -- voir env:native dans platformio.ini) pour la logique PURE de
+// lib/AZ2_Protocol/AZ2_Protocol.h : encodage/decodage des conditions de
+// declenchement par pas (PROB:/COND:, ajoutees le 2026-09-17), et quelques
+// autres helpers sans dependance materielle (division/moteur/pad).
+//
+// Premier test AZ2 automatise (voir "Tests et integration continue :
+// absents pour AZ-2, risque eleve" dans AZ2_AUDIT_TECHNIQUE_COMPLET_
+// 2026-09-17.md) -- ne remplace pas une verification sur materiel reel
+// (rien ici ne touche a l'audio/l'ecran/le tactile), mais couvre au moins
+// la logique de calcul qui ne depend d'aucun peripherique.
+//
+// ArduinoFake fournit un Arduino.h/Print factice pour que AZ2_Protocol.h
+// (ecrit pour Arduino, pas pour du code natif) compile ici sans rien
+// changer au header lui-meme -- ce sont les memes fonctions que celles
+// utilisees par les 2 vrais firmwares, pas une reimplementation separee.
+#include <ArduinoFake.h>
+#include <unity.h>
+
+#include <AZ2_Protocol.h>
+
+void test_step_condition_always_is_zero() {
+  TEST_ASSERT_EQUAL_UINT8(0, az2::kStepCondAlways);
+  TEST_ASSERT_TRUE(az2::stepConditionMet(az2::kStepCondAlways, 0, false));
+  TEST_ASSERT_TRUE(az2::stepConditionMet(az2::kStepCondAlways, 12345, true));
+}
+
+void test_step_condition_encode_decode_ratio() {
+  // 1:2 -- joue le 1er passage sur 2 (loopCount pair, 0-indexe).
+  const uint8_t oneOfTwo = az2::stepConditionEncode(1, 2);
+  TEST_ASSERT_TRUE(az2::stepConditionMet(oneOfTwo, 0, false));
+  TEST_ASSERT_FALSE(az2::stepConditionMet(oneOfTwo, 1, false));
+  TEST_ASSERT_TRUE(az2::stepConditionMet(oneOfTwo, 2, false));
+  TEST_ASSERT_FALSE(az2::stepConditionMet(oneOfTwo, 3, false));
+
+  // 2:2 -- l'inverse exact de 1:2.
+  const uint8_t twoOfTwo = az2::stepConditionEncode(2, 2);
+  TEST_ASSERT_FALSE(az2::stepConditionMet(twoOfTwo, 0, false));
+  TEST_ASSERT_TRUE(az2::stepConditionMet(twoOfTwo, 1, false));
+
+  // 3:4 -- ne joue qu'au 3e passage sur 4 (index 2 dans un cycle 0-3).
+  const uint8_t threeOfFour = az2::stepConditionEncode(3, 4);
+  for (uint32_t loop = 0; loop < 12; ++loop) {
+    const bool expected = (loop % 4) == 2;
+    TEST_ASSERT_EQUAL_MESSAGE(expected, az2::stepConditionMet(threeOfFour, loop, false),
+                               "3:4 doit jouer uniquement quand loopCount%4==2");
+  }
+}
+
+void test_step_condition_encode_rejects_out_of_range() {
+  // K > N, N > 8 ou K/N == 0 -> retombe sur kStepCondAlways plutot que de
+  // produire un octet invalide (voir le commentaire de stepConditionEncode()).
+  TEST_ASSERT_EQUAL_UINT8(az2::kStepCondAlways, az2::stepConditionEncode(3, 2));
+  TEST_ASSERT_EQUAL_UINT8(az2::kStepCondAlways, az2::stepConditionEncode(0, 4));
+  TEST_ASSERT_EQUAL_UINT8(az2::kStepCondAlways, az2::stepConditionEncode(1, 0));
+  TEST_ASSERT_EQUAL_UINT8(az2::kStepCondAlways, az2::stepConditionEncode(1, 9));
+}
+
+void test_step_condition_fill_and_not_fill() {
+  TEST_ASSERT_TRUE(az2::stepConditionMet(az2::kStepCondFill, 0, true));
+  TEST_ASSERT_FALSE(az2::stepConditionMet(az2::kStepCondFill, 0, false));
+  TEST_ASSERT_TRUE(az2::stepConditionMet(az2::kStepCondNotFill, 0, false));
+  TEST_ASSERT_FALSE(az2::stepConditionMet(az2::kStepCondNotFill, 0, true));
+}
+
+void test_step_condition_label_matches_encoding() {
+  char buf[8];
+
+  az2::stepConditionLabel(az2::kStepCondAlways, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("---", buf);
+
+  az2::stepConditionLabel(az2::kStepCondFill, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("FILL", buf);
+
+  az2::stepConditionLabel(az2::kStepCondNotFill, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("!FIL", buf);
+
+  az2::stepConditionLabel(az2::stepConditionEncode(2, 4), buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("2:4", buf);
+}
+
+void test_step_condition_cycle_contains_only_valid_entries() {
+  // Chaque entree du cycle propose a l'ecran (voir seqDetailCol cote
+  // ESP32) doit etre soit une des 2 valeurs speciales, soit un octet que
+  // stepConditionEncode() aurait vraiment pu produire (K<=N<=8) -- sinon
+  // le cycle afficherait un octet que l'utilisateur ne pourrait pas
+  // re-obtenir en repartant de zero.
+  for (uint8_t i = 0; i < az2::kStepConditionCycleCount; ++i) {
+    const uint8_t cond = az2::kStepConditionCycle[i];
+    if (cond == az2::kStepCondAlways || cond == az2::kStepCondFill || cond == az2::kStepCondNotFill) {
+      continue;
+    }
+    const uint8_t n = static_cast<uint8_t>(cond >> 4);
+    const uint8_t k = static_cast<uint8_t>(cond & 0x0F);
+    TEST_ASSERT_TRUE_MESSAGE(k >= 1 && k <= n && n <= 8, "octet du cycle hors du domaine valide");
+    TEST_ASSERT_EQUAL_UINT8(cond, az2::stepConditionEncode(k, n));
+  }
+}
+
+void test_division_label_known_values() {
+  TEST_ASSERT_EQUAL_STRING("1/16", az2::divisionLabel(4));  // valeur d'origine (pas de swing)
+  TEST_ASSERT_EQUAL_STRING("1/4", az2::divisionLabel(1));
+  TEST_ASSERT_EQUAL_STRING("?", az2::divisionLabel(99));  // valeur non presente dans kDivisionOptions
+}
+
+void test_pad_id_and_valid_pad() {
+  TEST_ASSERT_EQUAL_UINT8(0, az2::padId(0, 0));
+  TEST_ASSERT_EQUAL_UINT8(5, az2::padId(1, 1));  // ligne 1, colonne 1 -> 1*4+1
+  TEST_ASSERT_TRUE(az2::validPad(0));
+  TEST_ASSERT_TRUE(az2::validPad(15));
+  TEST_ASSERT_FALSE(az2::validPad(16));
+}
+
+void test_engine_patch_count_and_name() {
+  TEST_ASSERT_EQUAL_UINT8(8, az2::enginePatchCount(az2::kEngineDexed));
+  TEST_ASSERT_EQUAL_UINT8(1, az2::enginePatchCount(az2::kEngineKarplus));  // un seul "patch" possible
+  TEST_ASSERT_EQUAL_STRING("DEXED", az2::engineName(az2::kEngineDexed));
+  TEST_ASSERT_EQUAL_STRING("?", az2::engineName(99));  // moteur invalide -> pas de crash, "?" attendu
+}
+
+int main(int argc, char **argv) {
+  UNITY_BEGIN();
+  RUN_TEST(test_step_condition_always_is_zero);
+  RUN_TEST(test_step_condition_encode_decode_ratio);
+  RUN_TEST(test_step_condition_encode_rejects_out_of_range);
+  RUN_TEST(test_step_condition_fill_and_not_fill);
+  RUN_TEST(test_step_condition_label_matches_encoding);
+  RUN_TEST(test_step_condition_cycle_contains_only_valid_entries);
+  RUN_TEST(test_division_label_known_values);
+  RUN_TEST(test_pad_id_and_valid_pad);
+  RUN_TEST(test_engine_patch_count_and_name);
+  return UNITY_END();
+}
