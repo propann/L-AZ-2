@@ -80,6 +80,13 @@ slide (demande une modulation continue, pas juste discrete par tick),
 probabilite/chance (facile a ajouter plus tard, pure RNG au moment du
 declenchement, independant du reste).
 
+**[FAIT le 2026-09-17 soir]** Probabilite/chance, exactement comme
+anticipe ci-dessus (RNG au moment du declenchement, independant du
+reste des effets) -- et etendue avec des conditions "K sur N" style
+Elektron + FILL/!FILL (`PROB:`/`COND:`/`FILL:`, voir AZ2_Protocol.h et
+AZ2_ETAT_DES_LIEUX.md). Demande explicitement pour "faire un truc qui
+eclate tout" sur le tracker.
+
 ## Recommandation de mise en oeuvre (ordre)
 
 **[Mise a jour 2026-09-17 : les 4 etapes ci-dessous sont FAITES]** --
