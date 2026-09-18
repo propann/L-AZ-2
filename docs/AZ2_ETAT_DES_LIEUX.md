@@ -1,5 +1,62 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-18, session de flash -- BUG REEL confirme sur DEXED, pas
+materiel]** Long diagnostic en direct avec l'utilisateur sur un
+"souffle" audio signale des le premier flash. Piste materielle (SCK/GND
+du PCM5102A) explorée et ecartee : ressoudee par l'utilisateur, souffle
+inchange. Diagnostic definitif par elimination binaire (MUTE: piste par
+piste, 8 tests) :
+
+- **Toutes les pistes coupees = silence total.** Chaque piste
+  DEMUTEE INDIVIDUELLEMENT (0 a 7, une par une, testee sur le vrai
+  materiel) = silence, aucune ne produit de bruit seule au repos.
+- **Le GB (ESP32, meme DAC final) est confirme propre** par
+  l'utilisateur -- ecarte un probleme materiel/DAC/SCK generique,
+  toute la chaine de sortie fonctionne.
+- **DEXED specifiquement, quand une note est reellement declenchee,
+  produit du bruit au lieu d'un son** -- confirme par test isole
+  (piste 0 = DEXED, solo, note tenue -> "gros souffle pas de note").
+- **ANALOG (onde simple), meme test isole, est confirme propre**
+  ("la c'est bon") -- pas un probleme general du moteur audio/mixeur,
+  specifique a DEXED.
+- Le souffle "en silence total" du tout debut de la session s'explique
+  par une note DEXED restee active suite a mes tests series du matin
+  (STEP:/NOTE:/PLAY puis STOP) -- `stopSequencer()`/`allTrackNotesOff()`
+  appelle bien `trackDexedEngine[track].keyup()`, mais quelque chose
+  dans Synth_Dexed ne redescend pas franchement a zero (hypothese : 
+  instabilite numerique de la boucle de feedback FM, type probleme de
+  nombres denormaux -- classique en DSP, la sortie ne s'eteint jamais
+  vraiment tant que le denormal persiste). Seul un power-cycle complet
+  a nettoye l'etat -- pas rejouable a la demande avec juste STOP/PLAY.
+
+**A faire (prochaine session, pas urgent pour continuer a tester)** :
+creuser `src_teensy/microdexed-touch/third-party/Synth_Dexed/` pour la
+vraie cause (verifier le traitement des denormaux dans la boucle de
+feedback FM, comparer avec la reference MicroDexed-touch pour un
+eventuel flag/optimisation manquant cote AZ-2). **En attendant, eviter
+DEXED** -- EPIANO/BRAIDS/KARPLUS/ANALOG semblent utilisables (testes
+individuellement sans souffle residuel, pas encore ecoutes en train de
+vraiment jouer sauf ANALOG).
+
+Bugs UI corriges en route pendant cette session de flash (voir
+commits) : navigation par pas au D-pad manquante (fix rate 1 : modif
+via C, jamais teste car BTN:C n'a jamais genere d'evenement sur ce
+montage physique -- fix rate 2 : roles HAUT/BAS <-> A inverses suite
+au retour utilisateur, HAUT/BAS navigue par defaut, A maintenu edite),
+et colonne NOTE qui n'affichait jamais rien tant que le pas etait OFF
+(corrige : editer la note allume desormais le pas automatiquement).
+
+**Signale, pas encore investigue** : bouton C ne genere jamais
+d'evenement malgre plusieurs tests (cablage a verifier) ; page
+SEQUENCEUR, le panneau "patch actif" ("cadre patch") signale comme peu
+utilisable/rien ne se modifie dedans -- possiblement lie au
+retrecissement du panneau (~194px -> ~106px) par les colonnes PRB/CND
+ajoutees hier soir, a verifier a l'ecran.
+
+**Demande produit notee pour plus tard** : patches "officiels" de
+chaque moteur (vrais patchs DX7/EPiano/Braids) a integrer, edition de
+patch, sauvegarde -- gros chantier, pas pour cette session.
+
 **[2026-09-18 matin -- ESP32 flashe, les 2 cartes tournent ensemble]**
 `pio run -e screen_esp -t upload --upload-port /dev/ttyUSB0` (CH340).
 Boot propre : `DISPLAY:READY` (ecran VIEWE reel initialise),

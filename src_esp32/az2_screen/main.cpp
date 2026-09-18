@@ -2747,22 +2747,30 @@ void handleTeensyLine(const String &line) {
         // Sur la page SEQUENCEUR (vue tracker, voir seqDetailMode plus
         // haut), la croix edite le pas selectionne -- demande le
         // 2026-09-14 ("prend le sequenceur du dexed touch"), etendue le
-        // 2026-09-15 ("un tracker 8 pistes"), puis PROB/COND le 2026-09-17 :
-        // GAUCHE/DROITE choisissent la colonne (NOTE/INST/FX/VAL/PROB/COND),
-        // HAUT/BAS modifient sa valeur.
+        // 2026-09-15 ("un tracker 8 pistes"), puis PROB/COND le 2026-09-17.
+        // Roles inverses le 2026-09-18 (retour utilisateur sur materiel reel,
+        // "faut un bouton pour changer les valeurs et descendre avec les
+        // fleches") : HAUT/BAS SEULS deplacent le pas selectionne (l'action
+        // la plus frequente, disponible sans rien maintenir). A maintenu +
+        // HAUT/BAS edite la valeur a la place -- **A**, pas C : plusieurs
+        // captures serie sur le vrai materiel montrent BTN:A:DOWN/UP a
+        // chaque appui, mais AUCUN BTN:C:* n'est jamais arrive malgre
+        // plusieurs essais utilisateur -- bouton C probablement pas
+        // fonctionnel sur ce montage (a netement verifier au multimetre/
+        // continuite plus tard, pas urgent : A suffit). GAUCHE/DROITE
+        // choisissent toujours la colonne (NOTE/INST/FX/VAL/PROB/COND),
+        // inchange.
         if (pressed && currentScreen == Screen::Sequencer && selectedSeqTrack >= 0 && selectedSeqStep >= 0) {
           const uint8_t t = static_cast<uint8_t>(selectedSeqTrack);
           const uint8_t s = static_cast<uint8_t>(selectedSeqStep);
           {
-            // C maintenu + HAUT/BAS = deplace le pas SELECTIONNE (2026-09-18,
-            // bug reel trouve en testant sur le vrai materiel -- "avec la
-            // croix je peux pas descendre dans la fenetre" : rien ne
-            // deplacait selectedSeqStep sauf un TAP tactile direct sur une
-            // ligne (hitStep, voir plus bas), impossible a faire au
-            // D-pad/joystick seul. C etait libre sur cet ecran (avant
-            // l'ajout de FILL sur D le 2026-09-17), reutilise comme
-            // modificateur -- HAUT/BAS restent "edite la valeur" sans C.
-            if (btnState[2] && (index == 0 || index == 1)) {
+            if (index == 2 || index == 3) {
+              const int8_t prevCol = seqDetailCol;
+              seqDetailCol = static_cast<int8_t>((seqDetailCol + (index == 3 ? 1 : 5)) % 6);
+              if (seqDetailCol != prevCol) {
+                drawDetailRow(s);
+              }
+            } else if ((index == 0 || index == 1) && !btnState[0]) {
               const int8_t prevStep = selectedSeqStep;
               const int8_t delta = (index == 0) ? -1 : 1;
               selectedSeqStep = static_cast<int8_t>(
@@ -2771,17 +2779,23 @@ void handleTeensyLine(const String &line) {
                 drawDetailRow(static_cast<uint8_t>(prevStep));
                 drawDetailRow(static_cast<uint8_t>(selectedSeqStep));
               }
-            } else if (index == 2 || index == 3) {
-              const int8_t prevCol = seqDetailCol;
-              seqDetailCol = static_cast<int8_t>((seqDetailCol + (index == 3 ? 1 : 5)) % 6);
-              if (seqDetailCol != prevCol) {
-                drawDetailRow(s);
-              }
             } else if (index == 0 || index == 1) {
               const int dir = (index == 0) ? 1 : -1;
               char msg[24];
               switch (seqDetailCol) {
                 case 0: {
+                  // Bug reel trouve le 2026-09-18 sur materiel : la colonne
+                  // NOTE n'affiche jamais rien tant que le pas est OFF
+                  // (drawDetailRow() force "---"), et rien au bouton/croix
+                  // ne permettait d'allumer un pas (seul un tap tactile sur
+                  // la ligne le faisait) -- editer semblait "ne rien faire".
+                  // Fix : poser une note allume automatiquement le pas,
+                  // comme dans tout vrai tracker (LSDJ/M8 : entrer une note
+                  // active la ligne).
+                  if (!seqStepOn[currentPattern][t][s]) {
+                    snprintf(msg, sizeof(msg), "STEP:%d:%d:1", t, s);
+                    sendToTeensy(msg);
+                  }
                   const uint8_t newNote = nextNoteInScale(seqStepNote[currentPattern][t][s], static_cast<int8_t>(dir));
                   snprintf(msg, sizeof(msg), "NOTE:%d:%d:%d", t, s, newNote);
                   sendToTeensy(msg);
