@@ -85,20 +85,28 @@ en jouant une note, jusqu'a redemarrage complet" -- ce dernier pattern
 ressemble plus a une corruption d'etat numerique DANS le calcul FM une
 fois une voix declenchee (pas a une allocation qui echoue).
 
-**Bug separe trouve en cours de route** : l'oscilloscope (`SCOPE:`) ne
-renvoie AUCUN paquet binaire (verifie par capture serie brute, aucun
-octet 0x02 sur plusieurs essais, meme avec PLAY actif) alors que la
-commande est bien acceptee (relayee sans erreur) -- pas investigue plus
-loin faute de temps, mais un outil precieux a reparer en priorite pour
-la prochaine session : sans lui, diagnostiquer un bug audio comme celui
-de DEXED se fait a l'aveugle (comme cette session).
+**[CORRIGE] Fausse alerte sur SCOPE:, erreur de methode de test, pas un
+bug** : je capturais `/dev/ttyACM0` (port USB du Teensy, `Serial`) en
+cherchant les paquets binaires du scope -- mais `updateScope()` les
+ecrit sur `Serial1` (`Serial1.write(...)`, voir le code), la liaison
+UART DEDIEE vers l'ESP32, jamais visible sur le port USB. Rien ne
+prouve que le scope soit casse ; je n'ai simplement jamais pu
+l'observer avec les outils que j'avais sous la main (pas d'acces a la
+liaison UART Teensy<->ESP32 directement, seulement aux 2 ports USB).
+**A verifier plutot en regardant l'ecran** : la page PATCH doit
+afficher une forme d'onde en jouant une note sur la piste choisie --
+verification visuelle, pas cote serie. Si le scope marche vraiment (a
+confirmer), il reste l'outil naturel pour visualiser precisement ce
+que produit DEXED plutot que d'en deviner la forme.
 
 **Conclusion honnete** : la vraie cause du bruit DEXED (probablement
 dans le coeur FM de `src_teensy/microdexed-touch/third-party/
 Synth_Dexed/src/` -- fm_core.cpp/fm_op_kernel.cpp/dx7note.cpp) demande
-un vrai outillage (SCOPE: fonctionnel au minimum) pour etre
-diagnostiquee sans deviner. Pas fait cette session -- **en attendant,
-eviter DEXED**, utiliser EPIANO/BRAIDS/KARPLUS/ANALOG.
+de VOIR la forme d'onde reelle pour etre diagnostiquee sans deviner --
+la page PATCH (SCOPE:) est l'outil pour ca, a verifier a l'ecran au
+prochain reveil du materiel plutot qu'a l'aveugle. Pas fait cette
+session -- DEXED n'est plus le moteur par defaut d'aucune piste (voir
+plus bas), evite tant que non repare.
 
 **[2026-09-18, session de flash -- BUG REEL confirme sur DEXED, pas
 materiel]** Long diagnostic en direct avec l'utilisateur sur un
