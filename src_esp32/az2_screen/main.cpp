@@ -32,6 +32,7 @@
 #include <math.h>
 #include <SPI.h>
 #include <SD.h>
+#include <esp_heap_caps.h>
 #include "gb_emulator.h"
 
 namespace {
@@ -1147,8 +1148,11 @@ void drawSequencerPage() {
 // Meme motif que seedDefaultNotes() cote Teensy (Dexed/Dexed/EPiano/
 // Braids repete sur les pistes 4-7) -- juste le defaut affiche avant
 // que announceHello() ne confirme l'etat reel a la connexion.
-uint8_t trackEngine[kSeqTrackCount] = {az2::kEngineDexed, az2::kEngineDexed, az2::kEngineEPiano, az2::kEngineBraids,
-                                        az2::kEngineDexed, az2::kEngineDexed, az2::kEngineEPiano, az2::kEngineBraids};
+// Doit rester identique aux valeurs de boot du Teensy. DEXED est encore
+// selectionnable, mais pas active par defaut tant que son souffle sur le
+// materiel reel n'est pas resolu.
+uint8_t trackEngine[kSeqTrackCount] = {az2::kEngineAnalog, az2::kEngineAnalog, az2::kEngineEPiano, az2::kEngineBraids,
+                                      az2::kEngineAnalog, az2::kEngineAnalog, az2::kEngineEPiano, az2::kEngineBraids};
 uint8_t trackPatch[kSeqTrackCount] = {0, 0, 0, 0, 0, 0, 0, 0};
 // Mute/solo (MUTE:/SOLO:, priorite #1 de la liste indispensable) --
 // bascules cote Teensy dans trackMuted[]/trackSoloed[]/trackEffectiveGain(),
@@ -3656,7 +3660,19 @@ constexpr int16_t kGbScreenTop = (kScreenSize - kGbScaledH) / 2;
 // stabiliser"), moins d'appels = moins de surcharge par appel vers le
 // bus RGB parallele.
 void gbBlitLine(int line, const uint16_t *row) {
-  static uint16_t scaledBlock[kGbScaledW * 3];
+  // Construire l'image complete en PSRAM puis l'envoyer en UNE seule
+  // transaction au panneau RGB. L'ancien chemin faisait 144 appels
+  // draw16bitRGBBitmap() par image.
+  static uint16_t *frame = nullptr;
+  if (frame == nullptr) {
+    frame = static_cast<uint16_t *>(
+        heap_caps_malloc(static_cast<size_t>(kGbScaledW) * kGbScaledH * sizeof(uint16_t), MALLOC_CAP_SPIRAM));
+  }
+  // Repli sûr sans PSRAM : conserver le rendu par bandes.
+  static uint16_t fallbackBlock[kGbScaledW * 3];
+  uint16_t *scaledBlock = frame != nullptr
+                              ? frame + static_cast<size_t>(line) * kGbScaledW * 3
+                              : fallbackBlock;
   for (int x = 0; x < 160; ++x) {
     const uint16_t c = row[x];
     const int16_t base = static_cast<int16_t>(x * 3);
@@ -3668,8 +3684,14 @@ void gbBlitLine(int line, const uint16_t *row) {
   memcpy(scaledBlock + kGbScaledW, scaledBlock, kGbScaledW * sizeof(uint16_t));
   memcpy(scaledBlock + kGbScaledW * 2, scaledBlock, kGbScaledW * sizeof(uint16_t));
 
-  const int16_t y = static_cast<int16_t>(kGbScreenTop + line * 3);
-  gfx->draw16bitRGBBitmap(0, y, scaledBlock, kGbScaledW, 3);
+  if (frame != nullptr) {
+    if (line == 143) {
+      gfx->draw16bitRGBBitmap(0, kGbScreenTop, frame, kGbScaledW, kGbScaledH);
+    }
+  } else {
+    const int16_t y = static_cast<int16_t>(kGbScreenTop + line * 3);
+    gfx->draw16bitRGBBitmap(0, y, scaledBlock, kGbScaledW, 3);
+  }
 }
 
 void setup() {
@@ -4119,14 +4141,26 @@ void loop() {
   // (retour utilisateur : "c'est cote vitesse qu'on est pas bon" sur
   // les jeux GBC) pour MESURER la cadence reelle au lieu de deviner --
   // imprime "GB:FPS:<n>" une fois par seconde pendant une partie.
-  static uint32_t lastGbFrameMs = 0;
+  // Frequence GB reelle : ~59,7275 Hz, soit 16 742 us. L'ancien
+  // intervalle entier de 17 ms plafonnait deja la machine a 58,8 FPS.
+  constexpr uint32_t kGbFramePeriodUs = 16742;
+  static uint32_t nextGbFrameUs = 0;
   static uint32_t gbFrameCount = 0;
   static uint32_t gbFpsWindowStartMs = 0;
   if (currentScreen == Screen::Retro && gbIsLoaded() && !screensaverActive) {
-    if (now - lastGbFrameMs >= 17) {
-      lastGbFrameMs = now;
+    const uint32_t nowUs = micros();
+    if (nextGbFrameUs == 0) {
+      nextGbFrameUs = nowUs;
+    }
+    if (static_cast<int32_t>(nowUs - nextGbFrameUs) >= 0) {
       gbRunFrame();
       ++gbFrameCount;
+      nextGbFrameUs += kGbFramePeriodUs;
+      // Ne pas lancer une rafale pour rattraper un gros retard : UI et
+      // commandes doivent rester reactives.
+      if (static_cast<int32_t>(nowUs - nextGbFrameUs) > static_cast<int32_t>(kGbFramePeriodUs * 2)) {
+        nextGbFrameUs = nowUs + kGbFramePeriodUs;
+      }
     }
     if (now - gbFpsWindowStartMs >= 1000) {
       Serial.print("GB:FPS:");
@@ -4135,6 +4169,7 @@ void loop() {
       gbFpsWindowStartMs = now;
     }
   } else {
+    nextGbFrameUs = 0;
     gbFrameCount = 0;
     gbFpsWindowStartMs = now;
   }
