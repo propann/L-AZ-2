@@ -2754,7 +2754,24 @@ void handleTeensyLine(const String &line) {
           const uint8_t t = static_cast<uint8_t>(selectedSeqTrack);
           const uint8_t s = static_cast<uint8_t>(selectedSeqStep);
           {
-            if (index == 2 || index == 3) {
+            // C maintenu + HAUT/BAS = deplace le pas SELECTIONNE (2026-09-18,
+            // bug reel trouve en testant sur le vrai materiel -- "avec la
+            // croix je peux pas descendre dans la fenetre" : rien ne
+            // deplacait selectedSeqStep sauf un TAP tactile direct sur une
+            // ligne (hitStep, voir plus bas), impossible a faire au
+            // D-pad/joystick seul. C etait libre sur cet ecran (avant
+            // l'ajout de FILL sur D le 2026-09-17), reutilise comme
+            // modificateur -- HAUT/BAS restent "edite la valeur" sans C.
+            if (btnState[2] && (index == 0 || index == 1)) {
+              const int8_t prevStep = selectedSeqStep;
+              const int8_t delta = (index == 0) ? -1 : 1;
+              selectedSeqStep = static_cast<int8_t>(
+                  constrain(static_cast<int>(selectedSeqStep) + delta, 0, static_cast<int>(kSeqStepCount) - 1));
+              if (selectedSeqStep != prevStep) {
+                drawDetailRow(static_cast<uint8_t>(prevStep));
+                drawDetailRow(static_cast<uint8_t>(selectedSeqStep));
+              }
+            } else if (index == 2 || index == 3) {
               const int8_t prevCol = seqDetailCol;
               seqDetailCol = static_cast<int8_t>((seqDetailCol + (index == 3 ? 1 : 5)) % 6);
               if (seqDetailCol != prevCol) {
