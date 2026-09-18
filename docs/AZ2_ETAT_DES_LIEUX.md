@@ -41,6 +41,35 @@ appelables par des boutons dans le cadre". Confirme la meme direction
 que les points 1-3 ci-dessus, precise le contenu exact des boutons a
 prevoir.
 
+**Spec complete donnee ensuite (meme conversation, apres test du fix
+croix de la page PATCH -- voir plus bas)** :
+
+- **Page MOTEURS** : doit devenir une vraie LISTE de tous les moteurs
+  disponibles (DEXED/EPIANO/BRAIDS/KARPLUS/ANALOG), pour attribuer l'un
+  d'eux a la piste choisie -- pas juste cycler un a la fois comme
+  aujourd'hui.
+- **Page PATCH** : gerer les patchs de TOUS les moteurs -- selectionner
+  (le patch integre du moteur, ex. "FM-Rhodes"), regler (deja fait :
+  filtre/ADSR/DXP via la croix, voir fix plus bas), **sauvegarder**
+  (existe deja cote tactile -- `savePatchSlot()`/`loadPatchSlot()`/
+  `patchSlot`, voir le code -- juste pas encore accessible au bouton/
+  croix). Le choix du MOTEUR lui-meme et du PATCH INTEGRE ne sont PAS
+  pilotables au bouton sur cette page actuellement (seuls filtre/ADSR/
+  volume le sont depuis le fix ci-dessous) -- **pas assez de place
+  verticale dans la mise en page actuelle** (6 lignes + volume
+  remplissent deja l'ecran) pour rajouter ces 2 controles sans repenser
+  la mise en page -- **vrai redesign a faire**, pas un ajustement.
+- **Nouvel outil EFFET** (n'existe pas) : choisir la piste, activer/
+  regler un effet, sauvegarder -- effets PAR PISTE, extension
+  d'architecture cote Teensy (voir point 2 plus haut, FX:reverb/delay
+  actuels sont sur le bus maitre global uniquement).
+- **Les 2 fenetres PATCH et EFFET appelables depuis le panneau lateral
+  du tracker** (memes boutons que decrits plus haut).
+
+Toujours pas commence (meme raison : gros chantier de mise en page +
+nouvelle architecture d'effets, a faire dans une session dediee, pas en
+direct).
+
 **[2026-09-18, suite du diagnostic DEXED]** Ajoute `checkHeap()` /
 commande `HEAP?` (mallinfo(), voir le commentaire dans le code) pour
 verifier la piste "allocation echouee silencieusement" (`new` sans
