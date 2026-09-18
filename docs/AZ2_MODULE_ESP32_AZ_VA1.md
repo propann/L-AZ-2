@@ -1,6 +1,8 @@
 # AZ-2 — Premier module moteur ESP32 : AZ-VA1
 
-**Statut : conception du prototype. Aucun câblage définitif ni firmware moteur n’est encore validé sur le matériel.**
+**Statut : concept AZ-3. Aucun câblage ni firmware moteur à intégrer dans l’AZ-2 actuel.**
+
+**Décision 2026-09-18 :** le prototype AZ-2 est physiquement plein. AZ-VA1 reste une étude et un futur banc externe ; son intégration en cartouche est réservée à un châssis AZ-3 conçu avec davantage d’espace.
 
 ## Décision
 
@@ -34,7 +36,7 @@ Le Teensy possède déjà Dexed, ePiano, Braids, Karplus et un oscillateur analo
 
 Format cible : 44,1 kHz, stéréo, 16 bits pour le premier banc. Le passage en 24 bits ne vient qu’après mesure : davantage de bits ne répare jamais un moteur qui décroche.
 
-## Audio numérique et broche à récupérer
+## Audio numérique envisagé pour AZ-3
 
 Le PCM5102A utilise déjà :
 
@@ -42,7 +44,7 @@ Le PCM5102A utilise déjà :
 - Teensy 20 : LRCLK ;
 - Teensy 7 : DATA vers le DAC.
 
-L’entrée I2S standard du Teensy utilise la ligne DATA IN sur la broche 8. Cette broche est actuellement attribuée au bouton B dans le plan AZ-2. Pour recevoir directement le moteur externe dans le mixeur numérique :
+L’entrée I2S standard du Teensy utilise la ligne DATA IN sur la broche 8. Cette broche est actuellement attribuée au bouton B dans le plan AZ-2. Pour un futur prototype AZ-3, l’ancienne étude envisageait :
 
 | Fonction actuelle | Modification proposée |
 | --- | --- |
@@ -54,7 +56,7 @@ L’entrée I2S standard du Teensy utilise la ligne DATA IN sur la broche 8. Cet
 
 Le Teensy reste maître I2S. Le module ESP32 doit fonctionner en émetteur I2S esclave, cadencé par BCLK/LRCLK du Teensy. Il ne doit jamais injecter sa propre horloge sur ces lignes.
 
-Ce déplacement n’est pas à réaliser avant un test de continuité et un firmware de banc. La documentation de câblage principale ne sera figée qu’après validation réelle.
+**Ne pas effectuer ce déplacement sur l’AZ-2.** Le bouton B reste câblé comme aujourd’hui. Les numéros ci-dessous sont seulement des notes de banc pour AZ-3 et devront être redéfinis avec son futur PCB.
 
 ## Contrôle et maintenance du slot
 
