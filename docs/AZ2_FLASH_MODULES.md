@@ -89,22 +89,22 @@ Sources actuelles : src_teensy/az2_audio/main.cpp et AZ2_CABLAGE_MASTER.md.
 
 ## Proposition de slot V1
 
-Il n’est pas nécessaire de déplacer les encodeurs : les broches 26–31 offrent déjà les lignes nécessaires.
+Il n’est pas nécessaire de déplacer les encodeurs : les broches 26–35 offrent déjà les lignes nécessaires. La paire 28/29 est la candidate UART matérielle à confirmer sur le banc.
 
 | Fonction | Broche proposée | Rôle |
 | --- | --- | --- |
-| MOD_RX | 26 | Réception contrôle/flash |
-| MOD_TX | 27 | Émission contrôle/flash |
-| MOD_RESET | 28 | Réinitialisation cible |
-| MOD_BOOT | 29 | Sélection chargeur cible |
-| MOD_DETECT | 30 | Détection/identité, optionnelle |
-| MOD_READY | 31 | Sécurité audio/état, optionnelle |
+| MOD_RX | 28 | Réception contrôle/flash, paire UART candidate |
+| MOD_TX | 29 | Émission contrôle/flash, paire UART candidate |
+| MOD_RESET | 30 | Réinitialisation cible |
+| MOD_BOOT | 31 | Sélection chargeur cible |
+| MOD_DETECT | 32 | Détection/identité, optionnelle |
+| MOD_READY | 33 | Sécurité audio/état, optionnelle |
 
 **Cette affectation n’est pas encore à figer sur PCB.** Il faut vérifier que la paire choisie correspond bien au port UART matériel retenu. RESET/BOOT peuvent rester sur des GPIO ordinaires.
 
 Ordre de récupération des lignes :
 
-1. Utiliser 26–31 sans déplacer de commande.
+1. Utiliser 28–33 sans déplacer de commande ; garder 26/27 en réserve.
 2. Garder 10–13 pour SPI/extension rapide.
 3. Les broches de la croix et A-D peuvent servir seulement aux essais si elles ne sont pas encore câblées.
 4. Déplacer un encodeur en dernier recours ; un expandeur GPIO peut récupérer neuf lignes mais ajoute latence et complexité.
