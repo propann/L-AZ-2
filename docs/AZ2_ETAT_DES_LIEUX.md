@@ -1,5 +1,60 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-18, soir -- bruit blanc elargi a 4 moteurs sur 5, cause
+toujours pas trouvee malgre une investigation poussee]**
+
+Retour utilisateur sur le vrai materiel : en testant EPIANO/BRAIDS/
+KARPLUS un par un (meme protocole que le test DEXED d'hier), les 3
+produisent **le meme bruit blanc, decrit comme identique** par
+l'utilisateur. **Seul ANALOG reste confirme propre.** Ca elargit
+fortement le probleme -- ce n'est PAS specifique a DEXED (ni a une
+bibliotheque vendored en particulier, puisque KARPLUS est un objet
+Teensy Audio Library OFFICIEL, pas du code tiers).
+
+Tests faits pour isoler la cause :
+
+- **MUTE:0:1 pendant que le bruit joue -> silence.** Confirme que le
+  bruit vient bien de la piste 0 (pas d'une autre piste mal coupee).
+- **FILT:0:0:0 (filtre ferme a 20Hz) -> silence total.** FILT:0:64:0
+  (coupure intermediaire ~600Hz) -> **une vraie note courte redevient
+  audible, melangee a des "petits clacs"**. Ca prouve que le moteur
+  produit un signal musical REEL, pas juste du bruit -- quelque chose
+  d'autre (haute frequence, large bande) le noie/domine a coupure
+  grande ouverte (reglage par defaut).
+- **Hypothese testee : enveloppe partagee.** `trackAnalogEnv[]`
+  (jusqu'ici reservee a ANALOG) est devenue le point de passage
+  OBLIGE des 5 moteurs avant le filtre (`patchTrackIn[]` alimente
+  maintenant toujours l'enveloppe, pas le filtre directement ;
+  `trackNoteOn()`/`trackNoteOff()` declenchent cette enveloppe pour
+  tous). Raisonnement : les 4 moteurs casses alimentaient le filtre
+  resonant DIRECTEMENT (sans jamais garantir un zero strict entre les
+  notes), contrairement a ANALOG. **Teste sur le vrai materiel : AUCUN
+  changement audible.** Le fix est garde (enveloppe ADSR partagee =
+  amelioration raisonnable en soi, memes attaques/coupures plus
+  propres a terme), mais ce n'etait PAS la cause du bruit.
+- **Oscilloscope (SCOPE:) -- FAUSSE PISTE, retiree.** Dump brut des
+  echantillons ajoute temporairement cote ESP32 (lecture directe sur
+  Serial1, pas commis) : KARPLUS montre des valeurs qui sautent entre
+  0 et 255 sans forme coherente -- semble confirmer du "vrai bruit".
+  **Mais ANALOG (confirme propre a l'oreille) montre EXACTEMENT le
+  meme genre de valeurs chaotiques** avec le meme outil. Conclusion :
+  **le chemin de transmission SCOPE lui-meme a un bug** (corruption
+  entre le Teensy et l'ESP32, ou dans la reception cote ESP32) --
+  invalide toute conclusion tiree de ce dump. Code de dump retire
+  (jamais commis dans l'historique). A investiguer separement, PAS un
+  indice fiable pour le bruit des moteurs.
+
+**Conclusion honnete** : la cause reste inconnue ce soir malgre
+plusieurs pistes testees en direct sur le vrai materiel. Le pattern
+(4 moteurs distincts, dont un objet Teensy Audio Library officiel,
+touches identiquement ; seul ANALOG epargne) pointe vers quelque chose
+de commun a la CHAINE DE SIGNAL ou a l'ALLOCATION MEMOIRE partagee
+(voir aussi le tas critique -- 1.6 Ko libres -- note le 2026-09-18
+matin), pas vers un bug isole dans une bibliotheque. Prochaine piste
+serieuse : reparer d'abord le bug SCOPE (transmission des paquets
+Teensy->ESP32), pour avoir un vrai outil de mesure de forme d'onde
+avant de continuer a deviner.
+
 **[2026-09-18, GB : rendu video corrige, UART monte a 921600, confirme
 en reel]**
 

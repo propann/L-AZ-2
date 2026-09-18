@@ -26,11 +26,26 @@ constexpr uint32_t kControlBaud = 921600;
 // ESP32]. Pas de saut de ligne, pas de contenu ASCII -- le lecteur cote
 // Teensy doit reconnaitre l'octet magique AVANT d'accumuler une ligne
 // texte (voir readStream()/AudioRxState dans src_teensy/az2_audio/
-// main.cpp). Debit choisi expres bas (8 kHz mono 8 bits = 8 Ko/s) pour
-// tenir large dans le budget du lien 230400 bauds (~23 Ko/s bruts)
-// mele au reste du trafic de controle.
+// main.cpp).
+//
+// PLAFOND REEL A CONNAITRE avant de monter ce chiffre encore plus haut :
+// la longueur du paquet est un SEUL OCTET (max 255), et le nombre
+// d'echantillons par paquet vaut AUDIO_SAMPLE_RATE/VERTICAL_SYNC (voir
+// minigb_apu.h, VERTICAL_SYNC ~= 59.7275 Hz, la vraie cadence GB) --
+// donc AUDIO_SAMPLE_RATE ne doit jamais depasser ~15200 Hz (255*59.7275)
+// sous peine de deborder ce champ et de corrompre le flux (paquets
+// audio ET commandes qui suivent, tout le lecteur AudioRxState cote
+// Teensy se desynchronise). 14000 Hz choisi le 2026-09-18 (etait 8000)
+// -- palier A de AZ2_EMULATION_JEUX.md, avec de la marge (234
+// echantillons/paquet, pas 255) -- rendu possible par le passage a
+// 921600 bauds (kControlBaud ci-dessus, ~92 Ko/s bruts ; 14 kHz mono 8
+// bits = 14 Ko/s, tient large). Pour aller plus haut (ex. 22050 Hz vise
+// a l'origine dans AZ2_ETAT_DES_LIEUX.md), il FAUT d'abord elargir ce
+// champ de longueur a 16 bits (protocole audio V2, deja note dans la
+// feuille de route) -- pas fait ici, cible volontairement gardee sous
+// le plafond actuel plutot que de risquer un paquet mal forme.
 constexpr uint8_t kGbAudioPacketMagic = 0x01;
-constexpr uint32_t kGbAudioSampleRate = 8000;
+constexpr uint32_t kGbAudioSampleRate = 14000;
 
 // Oscilloscope, Teensy -> ESP32 cette fois (demande 2026-09-15, "une
 // fenetre ou on voit l'onde du son jouer evoluer en modifiant le

@@ -78,13 +78,29 @@ AudioSynthKarplusStrong trackKarplusEngine[kTrackCount];  // corde pincee, pas d
 // selectionnable, cote patchTrackIn[], c'est la SORTIE de l'enveloppe,
 // pas l'oscillateur directement).
 AudioSynthWaveform trackAnalogWave[kTrackCount];
+// BUG REEL trouve le 2026-09-18 (retour utilisateur : "du bruit blanc"
+// identique sur DEXED/EPIANO/BRAIDS/KARPLUS, mais ANALOG toujours
+// propre) -- isole en direct : fermer le filtre (FILT:) fait
+// disparaitre le bruit, l'ouvrir a moitie laisse une "courte note"
+// audible sous des "petits clacs". Les 4 moteurs autres qu'ANALOG
+// alimentaient trackFilter[] DIRECTEMENT (patchTrackIn[], voir
+// setTrackEngine() plus bas) -- sans passage par une enveloppe, RIEN
+// ne garantit un signal a zero strict entre les notes. AudioEffect-
+// Envelope, lui, retombe a zero EXACT au repos (voir trackAnalogEnv[]
+// ci-dessous) : c'est pour ca qu'ANALOG (le seul a passer par une
+// enveloppe avant le filtre) restait propre -- le filtre resonant
+// (AudioFilterStateVariable, boucle a retroaction) accumule/colore le
+// moindre residu non-nul en continu, jusqu'a produire ce bruit.
+// Fix : trackAnalogEnv[] devient une enveloppe PARTAGEE par les 5
+// moteurs (pas juste ANALOG) -- patchTrackIn[] alimente maintenant
+// TOUJOURS l'enveloppe (jamais le filtre directement), et
+// trackNoteOn()/trackNoteOff() declenchent cette enveloppe pour TOUS
+// les moteurs, pas seulement ANALOG (voir plus bas). L'ancienne
+// connexion fixe oscillateur->enveloppe (patchAnalogEnv[]) disparait :
+// patchTrackIn[] s'en charge desormais dynamiquement, comme pour les
+// 4 autres moteurs. La connexion FIXE enveloppe->filtre
+// (patchEnvToFilter[]) est declaree plus bas, apres trackFilter[].
 AudioEffectEnvelope trackAnalogEnv[kTrackCount];
-AudioConnection patchAnalogEnv[kTrackCount] = {
-    AudioConnection(trackAnalogWave[0], 0, trackAnalogEnv[0], 0), AudioConnection(trackAnalogWave[1], 0, trackAnalogEnv[1], 0),
-    AudioConnection(trackAnalogWave[2], 0, trackAnalogEnv[2], 0), AudioConnection(trackAnalogWave[3], 0, trackAnalogEnv[3], 0),
-    AudioConnection(trackAnalogWave[4], 0, trackAnalogEnv[4], 0), AudioConnection(trackAnalogWave[5], 0, trackAnalogEnv[5], 0),
-    AudioConnection(trackAnalogWave[6], 0, trackAnalogEnv[6], 0), AudioConnection(trackAnalogWave[7], 0, trackAnalogEnv[7], 0),
-};
 AudioSynthDexed liveVoice(kLiveNotes, SAMPLE_RATE);   // voix live (pads/ecran), pas concernee par le choix de moteur
 
 constexpr float kBraidsActiveGain = 0.5f;  // meme niveau que les autres pistes
@@ -149,11 +165,23 @@ int8_t scopeTrack = -1;         // -1 = desactive
 // audible tant qu'on ne touche pas FILT:, voir handleFiltCommand()).
 AudioFilterStateVariable trackFilter[kTrackCount];
 
+// Connexion FIXE enveloppe -> filtre, POUR LES 5 MOTEURS (2026-09-18,
+// voir le commentaire de trackAnalogEnv[] plus haut pour le bug que ca
+// corrige) -- trackAnalogEnv[track] est desormais le seul chemin vers
+// trackFilter[track], quel que soit le moteur actif de la piste.
+AudioConnection patchEnvToFilter[kTrackCount] = {
+    AudioConnection(trackAnalogEnv[0], 0, trackFilter[0], 0), AudioConnection(trackAnalogEnv[1], 0, trackFilter[1], 0),
+    AudioConnection(trackAnalogEnv[2], 0, trackFilter[2], 0), AudioConnection(trackAnalogEnv[3], 0, trackFilter[3], 0),
+    AudioConnection(trackAnalogEnv[4], 0, trackFilter[4], 0), AudioConnection(trackAnalogEnv[5], 0, trackFilter[5], 0),
+    AudioConnection(trackAnalogEnv[6], 0, trackFilter[6], 0), AudioConnection(trackAnalogEnv[7], 0, trackFilter[7], 0),
+};
+
 // Une connexion "prise" par piste, rebranchee vers le moteur actif de
 // cette piste (voir setTrackEngine()) -- pas connectee au demarrage,
 // setup() choisit le moteur par defaut de chaque piste comme n'importe
-// quel autre changement. Pointe desormais vers trackFilter[track], pas
-// directement le mixeur de groupe (voir patchFilterToGroup[] plus bas).
+// quel autre changement. Pointe desormais vers trackAnalogEnv[track]
+// (2026-09-18, TOUS moteurs -- voir plus haut), pas directement le
+// filtre ni le mixeur de groupe.
 AudioConnection patchTrackIn[kTrackCount];
 // Connexion FIXE filtre -> groupe (channel deterministe par piste, pas
 // besoin d'etre dynamique comme patchTrackIn[]) -- pistes 0-3 sur
@@ -433,28 +461,30 @@ void setTrackEngine(uint8_t track, uint8_t engine) {
   trackEngine[track] = engine;
   trackPatch[track] = 0;
 
-  // patchTrackIn[] rebranche l'ENTREE du filtre de la piste (voir
-  // trackFilter[]/patchFilterToGroup[] plus haut), pas le groupe
-  // directement -- le filtre reste branche au groupe en permanence.
+  // patchTrackIn[] rebranche l'ENTREE de l'enveloppe partagee de la
+  // piste (2026-09-18, voir le commentaire de trackAnalogEnv[]/
+  // patchEnvToFilter[] plus haut -- CHAQUE moteur passe maintenant par
+  // cette enveloppe avant le filtre, pas seulement ANALOG). Le filtre
+  // et le groupe restent branches en permanence en aval.
   patchTrackIn[track].disconnect();
   switch (engine) {
     case az2::kEngineDexed:
-      patchTrackIn[track].connect(trackDexedEngine[track], 0, trackFilter[track], 0);
+      patchTrackIn[track].connect(trackDexedEngine[track], 0, trackAnalogEnv[track], 0);
       break;
     case az2::kEngineEPiano:
-      patchTrackIn[track].connect(trackEPianoEngine[track], 0, trackFilter[track], 0);
+      patchTrackIn[track].connect(trackEPianoEngine[track], 0, trackAnalogEnv[track], 0);
       break;
     case az2::kEngineBraids:
-      patchTrackIn[track].connect(trackBraidsEngine[track], 0, trackFilter[track], 0);
+      patchTrackIn[track].connect(trackBraidsEngine[track], 0, trackAnalogEnv[track], 0);
       break;
     case az2::kEngineKarplus:
-      patchTrackIn[track].connect(trackKarplusEngine[track], 0, trackFilter[track], 0);
+      patchTrackIn[track].connect(trackKarplusEngine[track], 0, trackAnalogEnv[track], 0);
       break;
     case az2::kEngineAnalog:
-      // Le point de connexion "moteur" est la SORTIE de l'enveloppe, pas
-      // l'oscillateur directement (voir trackAnalogEnv[]/patchAnalogEnv[]
-      // plus haut, chaine en permanence).
-      patchTrackIn[track].connect(trackAnalogEnv[track], 0, trackFilter[track], 0);
+      // L'oscillateur alimente maintenant l'enveloppe partagee via
+      // patchTrackIn[] (comme les 4 autres moteurs) -- plus de
+      // connexion fixe dediee (ancien patchAnalogEnv[], supprime).
+      patchTrackIn[track].connect(trackAnalogWave[track], 0, trackAnalogEnv[track], 0);
       break;
   }
 
@@ -766,9 +796,13 @@ void trackNoteOn(uint8_t track, uint8_t note, uint8_t velocity) {
     case az2::kEngineAnalog:
       trackAnalogWave[track].frequency(midiNoteToFreq(note));
       trackAnalogWave[track].amplitude(0.8f);
-      trackAnalogEnv[track].noteOn();
       break;
   }
+  // Enveloppe PARTAGEE par les 5 moteurs (2026-09-18, voir le
+  // commentaire de trackAnalogEnv[] plus haut) -- declenchee ici pour
+  // TOUS, pas seulement ANALOG (qui l'utilisait deja seul avant ce
+  // fix).
+  trackAnalogEnv[track].noteOn();
 }
 
 void trackNoteOff(uint8_t track, uint8_t note) {
@@ -780,8 +814,11 @@ void trackNoteOff(uint8_t track, uint8_t note) {
       trackGroupMixer(track).gain(trackGroupChannel(track), 0.0f);
       break;
     case az2::kEngineKarplus: trackKarplusEngine[track].noteOff(1.0f); break;
-    case az2::kEngineAnalog: trackAnalogEnv[track].noteOff(); break;
+    case az2::kEngineAnalog: break;
   }
+  // Meme enveloppe partagee qu'a l'allumage ci-dessus -- coupe TOUS les
+  // moteurs, pas seulement ANALOG.
+  trackAnalogEnv[track].noteOff();
 }
 
 void allTrackNotesOff() {
