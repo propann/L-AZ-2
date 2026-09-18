@@ -287,10 +287,53 @@ constexpr uint8_t kEngineCount = 6;
 
 constexpr const char *kEngineNames[kEngineCount] = {"DEXED", "EPIANO", "BRAIDS", "KARPLUS", "ANALOG", "SAMPLER"};
 
-constexpr uint8_t kDexedPatchCount = 8;
+constexpr uint8_t kDexedPatchCount = 255;
+// 255 des 256 vrais patches d'usine du Yamaha DX7 original (banques
+// ROM1-ROM4, A et B) -- voir src_teensy/az2_audio/az2_dexed_bank_data.h
+// pour les octets/le commentaire complet (meme source, meme ordre,
+// MEME TAILLE que cote Teensy -- les deux DOIVENT rester synchronises
+// a la main). 255 et PAS 256 : 0xFF (255) est deja le sentinel "pas
+// d'override de patch par pas" (voir stepPatch/seqStepPatch) -- un
+// vrai patch DEXED numero 255 serait indiscernable de ce sentinel, le
+// tout dernier patch de ROM4B ("EXPLOSION") est donc volontairement
+// laisse de cote.
 constexpr const char *kDexedPatchNames[kDexedPatchCount] = {
-    "FM-Rhodes", "Steinway", "Korg CX3", "Leadharp",
-    "FatSynth A", "Jupiter 8", "Mini-Moog", "Moog Strings",
+    "BRASS   1", "BRASS   2", "BRASS   3", "STRINGS 1", "STRINGS 2", "STRINGS 3", "ORCHESTRA", 
+    "PIANO   1", "PIANO   2", "PIANO   3", "E.PIANO 1", "GUITAR  1", "GUITAR  2", "SYN-LEAD 1", 
+    "BASS    1", "BASS    2", "E.ORGAN 1", "PIPES   1", "HARPSICH 1", "CLAV    1", "VIBE    1", 
+    "MARIMBA", "KOTO", "FLUTE   1", "ORCH-CHIME", "TUB BELLS", "STEEL DRUM", "TIMPANI", 
+    "REFS WHISL", "VOICE   1", "TRAIN", "TAKE OFF", "PIANO   4", "PIANO   5", "E.PIANO 2", 
+    "E.PIANO 3", "E.PIANO 4", "PIANO 5THS", "CELESTE", "TOY PIANO", "HARPSICH 2", "HARPSICH 3", 
+    "CLAV    2", "CLAV    3", "E.ORGAN 2", "E.ORGAN 3", "E.ORGAN 4", "E.ORGAN 5", "PIPES   2", 
+    "PIPES   3", "PIPES   4", "CALIOPE", "ACCORDION", "SITAR", "GUITAR  3", "GUITAR  4", 
+    "GUITAR  5", "GUITAR  6", "LUTE", "BANJO", "HARP    1", "HARP    2", "BASS    3", "BASS    4", 
+    "PICCOLO", "FLUTE   2", "OBOE", "CLARINET", "SAX BC", "BASSOON", "STRINGS 4", "STRINGS 5", 
+    "STRINGS 6", "STRINGS 7", "STRINGS 8", "BRASS   4", "BRASS   5", "BRASS 6 BC", "BRASS   7", 
+    "BRASS   8", "RECORDER", "HARMONICA1", "HRMNCA2 BC", "VOICE   2", "VOICE   3", "GLOKENSPL", 
+    "VIBE    2", "XYLOPHONE", "CHIMES", "GONG    1", "GONG    2", "BELLS", "COW BELL", "BLOCK", 
+    "FLEXATONE", "LOG DRUM", "SYN-LEAD 2", "SYN-LEAD 3", "SYN-LEAD 4", "SYN-LEAD 5", "SYN-CLAV 1", 
+    "SYN-CLAV 2", "SYN-CLAV 3", "SYN-PIANO", "SYNBRASS 1", "SYNBRASS 2", "SYNORGAN 1", 
+    "SYNORGAN 2", "SYN-VOX", "SYN-ORCH", "SYN-BASS 1", "SYN-BASS 2", "HARP-FLUTE", "BELL-FLUTE", 
+    "E.P-BRS BC", "T.BL-EXPA", "CHIME-STRG", "B.DRM-SNAR", "SHIMMER", "EVOLUTION", "WATER GDN", 
+    "WASP STING", "LASER GUN", "DESCENT", "OCTAVE WAR", "GRAND PRIX", "ST.HELENS", "EXPLOSION", 
+    "FLUTE   1", "HARPSICH 1", "STRG ENS 1", "BRIGHT BOW", "BRASSHORNS", "BR TRUMPET", "MARIMBA", 
+    "E.PIANO 1", "PIANO   1", "PIPES   1", "E.ORGAN 1", "E.BASS  1", "CLAV    1", "HARMONICA1", 
+    "JAZZ GUIT1", "PRC SYNTH1", "SAX BC", "FRETLESS 1", "HARP    1", "TIMPANI", "HEAVYMETAL", 
+    "STEEL DRUM", "SYN-LEAD 1", "VOICES BC", "CLAV ENS", "LASERSWEEP", "TUB ERUPT", "GRAND PRIX", 
+    "REFS WHISL", "TRAIN", "BRASS S H", "TAKE OFF", "PIANO   2", "E.GRAND 1", "E.GRAND 2", 
+    "HONKY TONK", "E.PIANO 2", "E.PIANO 3", "E.PIANO 4", "CELESTE", "FUNK CLAV", "CLAV ENS 2", 
+    "PERC CLAV", "HARPSICH 2", "E.ORGAN 2", "E.ORGAN 3", "60-S ORGAN", "PIPES   2", "PIPES   3", 
+    "CALIOPE", "ACCORDION", "TOY PIANO", "SITAR", "KOTO", "JAZZ GUIT2", "SPANISHGTR", "FOLK GUIT", 
+    "LUTE", "BANJO", "CLAS.GUIT", "HARP    2", "E.BASS  2", "FRETLESS 2", "PLUCK BASS", "PICCOLO", 
+    "FLUTE   2", "OBOE", "CLARINET", "BASSOON", "PAN FLUTE", "LEAD BRASS", "HORNS", "SOLO TBONE", 
+    "BRASS BC", "BRASS 5THS", "SYNTHBRASS", "STRG QRT 1", "STRG ENS 2", "VIOLA SECN", "STRGS LOW", 
+    "HIGH STRGS", "PIZZ STGS", "STG CRSNDO", "STGS 5THS", "BELLS", "TUB BELLS", "RECORDERS", 
+    "CHIMES", "VOICES", "XYLOPHONE", "COWBELL", "WOOD BLOCK", "FLEXATONE", "LOG DRUM", "GLOKENSPL", 
+    "VIBE", "CLAV-E.PNO", "PERC BRASS", "PRC SYNTH2", "HARPSI-STG", "CHIME-STRG", "HARP-FLUTE", 
+    "BELL-FLUTE", "STRG-CHIME", "STRG-MARIM", "STRG-PIZZT", "ORCHESTRA", "LEAD GUITR", "PIANO-BRS", 
+    "BRS-CHIME", "B.DRM-SNAR", "E.P-BRS BC", "ORG-BRS BC", "CLV-BRS BC", "WHISTLES", "FILTER SWP", 
+    "FUNKY RISE", "WILD BOAR", "SHIMMER", "EVOLUTION", "WATER GDN", "WASP STING", "MULTI NOTE", 
+    "DESCENT", "OCTAVE WAR", "..GOTCHA..", "ST.HELENS",
 };
 
 constexpr uint8_t kEPianoPatchCount = 5;
@@ -328,7 +371,12 @@ constexpr const char *kAnalogPatchNames[kAnalogPatchCount] = {
 constexpr uint8_t kSamplerPatchCount = 2;
 constexpr const char *kSamplerPatchNames[kSamplerPatchCount] = {"Kick", "Snare"};
 
-inline uint8_t enginePatchCount(uint8_t engine) {
+// uint16_t (pas uint8_t) depuis le passage de DEXED a 256 patches
+// (2026-09-18, voir kDexedPatchCount plus haut) -- un uint8_t aurait
+// tronque 256 en 0, transformant tout "% count" en division par zero
+// (comportement indefini) partout ou ce compte sert a boucler sur les
+// patches (voir les appelants, ESP32 ET Teensy).
+inline uint16_t enginePatchCount(uint8_t engine) {
   switch (engine) {
     case kEngineDexed: return kDexedPatchCount;
     case kEngineEPiano: return kEPianoPatchCount;

@@ -112,8 +112,13 @@ void test_pad_id_and_valid_pad() {
 }
 
 void test_engine_patch_count_and_name() {
-  TEST_ASSERT_EQUAL_UINT8(8, az2::enginePatchCount(az2::kEngineDexed));
-  TEST_ASSERT_EQUAL_UINT8(1, az2::enginePatchCount(az2::kEngineKarplus));  // un seul "patch" possible
+  // 255 depuis le 2026-09-18 ("recuperer un max de patch") -- 255 des
+  // 256 vraies voix d'usine du Yamaha DX7 original (ROM1-ROM4), pas
+  // 256 : 0xFF/255 est deja le sentinel "pas d'override de patch par
+  // pas" ailleurs dans le protocole (stepPatch/seqStepPatch), voir le
+  // commentaire de kDexedPatchCount dans AZ2_Protocol.h.
+  TEST_ASSERT_EQUAL_UINT16(255, az2::enginePatchCount(az2::kEngineDexed));
+  TEST_ASSERT_EQUAL_UINT16(1, az2::enginePatchCount(az2::kEngineKarplus));  // un seul "patch" possible
   TEST_ASSERT_EQUAL_STRING("DEXED", az2::engineName(az2::kEngineDexed));
   TEST_ASSERT_EQUAL_STRING("?", az2::engineName(99));  // moteur invalide -> pas de crash, "?" attendu
 }

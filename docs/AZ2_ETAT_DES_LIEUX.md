@@ -1,5 +1,38 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-18, nuit -- DEXED passe de 8 a 255 vrais patches d'usine
+DX7 (ROM1-ROM4), teste sur le vrai materiel]**
+
+Suite de "recuperer un max de patch pour tout les moteur". Trouvaille :
+`src_teensy/microdexed-touch/third-party/Synth_Dexed/examples/Banks/
+banks.h`, deja vendored dans le repo, contient **320 vrais patches DX7**
+(10 banques x 32 -- generes par `sysex2c.py`), dont les 8 vraies
+banques ROM d'usine du Yamaha DX7 ORIGINAL (rom1a/rom1b/rom2a/rom2b/
+rom3a/rom3b/rom4a/rom4b = 256 patches, les presets les plus connus/
+reconnaissables du DX7 -- BRASS, STRINGS, E.PIANO, etc.) -- jamais
+exploite avant ce soir, on n'utilisait que 8 patches choisis a la main.
+
+- **255 des 256 patches ROM extraits** (script Python ponctuel, voir
+  l'historique git) vers `src_teensy/az2_audio/az2_dexed_bank_data.h`
+  -- noms EXTRAITS DU SYSEX lui-meme (pas retapes), memes octets bruts
+  que le DX7 d'origine. **Pas 256** : le tout dernier patch (ROM4B
+  "EXPLOSION") est volontairement laisse de cote -- 0xFF/255 est deja
+  le sentinel "pas d'override de patch par pas" (`stepPatch`/
+  `seqStepPatch`, ESP32 ET Teensy) ; un vrai patch DEXED numero 255
+  aurait ete indiscernable de ce sentinel.
+- **Bug trouve et corrige au passage** : `enginePatchCount()`
+  (`AZ2_Protocol.h`) retournait un `uint8_t` -- un compte de 256
+  (avant la decouverte du piege 0xFF ci-dessus) s'y serait tronque en
+  0, transformant tout `% count` en division par zero (comportement
+  indefini) partout ou ce compte sert a boucler sur les patches.
+  Elargi en `uint16_t`, 3 sites d'appel ESP32 corriges au meme type.
+- **Teste sur le vrai materiel** : patches 0/127/254 joues a la suite
+  sur la meme piste isolee, confirme 3 sons distincts sur toute la
+  plage ("oui son different").
+- Les autres moteurs restent inchanges ce soir cote patches
+  (BRAIDS/EPIANO/ANALOG/KARPLUS/SAMPLER) -- prochaine piste si le
+  temps le permet.
+
 **[2026-09-18, nuit -- 6e moteur : SAMPLER, premier son embarque, teste
 sur le vrai materiel]**
 

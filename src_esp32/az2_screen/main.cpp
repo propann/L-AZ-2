@@ -3061,7 +3061,7 @@ void handleTeensyLine(const String &line) {
               const uint8_t nextEngine = static_cast<uint8_t>((trackEngine[t] + dir + az2::kEngineCount) % az2::kEngineCount);
               snprintf(msg, sizeof(msg), "ENGINE:%d:%d", t, nextEngine);
             } else {
-              const uint8_t count = az2::enginePatchCount(trackEngine[t]);
+              const uint16_t count = az2::enginePatchCount(trackEngine[t]);  // uint16_t depuis DEXED=256 patches (2026-09-18)
               const uint8_t nextPatch = static_cast<uint8_t>((trackPatch[t] + dir + count) % count);
               snprintf(msg, sizeof(msg), "PATCH:%d:%d", t, nextPatch);
             }
@@ -3126,7 +3126,7 @@ void handleTeensyLine(const String &line) {
                   break;
                 }
                 case 1: {
-                  const uint8_t count = az2::enginePatchCount(trackEngine[t]);
+                  const uint16_t count = az2::enginePatchCount(trackEngine[t]);  // uint16_t depuis DEXED=256 patches (2026-09-18)
                   const int base = (seqStepPatch[currentPattern][t][s] == 0xFF) ? trackPatch[t] : seqStepPatch[currentPattern][t][s];
                   const int newPatch = (base + dir + count) % count;
                   snprintf(msg, sizeof(msg), "INST:%d:%d:%d", t, s, newPatch);
@@ -4338,7 +4338,7 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
         const uint8_t nextEngine = static_cast<uint8_t>((trackEngine[track] + 1) % az2::kEngineCount);
         snprintf(msg, sizeof(msg), "ENGINE:%d:%d", track, nextEngine);
       } else {
-        const uint8_t count = az2::enginePatchCount(trackEngine[track]);
+        const uint16_t count = az2::enginePatchCount(trackEngine[track]);  // uint16_t depuis DEXED=256 patches (2026-09-18)
         const uint8_t nextPatch = static_cast<uint8_t>((trackPatch[track] + 1) % count);
         snprintf(msg, sizeof(msg), "PATCH:%d:%d", track, nextPatch);
       }
