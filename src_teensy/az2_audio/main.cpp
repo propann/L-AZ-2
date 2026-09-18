@@ -2150,6 +2150,43 @@ void handleCommand(const String &line) {
     reportCpuUsage();
     return;
   }
+
+  // SIMNAV:<UP|DOWN|LEFT|RIGHT>:<0|1> et SIMBTN:<A|B|C|D>:<0|1> --
+  // injectent un evenement croix/bouton EXACTEMENT comme
+  // updateDigitalControls() le fait pour un vrai appui physique (meme
+  // az2::printNav()/printBtn(), meme cible Serial1, seul chemin par
+  // lequel l'ESP32 recoit ces evenements -- voir kNavUpPin etc. plus
+  // haut). Outil de test ajoute le 2026-09-18 ("tu peut tester toi") --
+  // permet de piloter/valider le tracker (navigation, edition de
+  // valeur) via la liaison USB du Teensy, sans avoir les mains sur le
+  // vrai clavier physique. Ne passe PAS par le debounce ni l'etat local
+  // (localControls[]) -- une injection directe, pas un remplacement
+  // permanent du vrai cablage.
+  if (line.startsWith("SIMNAV:")) {
+    const int idx1 = line.indexOf(':');
+    const int idx2 = line.indexOf(':', idx1 + 1);
+    if (idx1 < 0 || idx2 < 0) {
+      sendCommandError("SIMNAV", "MALFORMED");
+      return;
+    }
+    const String dir = line.substring(idx1 + 1, idx2);
+    const bool pressed = line.substring(idx2 + 1).toInt() != 0;
+    az2::printNav(Serial1, dir.c_str(), pressed);
+    return;
+  }
+
+  if (line.startsWith("SIMBTN:")) {
+    const int idx1 = line.indexOf(':');
+    const int idx2 = line.indexOf(':', idx1 + 1);
+    if (idx1 < 0 || idx2 < 0 || line.substring(idx1 + 1, idx2).length() != 1) {
+      sendCommandError("SIMBTN", "MALFORMED");
+      return;
+    }
+    const char letter = line.charAt(idx1 + 1);
+    const bool pressed = line.substring(idx2 + 1).toInt() != 0;
+    az2::printBtn(Serial1, letter, pressed);
+    return;
+  }
 }
 
 // ---------------------------------------------------------------------

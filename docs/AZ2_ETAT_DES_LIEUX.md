@@ -1,5 +1,59 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-18, nuit -- fiabilisation du fix filtre + test complet du
+tracker/page PATCH par simulation, sans les mains sur le vrai clavier]**
+
+Suite de l'entree du dessous (fix filtre 18kHz -> 15kHz). Deux
+choses faites a la demande "on fiabilise et il faut que je teste ca du
+tracker tu peut tester toi" :
+
+- **Fiabilisation** : reteste le nouveau plafond (15000Hz) a
+  RESONANCE MAXIMALE (127/127, pas juste 0.7 minimal comme lors de la
+  decouverte) -- toujours propre, confirme utilisateur ("ca sonne
+  propre"). Le nouveau plafond tient meme dans le pire cas (resonance
+  au max), pas seulement au minimum ou le bug avait ete trouve.
+- **Outil de test ajoute** (`src_teensy/az2_audio/main.cpp`) :
+  `SIMNAV:<direction>:<0|1>` et `SIMBTN:<lettre>:<0|1>` sur le port USB
+  du Teensy -- injectent un evenement croix/bouton EXACTEMENT comme un
+  vrai appui physique (meme `az2::printNav()`/`printBtn()` vers
+  Serial1, seul chemin par lequel l'ESP32 recoit ces evenements, la
+  croix/les boutons etant cables directement sur le Teensy). Permet de
+  piloter le tracker par script depuis l'ordinateur, sans avoir acces
+  au clavier physique -- garde en permanence dans le firmware (outil
+  de test utile, cout nul).
+- **Test complet execute et REUSSI sur le vrai materiel** (verifie en
+  lisant les commandes que l'ESP32 envoie en retour au Teensy sur son
+  propre port de debug -- `sendToTeensy()` les imprime deja toutes,
+  aucun ajout de code cote ESP32 necessaire) :
+  - Menu -> categorie MUSIQUE -> SEQUENCEUR (2x BTN:A) : OK.
+  - Page SEQUENCEUR, les 6 colonnes testees une par une (croix DROITE
+    pour changer de colonne, A maintenu + HAUT pour editer) :
+    - **NOTE** (colonne 0) : pas OFF au depart -> a bien envoye
+      `STEP:0:0:1` PUIS `NOTE:0:0:61` -- confirme que le fix
+      "auto-activation du pas en editant la note" (2026-09-18, plus
+      haut dans ce journal) est toujours vivant et fonctionne.
+    - **INST** -> `INST:0:0:1`. **FX** -> `SFX:0:0:1:0`. **VAL** ->
+      `SFX:0:0:0:1`. **PROB** -> `PROB:0:0:100`. **COND** ->
+      `COND:0:0:33` (= 1:2 dans le cycle, encodage nibble correct).
+      Les 6 colonnes produisent la commande attendue, aucun crash, aucun
+      blocage.
+  - Retour Menu (BTN:B) -> categorie MUSIQUE -> DOWN x2 (MOTEURS puis
+    PATCH) -> BTN:A : entree sur la page PATCH confirme par l'envoi
+    automatique de `SCOPE:0` (voir `goTo()`).
+  - Page PATCH, ligne 0 (filtre), A+HAUT -> `FILT:0:127:0` envoye : OK.
+  - Ligne 7 (SLOT), A+DROITE -> `PATCH_SAVED:/patches/0.txt` (sauvegarde
+    reelle sur SD). A+GAUCHE -> **recharge le meme fichier et renvoie
+    exactement les memes parametres** (`ENGINE:0:4`, `PATCH:0:0`,
+    `FILT:0:127:0`, `ENV:0:3:20:89:38`, `DXP:0:0:4`, `DXP:0:1:0`) --
+    aller-retour sauvegarde/chargement de patch confirme integre et
+    fonctionnel.
+- **Limite honnete de ce test** : verifie la LOGIQUE (les bonnes
+  commandes partent au bon moment, dans le bon format) via le journal
+  serie, PAS le RENDU VISUEL a l'ecran (surlignage, texte affiche) --
+  ca reste a l'utilisateur de confirmer que ce qui s'affiche correspond
+  bien a ce que la logique fait. Etat remis a plat apres le test
+  (demute tout, plus de solo, pas de test desactive).
+
 **[2026-09-18, nuit -- RESOLU : le "bruit blanc" des moteurs (DEXED,
 EPIANO, BRAIDS, KARPLUS, puis ANALOG aussi) n'etait pas un bug moteur --
 c'etait le filtre partage, reglee par defaut dans sa zone d'instabilite]**
