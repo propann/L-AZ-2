@@ -32,7 +32,6 @@
 #include <math.h>
 #include <SPI.h>
 #include <SD.h>
-#include <esp_heap_caps.h>
 #include "gb_emulator.h"
 
 namespace {
@@ -3659,20 +3658,19 @@ constexpr int16_t kGbScreenTop = (kScreenSize - kGbScaledH) / 2;
 // lieu de 3 -- demande le 2026-09-15 ("on a des sauts d'images, on peut
 // stabiliser"), moins d'appels = moins de surcharge par appel vers le
 // bus RGB parallele.
+// [2026-09-18] Tentative de rendu "1 bloc PSRAM entier envoye a la fin
+// de l'image" essayee par une autre session IA le meme jour -- ANNULEE
+// : premier retour utilisateur sur le vrai materiel = "l'ecran
+// scintille" (tremblement continu de toute l'image), jamais observe
+// avec le rendu par bandes ci-dessous. Revenu au comportement PROUVE
+// du 2026-09-15 (1 seul draw16bitRGBBitmap() par ligne source, bloc
+// 480x3 -- voir le commentaire au-dessus de la fonction) plutot que de
+// laisser un vrai regression visuelle en place. Walnut-CGB documente
+// lui-meme une limite native a ce style de rendu ligne par ligne
+// ("certaines animations ne s'affichent pas correctement, ex.
+// Prehistorik Man") -- accepte comme compromis connu, pas un bug AZ-2.
 void gbBlitLine(int line, const uint16_t *row) {
-  // Construire l'image complete en PSRAM puis l'envoyer en UNE seule
-  // transaction au panneau RGB. L'ancien chemin faisait 144 appels
-  // draw16bitRGBBitmap() par image.
-  static uint16_t *frame = nullptr;
-  if (frame == nullptr) {
-    frame = static_cast<uint16_t *>(
-        heap_caps_malloc(static_cast<size_t>(kGbScaledW) * kGbScaledH * sizeof(uint16_t), MALLOC_CAP_SPIRAM));
-  }
-  // Repli sûr sans PSRAM : conserver le rendu par bandes.
-  static uint16_t fallbackBlock[kGbScaledW * 3];
-  uint16_t *scaledBlock = frame != nullptr
-                              ? frame + static_cast<size_t>(line) * kGbScaledW * 3
-                              : fallbackBlock;
+  static uint16_t scaledBlock[kGbScaledW * 3];
   for (int x = 0; x < 160; ++x) {
     const uint16_t c = row[x];
     const int16_t base = static_cast<int16_t>(x * 3);
@@ -3684,14 +3682,8 @@ void gbBlitLine(int line, const uint16_t *row) {
   memcpy(scaledBlock + kGbScaledW, scaledBlock, kGbScaledW * sizeof(uint16_t));
   memcpy(scaledBlock + kGbScaledW * 2, scaledBlock, kGbScaledW * sizeof(uint16_t));
 
-  if (frame != nullptr) {
-    if (line == 143) {
-      gfx->draw16bitRGBBitmap(0, kGbScreenTop, frame, kGbScaledW, kGbScaledH);
-    }
-  } else {
-    const int16_t y = static_cast<int16_t>(kGbScreenTop + line * 3);
-    gfx->draw16bitRGBBitmap(0, y, scaledBlock, kGbScaledW, 3);
-  }
+  const int16_t y = static_cast<int16_t>(kGbScreenTop + line * 3);
+  gfx->draw16bitRGBBitmap(0, y, scaledBlock, kGbScaledW, 3);
 }
 
 void setup() {

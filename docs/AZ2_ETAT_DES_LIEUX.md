@@ -1,5 +1,67 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-18, GB : rendu video corrige, UART monte a 921600, confirme
+en reel]**
+
+- **Regression video annulee** : le rendu "1 bloc PSRAM entier envoye a
+  la fin de l'image" fusionne plus tot le meme jour (autre session IA,
+  jamais teste sur le vrai materiel avant ce merge) causait un
+  scintillement continu de toute l'image ("l'ecran scintille"). Revenu
+  au rendu par bandes du 2026-09-15 (1 `draw16bitRGBBitmap()` par ligne
+  source, jamais eu ce probleme). **Confirme sur le vrai materiel :
+  "c'est beaucoup mieux"**. Walnut-CGB documente lui-meme une limite
+  connue a ce style de rendu ligne par ligne (animations qui ne
+  s'affichent pas toujours bien, ex. Prehistorik Man cite dans son
+  README) -- accepte comme compromis du coeur d'emulation, pas un bug
+  AZ-2 a chasser davantage pour l'instant.
+- **UART ecran<->Teensy monte a 921600 bauds** (etait 230400) --
+  prerequis du "Palier A" de AZ2_EMULATION_JEUX.md pour ameliorer la
+  qualite audio du jeu sans saturer le lien. **Teste et confirme sur le
+  vrai materiel** : round-trip complet (STEP:/NOTE:/BPM: envoyes cote
+  Teensy, recus intacts cote ESP32), croix/boutons/ecran normaux,
+  aucune corruption observee. Utilisateur : "ça tourne, c'est pas
+  magique mais ça tourne" -- le debit est pret, **la qualite audio du
+  jeu elle-meme n'a PAS encore ete touchee** (toujours 8kHz mono 8
+  bits, "telephone" -- voir plan plus bas).
+- **Recherche faite sur des emulateurs alternatifs** (CrankBoy, gnuboy)
+  suite a la frustration utilisateur -- **conclusion : on garde
+  Walnut-CGB**, c'est deja le choix le plus adapte a nos besoins exacts
+  (support GBC complet + performance). CrankBoy n'a qu'un support GBC
+  tres limite (pense pour la Playdate, monochrome) ; les projets a base
+  de gnuboy (nesboy-esp32, GBCCAT) visent des ecrans SPI (ST7789/
+  ILI9341), pas notre ecran RGB parallele -- meme probleme d'integration
+  qui avait deja ecarte Retro-Go. Piste de qualite audio trouvee dans
+  la doc Walnut-CGB elle-meme : elle recommande **Blargg's Gb_Snd_Emu**
+  (LGPL, compatible) a la place de minigb_apu "si une emulation APU
+  precise est necessaire" -- voir la feuille de route ci-dessous.
+
+## Feuille de route GB/GBC (demandee par l'utilisateur, 2026-09-18)
+
+Ordre propose, du plus pret au plus gros chantier :
+
+1. **[FAIT]** Corriger le scintillement video (rendu par bandes).
+2. **[FAIT]** Monter l'UART a 921600 bauds, verifier la fiabilite.
+3. **Cible qualite audio concrete** : passer `AUDIO_SAMPLE_RATE` de
+   8000 a 22050 Hz (ou tenter stereo 8 bits a debit egal -- voir Palier
+   A) -- a 921600 bauds (~92 Ko/s bruts), un flux mono 8 bits a 22050 Hz
+   (~22 Ko/s) tient large, meme avec le reste du trafic de controle.
+   Changement de constante + verification du budget UART reel sur
+   materiel (paquets perdus/en retard pendant le jeu).
+4. **Integrer Gb_Snd_Emu (Blargg)** a la place de minigb_apu pour une
+   emulation APU plus fidele -- chantier plus gros (vendoring, licence
+   LGPL a documenter dans AZ2_LICENCES.md, adapter l'interface
+   read/write registres au lieu de minigb_apu_audio_read/write). A
+   faire une fois l'etape 3 validee (pas la peine d'ameliorer la
+   precision APU si le flux qui la transporte est encore limite a
+   8kHz).
+5. **Protocole audio V2** (longueur 16 bits, numero de sequence,
+   compteur de pertes -- deja recommande dans l'audit de progression
+   du 2026-09-18) -- utile une fois 3-4 en place, pour diagnostiquer
+   les eventuelles pertes a la nouvelle qualite plutot que deviner.
+6. Video/frameskip reglable, palettes DMG, menu JEUX complet (voir
+   AZ2_EMULATION_JEUX.md, sections "Video a ameliorer"/"Nouveau menu
+   JEUX") -- apres que le son et l'image de base soient satisfaisants.
+
 **[2026-09-18, retour utilisateur -- 26 commits d'une autre session IA
 fusionnes, hypothese MSFA testee et ECARTEE]** Pendant l'absence de
 l'utilisateur (parti au travail), une AUTRE session IA a travaille en

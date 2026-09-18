@@ -4,7 +4,17 @@
 
 namespace az2 {
 
-constexpr uint32_t kControlBaud = 230400;
+// 921600 depuis le 2026-09-18 (etait 230400) -- palier A de
+// AZ2_EMULATION_JEUX.md ("porter l'UART ecran<->Teensy a 921600 bauds,
+// apres test d'erreurs sur cable reel") : prerequis pour ameliorer la
+// qualite audio du jeu (8kHz mono 8 bits actuel -- voir gb_emulator.cpp/
+// kGbAudioSampleRate plus bas) sans saturer le lien. A VERIFIER sur
+// materiel reel a chaque flash : si la liaison ESP32<->Teensy devient
+// instable/corrompue (commandes qui se perdent, croix qui ne repond
+// plus, jeu GB qui plante) apres ce changement, revenir a 230400 --
+// aucune donnee de fiabilite sur cable long/bruite a cette vitesse
+// avant cette session.
+constexpr uint32_t kControlBaud = 921600;
 
 // Son de l'emulateur GB, ESP32 -> Teensy (demande 2026-09-15, "il faut
 // un emulateur complet classe" + "envoyer sous forme de paquet ... pour
