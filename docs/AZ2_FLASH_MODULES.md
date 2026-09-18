@@ -1,6 +1,8 @@
 # AZ-2 — Flash des modules moteurs depuis la machine
 
-**Statut : étude d’architecture. Aucun firmware de production n’est encore flashé automatiquement.**
+**Statut : étude AZ-3. Reportée hors de l’AZ-2 actuel, dont le boîtier est plein. Aucun firmware de production n’est flashé automatiquement.**
+
+**Décision 2026-09-18 :** ne pas ajouter de module ni modifier les broches de l’AZ-2 pour ce système. La fenêtre de flash, RESET/BOOT et les slots restent une spécification de l’AZ-3.
 
 ## Objectif
 
@@ -88,9 +90,9 @@ Sources actuelles : src_teensy/az2_audio/main.cpp et AZ2_CABLAGE_MASTER.md.
 | Extension | 26–41 | Non utilisées par le firmware actuel |
 | SD intégrée Teensy | Interface dédiée | À préserver pour le sampler |
 
-## Proposition de slot V1
+## Proposition de slot AZ-3
 
-Il n’est pas nécessaire de déplacer les encodeurs : les broches 26–35 offrent déjà les lignes nécessaires. La paire 28/29 est la candidate UART matérielle à confirmer sur le banc.
+Cette proposition est conservée pour les essais sur table et l’AZ-3 uniquement. Elle ne constitue plus un plan de câblage pour l’AZ-2.
 
 | Fonction | Broche proposée | Rôle |
 | --- | --- | --- |
