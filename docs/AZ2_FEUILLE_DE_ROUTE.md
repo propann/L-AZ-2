@@ -495,9 +495,11 @@ tempo moyen reste-t-il exact sur plusieurs mesures (pas de derive), et
 la sensation de swing est-elle audible/musicale aux positions
 extremes (32, 64, 96, 127) ?
 
-## Mise à jour 2026-09-18 — rack de moteurs interchangeables
+## Étude reportée à AZ-3 — rack de moteurs interchangeables
 
-Le rack devient un axe officiel de la feuille de route, sans remplacer les moteurs locaux ni le sampler.
+**Décision matérielle du 2026-09-18 : hors périmètre AZ-2.** Les photos du prototype montrent que le boîtier est arrivé à sa capacité pratique : écran, Teensy, ESP32-S3, PCM5102A, haut-parleur, commandes et faisceau occupent déjà l’espace utile. Aucun ESP8266/ESP32 moteur, connecteur AZ-BUS ou carte porteuse supplémentaire ne sera ajouté à cette machine.
+
+L’étude est conservée comme base officielle de l’AZ-3. Elle ne doit déclencher aucun recâblage de l’AZ-2, ne déplace pas le bouton B de la broche 8 et ne réserve aucune nouvelle broche sur le prototype actuel.
 
 Architecture retenue :
 
@@ -507,7 +509,7 @@ Architecture retenue :
 - ESP8266/ESP-12F nus : cartouches AZ-CHIP dédiées aux moteurs de consoles et au lo-fi ;
 - AZ-BUS : UART de contrôle/flash et retour audio adapté à la famille de module.
 
-### Phase 9 — banc AZ-BUS
+### AZ-3 / Étude A — banc AZ-BUS
 
 | Priorité | Tâche | Validation |
 | ---: | --- | --- |
@@ -521,7 +523,7 @@ Architecture retenue :
 
 Critère de sortie : un module de test se détecte, se réinitialise, produit une sinusoïde et peut tomber en panne sans arrêter l’AZ-2.
 
-### Phase 10 — cartouche ESP8266 AZ-CHIP
+### AZ-3 / Étude B — cartouche ESP8266 AZ-CHIP
 
 | Priorité | Tâche | Validation |
 | ---: | --- | --- |
@@ -535,7 +537,7 @@ Critère de sortie : un module de test se détecte, se réinitialise, produit un
 
 Critère de sortie : AZ-CHIP GB joue 30 minutes sans coupure, se reflashe depuis la machine et reste silencieux au repos.
 
-### Phase 11 — cartouche ESP32 AZ-VA1
+### AZ-3 / Étude C — cartouche ESP32 AZ-VA1
 
 | Priorité | Tâche | Validation |
 | ---: | --- | --- |
@@ -548,7 +550,7 @@ Critère de sortie : AZ-CHIP GB joue 30 minutes sans coupure, se reflashe depuis
 
 Critère de sortie : moteur polyphonique jouable, sans dérive d’horloge, avec latence stable et aucune allocation dans la boucle audio.
 
-### Phase 12 — installation depuis l’AZ-2
+### AZ-3 / Étude D — installation depuis la machine
 
 | Priorité | Tâche | Validation |
 | ---: | --- | --- |
@@ -560,11 +562,11 @@ Critère de sortie : moteur polyphonique jouable, sans dérive d’horloge, avec
 
 Le premier flash reste réalisé par le programmateur ou USB/SWD. La machine prend ensuite en charge les mises à jour AZ-BUS.
 
-## Mise à jour 2026-09-18 — émulation GB/GBC V2
+## Phase 9 active AZ-2 — émulation GB/GBC V2
 
 L’émulateur existe et une ROM fonctionne, mais la cible produit est désormais plus stricte : cadence logique officielle, son continu, vidéo stable, sauvegardes sûres et menu complet.
 
-### Phase 13 — instrumentation et vitesse
+### Lot 9.1 — instrumentation et vitesse
 
 | Priorité | Tâche | Validation |
 | ---: | --- | --- |
@@ -574,7 +576,7 @@ L’émulateur existe et une ROM fonctionne, mais la cible produit est désormai
 | 4 | Double buffering et frameskip Auto/Off/1 | 59,7275 Hz logique stable |
 | 5 | Exécuter ROM de test CPU/timers/PPU | résultats consignés |
 
-### Phase 14 — audio console
+### Lot 9.2 — audio console
 
 | Priorité | Tâche | Validation |
 | ---: | --- | --- |
@@ -583,9 +585,9 @@ L’émulateur existe et une ROM fonctionne, mais la cible produit est désormai
 | 3 | Buffer audio non bloquant séparé | aucune attente UART dans la frame |
 | 4 | Tester 22,05 kHz mono 16 bits ou stéréo 8 bits | choix par écoute et mesures |
 | 5 | Conserver 8 kHz comme mode secours | repli automatique possible |
-| 6 | Étudier AZ-CHIP GB comme APU externe 44,1 kHz | seulement après rack fonctionnel |
+| 6 | Conserver l’étude AZ-CHIP GB pour AZ-3 | aucun module externe dans AZ-2 |
 
-### Phase 15 — interface JEUX complète
+### Lot 9.3 — interface JEUX complète
 
 | Priorité | Tâche | Validation |
 | ---: | --- | --- |
@@ -599,4 +601,6 @@ L’émulateur existe et une ROM fonctionne, mais la cible produit est désormai
 
 Critère final émulation : 59,7275 Hz logique stable pendant 30 minutes, audio sans coupure, dix jeux homebrew GB/GBC testés, sauvegardes fiables et aucune fuite PSRAM après dix changements de ROM.
 
-Documents associés : AZ2_BUS_RACK_MOTEURS.md, AZ2_FLASH_MODULES.md, AZ2_MODULE_ESP32_AZ_VA1.md, AZ2_MODULE_ESP8266_AZ_CHIP.md et AZ2_EMULATION_JEUX.md.
+Priorités matérielles AZ-2 : fiabiliser le câblage existant, ranger et immobiliser le faisceau, préserver l’accès USB/SD, terminer le sampler et l’émulation. Ne plus ajouter de carte dans ce boîtier.
+
+Documents associés : AZ2_EMULATION_JEUX.md pour l’AZ-2 actif ; AZ2_BUS_RACK_MOTEURS.md, AZ2_FLASH_MODULES.md, AZ2_MODULE_ESP32_AZ_VA1.md et AZ2_MODULE_ESP8266_AZ_CHIP.md comme études AZ-3.
