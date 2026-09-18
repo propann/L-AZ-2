@@ -1,5 +1,34 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-18, nuit -- 6e moteur : SAMPLER, premier son embarque, teste
+sur le vrai materiel]**
+
+Demande : "on va mettre en route le sampleur ... recuperer un max de
+patch pour tout les moteur". Voir `docs/AZ2_SAMPLEUR.md` pour le detail
+complet -- resume ici :
+
+- **Nouveau moteur** `az2::kEngineSampler` (6e, apres DEXED/EPIANO/
+  BRAIDS/KARPLUS/ANALOG) -- lecture PCM 16 bits mono avec suivi de note
+  (resampling lineaire, un coup, pas de bouclage), classe
+  `AudioPlaySampler` ecrite ce soir (`src_teensy/az2_audio/
+  az2_sampler.h`).
+- **2 patches de depart** (Kick, Snare) -- PAS de nouveaux fichiers a
+  chercher : deja vendores dans le repo avec MicroDexed-touch
+  (`addon/SD/CUSTOM/Kick_1_Simple.wav`/`Snare_1_Simple.wav`, meme
+  licence GPLv3 que le reste du projet). Convertis en tableaux PCM
+  EMBARQUES EN FLASH (pas charges depuis la carte SD physique du
+  Teensy -- je ne peux pas y deposer de fichiers a distance, voir
+  AZ2_SAMPLEUR.md pour le plan complet a plus long terme).
+- **Teste sur le vrai materiel, piste isolee** : Kick et Snare
+  confirmes propres a la note racine ("oki ca marche", "oki"). Suivi
+  de pitch confirme (Kick une octave au-dessus -> "pareil plus court",
+  coherent avec un sample qui joue 2x plus vite).
+- **Pas encore fait** : chargement depuis la carte SD reelle (plan
+  detaille dans AZ2_SAMPLEUR.md, demande une etape materielle -- copier
+  des fichiers sur la carte -- que seul l'utilisateur peut faire) ;
+  reglages avances par sample (SAMPLER n'a pour l'instant que le choix
+  du sample via PATCH:, pas de SXP: equivalent a DXR:/EXP:/BXP:).
+
 **[2026-09-18, nuit -- editeur de patch complet DEXED/EPIANO/BRAIDS,
 page PATCH a defilement, valide sur le vrai materiel]**
 

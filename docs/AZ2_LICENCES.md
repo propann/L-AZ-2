@@ -37,11 +37,14 @@ Pourquoi GPLv3 et pas une licence permissive (MIT/Apache) :
 | GFX Library for Arduino (moononournation, ex-Arduino_GFX) | `screen_esp` (pilote ecran RGB parallele + tactile) | MIT | Registre PlatformIO, version figee `@1.6.7` |
 | Walnut-CGB (`walnut_cgb.h`, additions par Mr. Paul sur la base Peanut-GB de Mahyar Koshkouei, elle-meme via le fork de Lior Halphon) | `screen_esp` (emulateur GB/GBC) | MIT (chaque couche : voir l'entete du fichier) | `src_esp32/az2_screen/walnut_cgb/walnut_cgb.h` (vendored, un seul fichier) |
 | minigb_apu (Alex Baines, Mahyar Koshkouei) | `screen_esp` (son de l'emulateur GB) | MIT | `src_esp32/az2_screen/minigb_apu/` (vendored), voir son `LICENSE` |
+| Kick_1_Simple.wav, Snare_1_Simple.wav | `master_teensy` (moteur SAMPLER, 2026-09-18) | **GPLv3** (meme couverture globale que le reste de MicroDexed-touch -- readme.md du projet : "MicroDexed is licensed on the GPL v3", aucune mention separee pour ce contenu SD, pas de LICENSE dedie dans `addon/SD/`) | `src_teensy/microdexed-touch/addon/SD/CUSTOM/` (vendored), convertis en tableaux PCM 16 bits dans `src_teensy/az2_audio/az2_sampler_data.h` |
 
 ## Composants vendored mais PAS compiles (reference uniquement)
 
 Le reste de `src_teensy/microdexed-touch/` (le sketch `.ino` d'origine,
-`addon/` -- samples et presets JSON de l'appli originale, et les
+`addon/` -- samples et presets JSON de l'appli originale (SAUF
+Kick_1_Simple.wav/Snare_1_Simple.wav, voir le tableau ci-dessus,
+compiles depuis le 2026-09-18), et les
 bibliotheques `third-party/` non listees ci-dessus : Bounce2, MCP23008,
 MCP23017, MCP4728, LCDMenuLib2, MD_REncoder, Regexp, ArduinoJson,
 TeensyTimerTool, wav2sketch) n'est PAS inclus dans le binaire

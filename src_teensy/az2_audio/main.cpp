@@ -110,6 +110,19 @@ float midiNoteToFreq(uint8_t note) {
   return 440.0f * powf(2.0f, (static_cast<float>(note) - 69.0f) / 12.0f);
 }
 
+// AZ2_ROLE_AUDIO -> az2_sampler.h utilise midiNoteToFreq() defini
+// juste au-dessus, doit donc etre inclus APRES (voir le commentaire
+// en tete de ce header). Les 2 tableaux PROGMEM de depart (Kick/Snare)
+// sont dans un header de donnees separe -- purement des tableaux
+// constants, aucune dependance a l'ordre d'inclusion.
+#include "az2_sampler_data.h"
+#include "az2_sampler.h"
+
+// 6e moteur (2026-09-18, "on va mettre en route le sampleur") -- voir
+// kEngineSampler dans AZ2_Protocol.h et applyTrackPatch() plus bas
+// pour le choix Kick/Snare par piste.
+AudioPlaySampler trackSamplerEngine[kTrackCount];
+
 // AudioMixer4 n'a que 4 entrees : avec 8 pistes il en faut 2 (groupe A =
 // pistes 0-3, groupe B = pistes 4-7), combinees dans mixFinal avec la
 // voix live -- voir trackGroupMixer()/trackGroupChannel() plus bas.
@@ -423,6 +436,20 @@ void announceDexedParams(uint8_t track) {
   relayLine(String(msg));
 }
 
+// Banque de samples SAMPLER (voir kSamplerPatchCount/kSamplerPatchNames
+// dans AZ2_Protocol.h -- MEME ORDRE requis) -- pointe vers les
+// tableaux PROGMEM de az2_sampler_data.h, aucune copie (setSample() ne
+// fait que retenir le pointeur/la longueur).
+struct SamplerBankEntry {
+  const int16_t *data;
+  uint32_t len;
+  uint8_t rootNote;
+};
+const SamplerBankEntry kSamplerBank[az2::kSamplerPatchCount] = {
+    {kSampleKick, kSampleKickLen, kSampleKickRoot},
+    {kSampleSnare, kSampleSnareLen, kSampleSnareRoot},
+};
+
 void applyTrackPatch(uint8_t track) {
   const uint8_t patch = trackPatch[track];
   switch (trackEngine[track]) {
@@ -441,6 +468,11 @@ void applyTrackPatch(uint8_t track) {
     case az2::kEngineAnalog:
       trackAnalogWave[track].begin(kAnalogWaveformValues[patch % az2::kAnalogPatchCount]);
       break;
+    case az2::kEngineSampler: {
+      const SamplerBankEntry &entry = kSamplerBank[patch % az2::kSamplerPatchCount];
+      trackSamplerEngine[track].setSample(entry.data, entry.len, entry.rootNote);
+      break;
+    }
   }
 }
 
@@ -486,6 +518,15 @@ void setTrackEngine(uint8_t track, uint8_t engine) {
       // patchTrackIn[] (comme les 4 autres moteurs) -- plus de
       // connexion fixe dediee (ancien patchAnalogEnv[], supprime).
       patchTrackIn[track].connect(trackAnalogWave[track], 0, trackAnalogEnv[track], 0);
+      break;
+    case az2::kEngineSampler:
+      // Meme enveloppe partagee que les 5 autres (coherence
+      // d'architecture) -- a surveiller a l'oreille : un release ADSR
+      // trop court par rapport a la duree du sample (240-380ms pour
+      // Kick/Snare) pourrait le couper avant la fin naturelle. Pas
+      // encore un souci constate, les valeurs par defaut (voir
+      // trackAnalogEnv[] au boot) laissent une marge confortable.
+      patchTrackIn[track].connect(trackSamplerEngine[track], 0, trackAnalogEnv[track], 0);
       break;
   }
 
@@ -798,8 +839,11 @@ void trackNoteOn(uint8_t track, uint8_t note, uint8_t velocity) {
       trackAnalogWave[track].frequency(midiNoteToFreq(note));
       trackAnalogWave[track].amplitude(0.8f);
       break;
+    case az2::kEngineSampler:
+      trackSamplerEngine[track].noteOn(note, velocity);
+      break;
   }
-  // Enveloppe PARTAGEE par les 5 moteurs (2026-09-18, voir le
+  // Enveloppe PARTAGEE par les 6 moteurs (2026-09-18, voir le
   // commentaire de trackAnalogEnv[] plus haut) -- declenchee ici pour
   // TOUS, pas seulement ANALOG (qui l'utilisait deja seul avant ce
   // fix).
@@ -816,6 +860,7 @@ void trackNoteOff(uint8_t track, uint8_t note) {
       break;
     case az2::kEngineKarplus: trackKarplusEngine[track].noteOff(1.0f); break;
     case az2::kEngineAnalog: break;
+    case az2::kEngineSampler: trackSamplerEngine[track].noteOff(); break;  // one-shot, ne fait rien (voir sa definition)
   }
   // Meme enveloppe partagee qu'a l'allumage ci-dessus -- coupe TOUS les
   // moteurs, pas seulement ANALOG.

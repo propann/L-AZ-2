@@ -276,9 +276,16 @@ constexpr uint8_t kEngineBraids = 2;
 // 3 premiers moteurs (physique/corde pincee, et analogique/soustractif).
 constexpr uint8_t kEngineKarplus = 3;
 constexpr uint8_t kEngineAnalog = 4;
-constexpr uint8_t kEngineCount = 5;
+// Ajoute le 2026-09-18 ("on va mettre en route le sampleur") -- lecture
+// PCM 16 bits mono avec suivi de note (AudioPlaySampler, voir
+// az2_sampler.h cote Teensy), pas une bibliotheque de synthese comme
+// les 5 precedents. PSRAM/carte SD deja anticipes au niveau materiel
+// (voir external_psram_size/psramTestBuffer dans main.cpp) mais jamais
+// exploites avant ce soir -- voir docs/AZ2_SAMPLEUR.md.
+constexpr uint8_t kEngineSampler = 5;
+constexpr uint8_t kEngineCount = 6;
 
-constexpr const char *kEngineNames[kEngineCount] = {"DEXED", "EPIANO", "BRAIDS", "KARPLUS", "ANALOG"};
+constexpr const char *kEngineNames[kEngineCount] = {"DEXED", "EPIANO", "BRAIDS", "KARPLUS", "ANALOG", "SAMPLER"};
 
 constexpr uint8_t kDexedPatchCount = 8;
 constexpr const char *kDexedPatchNames[kDexedPatchCount] = {
@@ -311,6 +318,16 @@ constexpr const char *kAnalogPatchNames[kAnalogPatchCount] = {
     "Sinus", "Dent de scie", "Carre", "Triangle",
 };
 
+// SAMPLER (2026-09-18) : 2 samples de depart embarques en flash (voir
+// az2_sampler_data.h cote Teensy), deja vendores dans le repo avec
+// MicroDexed-touch (meme licence GPLv3, voir AZ2_LICENCES.md) --
+// d'autres pourront s'ajouter (SD/PSRAM, voir docs/AZ2_SAMPLEUR.md)
+// sans que cette table grandisse necessairement au meme rythme (un
+// index au-dela de kSamplerPatchCount reste gere -- voir
+// applyTrackPatch() cote Teensy).
+constexpr uint8_t kSamplerPatchCount = 2;
+constexpr const char *kSamplerPatchNames[kSamplerPatchCount] = {"Kick", "Snare"};
+
 inline uint8_t enginePatchCount(uint8_t engine) {
   switch (engine) {
     case kEngineDexed: return kDexedPatchCount;
@@ -318,6 +335,7 @@ inline uint8_t enginePatchCount(uint8_t engine) {
     case kEngineBraids: return kBraidsPatchCount;
     case kEngineKarplus: return kKarplusPatchCount;
     case kEngineAnalog: return kAnalogPatchCount;
+    case kEngineSampler: return kSamplerPatchCount;
     default: return 1;
   }
 }
@@ -329,6 +347,7 @@ inline const char *enginePatchName(uint8_t engine, uint8_t patch) {
     case kEngineBraids: return patch < kBraidsPatchCount ? kBraidsPatchNames[patch] : "?";
     case kEngineKarplus: return patch < kKarplusPatchCount ? kKarplusPatchNames[patch] : "?";
     case kEngineAnalog: return patch < kAnalogPatchCount ? kAnalogPatchNames[patch] : "?";
+    case kEngineSampler: return patch < kSamplerPatchCount ? kSamplerPatchNames[patch] : "?";
     default: return "?";
   }
 }
