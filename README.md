@@ -68,6 +68,7 @@ Detail complet : [docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md](docs/AZ2_ARCHITECTUR
 - [ESP32 : SD, Wi-Fi, retro](docs/AZ2_ESP32_CONTROLE_WIFI_SD_RETRO.md)
 - [Portage MicroDexed-touch](docs/AZ2_PORTAGE_MICRODEXED_TOUCH.md)
 - [Feuille de route du moteur audio](docs/AZ2_FEUILLE_DE_ROUTE_MOTEUR.md)
+- [Architecture multi-moteurs et sampler](docs/AZ2_ARCHITECTURE_MULTI_MOTEURS.md)
 - [Cablage de base (historique)](docs/AZ2_CABLAGE_BASE.md)
 - [Pico -- tentative abandonnee](docs/AZ2_CABLAGE_PICO.md) /
   [TODO Pico (clos)](docs/AZ2_TODO_PICO.md)
