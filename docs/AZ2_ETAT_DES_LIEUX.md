@@ -1,5 +1,30 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-18, retour utilisateur -- 26 commits d'une autre session IA
+fusionnes, hypothese MSFA testee et ECARTEE]** Pendant l'absence de
+l'utilisateur (parti au travail), une AUTRE session IA a travaille en
+parallele directement sur `main` (26 commits) : audit de progression
+complet, fix reproductibilite (lib MIDI morte retiree), perf/cadence
+GB (rendu en un bloc PSRAM + pacing microseconde), CI (`ci.yml`,
+reutilise `pio test -e native`), et une hypothese concrete sur DEXED --
+le constructeur de `Dexed` choisit le coeur FM **MKI** par defaut,
+jamais change, alors que **MSFA** est le coeur de reference historique
+-- teste comme piste A/B. Fusionne sans aucun conflit (fast-forward,
+convergence independante confirmee sur le retrait de DEXED des moteurs
+par defaut -- memes valeurs des 2 cotes).
+
+**Teste sur le vrai materiel au retour de l'utilisateur : l'hypothese
+MSFA NE REGLE PAS le bruit** -- toujours "souffle, bruit blanc" avec
+DEXED force sur MKI->MSFA, piste 0 isolee/solo, note tenue. Piste
+ECARTEE. DEXED reste hors des moteurs par defaut (aucun changement de
+ce cote), toujours selectionnable a la main pour continuer a le
+diagnostiquer plus tard. Egalement fusionne : une exploration
+d'architecture "AZ-3" (cartouches moteur ESP32/ESP8266 "AZ-VA1"/
+"AZ-CHIP", rack "AZ-BUS") auto-retractee par cette meme session en fin
+de parcours ("le boitier AZ-2 est plein, on reste sur le materiel
+existant") -- gardee comme reference future, hors scope AZ-2 actuel
+(confirme par l'utilisateur : "pas urgent").
+
 **[2026-09-18, apres-midi -- travail en autonomie, ESP32 debranche]**
 Utilisateur parti au travail ("continue par la suite"). Teensy encore
 branche, ESP32 non -- travail limite au code compile-verifie (pas
