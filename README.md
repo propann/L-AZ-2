@@ -70,6 +70,7 @@ Detail complet : [docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md](docs/AZ2_ARCHITECTUR
 - [Feuille de route du moteur audio](docs/AZ2_FEUILLE_DE_ROUTE_MOTEUR.md)
 - [Architecture multi-moteurs et sampler](docs/AZ2_ARCHITECTURE_MULTI_MOTEURS.md)
 - [AZ-BUS : rack de moteurs interchangeables](docs/AZ2_BUS_RACK_MOTEURS.md)
+- [Flash des modules moteurs depuis la machine](docs/AZ2_FLASH_MODULES.md)
 - [Cablage de base (historique)](docs/AZ2_CABLAGE_BASE.md)
 - [Pico -- tentative abandonnee](docs/AZ2_CABLAGE_PICO.md) /
   [TODO Pico (clos)](docs/AZ2_TODO_PICO.md)
