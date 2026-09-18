@@ -2479,6 +2479,14 @@ void setup() {
   for (uint8_t t = 0; t < kTrackCount; ++t) {
     trackBraidsEngine[t].init_braids();
   }
+  // Coeur FM explicite et reproductible. Le constructeur choisit MKI,
+  // alors que MSFA est le coeur de reference historique de Dexed. Ce
+  // changement fournit un test A/B propre pour le souffle constate sur
+  // le materiel; DEXED reste hors des moteurs de boot jusqu'a validation.
+  liveVoice.setEngineType(MSFA);
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    trackDexedEngine[t].setEngineType(MSFA);
+  }
   // Enveloppe ADSR par defaut du moteur ANALOG (attaque/chute rapides,
   // maintien franc -- profil "synthe" standard, pas percussif).
   for (uint8_t t = 0; t < kTrackCount; ++t) {
@@ -2498,8 +2506,9 @@ void setup() {
   loadDexedPatch(liveVoice, 0);  // "FM-Rhodes" plutot qu'un init_voice vide
 
   // Branche chaque piste sur son moteur/patch par defaut (voir
-  // trackEngine[]/trackPatch[] plus haut : 0=Dexed,1=Dexed,2=EPiano,
-  // 3=Braids, comme la v0 fixe -- mais tout ceci est maintenant
+  // trackEngine[]/trackPatch[] plus haut : DEXED est volontairement
+  // absent des moteurs de boot tant que le souffle n'est pas valide --
+  // mais tout ceci est maintenant
   // changeable en direct via ENGINE:/PATCH:, voir handleEngineCommand()).
   for (uint8_t t = 0; t < kTrackCount; ++t) {
     setTrackEngine(t, trackEngine[t]);
