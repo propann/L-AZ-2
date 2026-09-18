@@ -72,6 +72,7 @@ Detail complet : [docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md](docs/AZ2_ARCHITECTUR
 - [AZ-BUS : rack de moteurs interchangeables](docs/AZ2_BUS_RACK_MOTEURS.md)
 - [Flash des modules moteurs depuis la machine](docs/AZ2_FLASH_MODULES.md)
 - [Premier module ESP32 : moteur AZ-VA1](docs/AZ2_MODULE_ESP32_AZ_VA1.md)
+- [Cartouche ESP8266 : moteurs console AZ-CHIP](docs/AZ2_MODULE_ESP8266_AZ_CHIP.md)
 - [Cablage de base (historique)](docs/AZ2_CABLAGE_BASE.md)
 - [Pico -- tentative abandonnee](docs/AZ2_CABLAGE_PICO.md) /
   [TODO Pico (clos)](docs/AZ2_TODO_PICO.md)
