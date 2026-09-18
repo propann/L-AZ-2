@@ -1,10 +1,12 @@
 # AZ-2 — Cartouche ESP8266 AZ-CHIP
 
-**Statut : conception matérielle et logicielle. Cible initiale : modules nus ESP-12F possédés par le projet.**
+**Statut : concept matériel et logiciel AZ-3. Cible future : modules nus ESP-12F déjà possédés.**
+
+**Décision 2026-09-18 :** aucune cartouche ESP8266 ne sera ajoutée dans l’AZ-2, dont le boîtier est déjà à sa capacité. Les modules sont conservés pour un banc séparé puis pour l’AZ-3.
 
 ## Rôle
 
-Les ESP8266 deviennent des cartouches spécialisées dans les moteurs sonores de consoles et les synthèses lo-fi. Les ESP32 restent réservés aux moteurs plus lourds comme AZ-VA1.
+Dans l’AZ-3, les ESP8266 deviendront des cartouches spécialisées dans les moteurs sonores de consoles et les synthèses lo-fi. Les ESP32 restent réservés aux moteurs plus lourds comme AZ-VA1.
 
 | Famille | Rôle |
 | --- | --- |
