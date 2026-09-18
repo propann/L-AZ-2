@@ -1,5 +1,35 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-18, demande UI/UX -- gros chantier note, pas fait cette
+session]** Retour utilisateur en testant le tracker sur le vrai
+materiel : le panneau lateral "patch actif" (`drawTrkSidePanel()`,
+cote droit de la page SEQUENCEUR) est juge inutilisable ("on peut rien
+faire, y'a rien qui marche"). Demande precise pour le refaire :
+
+1. **Navigation par bouton, surbrillance a presser pour changer la
+   valeur** -- meme logique que les colonnes NOTE/INST/FX/VAL/PROB/COND
+   du tracker (voir seqDetailCol), pas un panneau juste affiche.
+2. **Le panneau devient 2 raccourcis empiles** au lieu d'un bloc
+   d'infos statique : en haut un raccourci "PATCH" qui ouvre une
+   fenetre dediee de reglage de patch (moteur, forme d'onde/algo
+   selon le moteur) ; en dessous un raccourci "EFFETS" qui ouvre une
+   fenetre de reglage d'effets **PAR PISTE**, activables/reglables --
+   n'existe pas encore cote Teensy (FX:reverb/FX:delay actuels sont
+   sur le bus MAITRE global via potards 2/3, pas par piste -- vraie
+   extension d'architecture a concevoir, pas juste un ecran).
+3. **Page AUDIO (clavier tactile pads)** : passer en plein ecran
+   (actuellement partage l'ecran avec d'autres elements), ajouter une
+   rangee de boutons pour changer la gamme a la volee, et un
+   **arpegiateur complet** (pas juste le triangle ARP par pas du
+   tracker actuel -- un vrai mode de jeu arpegiateur en temps reel sur
+   le clavier live). Objectif explicite : "que notre petit clavier
+   4x4 soit top".
+
+Pas commence cette session (gros chantier UI + nouvelle architecture
+d'effets par piste + fonctionnalite musicale complete a concevoir
+proprement, pas a bacler en direct pendant une session de debug
+materiel). A traiter dans une session dediee.
+
 **[2026-09-18, suite du diagnostic DEXED]** Ajoute `checkHeap()` /
 commande `HEAP?` (mallinfo(), voir le commentaire dans le code) pour
 verifier la piste "allocation echouee silencieusement" (`new` sans
