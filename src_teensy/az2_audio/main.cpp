@@ -187,9 +187,25 @@ uint8_t trackGroupChannel(uint8_t track) {
 
 // Moteur et patch actuellement actifs par piste (voir
 // AZ2_Protocol.h: kEngine*/kEngineCount, enginePatchCount()).
+//
+// BUG REEL confirme sur materiel le 2026-09-18 : DEXED produit du bruit
+// au lieu d'une note des qu'on le declenche (voir AZ2_ETAT_DES_LIEUX.md,
+// "diagnostic DEXED" -- isole par test binaire MUTE: piste par piste,
+// pas un probleme materiel). Le vrai correctif (dans le coeur FM de
+// Synth_Dexed) demande un outillage qui manque encore (SCOPE: cassee,
+// voir le meme journal) -- en attendant, DEXED n'est plus le moteur par
+// defaut d'AUCUNE piste : retour utilisateur explicite ("faut reparer
+// ce truc que ca sonne plutot que ca fasse du bruit"). Remplace par
+// ANALOG, seul moteur CONFIRME propre a l'oreille sur ce materiel (test
+// isole piste 0, "ca c'est bon"). EPIANO/BRAIDS restent en defaut sur
+// leurs pistes -- pas de bug signale dessus, mais pas non plus
+// confirmes a l'oreille en train de jouer (seulement "pas de souffle
+// residuel au repos" lors du test MUTE:) -- a surveiller. DEXED reste
+// selectionnable a la main via ENGINE: pour continuer a le tester/le
+// reparer, juste plus le choix qui demarre tout seul au boot.
 uint8_t trackEngine[kTrackCount] = {
-    az2::kEngineDexed, az2::kEngineDexed, az2::kEngineEPiano, az2::kEngineBraids,
-    az2::kEngineDexed, az2::kEngineDexed, az2::kEngineEPiano, az2::kEngineBraids,
+    az2::kEngineAnalog, az2::kEngineAnalog, az2::kEngineEPiano, az2::kEngineBraids,
+    az2::kEngineAnalog, az2::kEngineAnalog, az2::kEngineEPiano, az2::kEngineBraids,
 };
 uint8_t trackPatch[kTrackCount] = {0, 0, 0, 0, 0, 0, 0, 0};
 

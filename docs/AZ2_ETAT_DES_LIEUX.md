@@ -138,6 +138,21 @@ DEXED** -- EPIANO/BRAIDS/KARPLUS/ANALOG semblent utilisables (testes
 individuellement sans souffle residuel, pas encore ecoutes en train de
 vraiment jouer sauf ANALOG).
 
+**[2026-09-18, suite -- corrige]** Retour utilisateur : "PLAY/STOP
+marche pas, ca met en route le DEXED, faut reparer ce truc que ca
+sonne plutot que ca fasse du bruit" -- PLAY/STOP fonctionnaient en
+realite tres bien (confirme plus haut dans ce journal), le vrai souci
+etait que DEXED demarre par defaut sur les pistes 0/1/4/5 (voir
+`trackEngine[]` dans `src_teensy/az2_audio/main.cpp`), donc appuyer sur
+PLAY sans rien changer jouait directement le moteur casse. Corrige :
+**DEXED n'est plus le moteur par defaut d'aucune piste**, remplace par
+ANALOG (seul moteur confirme propre a l'oreille) sur 0/1/4/5 ; EPIANO/
+BRAIDS restent par defaut sur 2/3/6/7 (pas de bug signale dessus). DEXED
+reste choisissable a la main via `ENGINE:` pour continuer a le tester/
+le reparer plus tard -- juste plus le choix qui demarre tout seul.
+Flashe et confirme vivant sur le vrai materiel (CPU 6.1%, plus bas
+qu'avant -- coherent, ANALOG est moins couteux que DEXED).
+
 Bugs UI corriges en route pendant cette session de flash (voir
 commits) : navigation par pas au D-pad manquante (fix rate 1 : modif
 via C, jamais teste car BTN:C n'a jamais genere d'evenement sur ce
