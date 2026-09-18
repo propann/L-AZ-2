@@ -48,6 +48,7 @@ Chaque image est accompagnée d’un manifeste : carte, moteur, version, taille,
 | Module | Premier flash | Mise à jour dans l’AZ-2 | Difficulté |
 | --- | --- | --- | --- |
 | ESP32/ESP32-S3 | UART ROM : TX/RX + EN + GPIO0 | Chargeur AZ-BUS ou protocole ROM | Facile |
+| ESP8266/ESP-12F | UART ROM : TX/RX + RST + GPIO0 | Chargeur AZ-BUS ; porteuse avec straps obligatoire | Facile |
 | Arduino AVR avec Optiboot | USB-série ou ISP | UART + impulsion RESET | Facile |
 | RP2040/RP2350 | USB BOOTSEL ou SWD | Chargeur AZ-BUS résident recommandé | Moyen |
 | Teensy 4.x | USB + PROGRAM/HalfKay | Chargeur AZ-BUS à développer ; USB secours obligatoire | Difficile |
