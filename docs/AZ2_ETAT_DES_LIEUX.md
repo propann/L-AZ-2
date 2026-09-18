@@ -1,5 +1,28 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-18 matin -- ESP32 flashe, les 2 cartes tournent ensemble]**
+`pio run -e screen_esp -t upload --upload-port /dev/ttyUSB0` (CH340).
+Boot propre : `DISPLAY:READY` (ecran VIEWE reel initialise),
+`TOUCH:FT6336U:READY`, `SD:READY:size_mb=30429` (SD ESP32). **Liaison
+serie ESP32<->Teensy confirmee en reel** -- tous les echos du Teensy
+recus cote ESP32 (`TEENSY:HELLO:...`, `TEENSY:BPM:...`,
+`TEENSY:ENGINE:...`x8, `TEENSY:PATTERN:0`, `TEENSY:STATUS:...:READY`).
+
+**Souffle audio signale par l'utilisateur, apparu juste apres le flash
+Teensy, present meme en silence total (aucune note jouee)** -- ecarte
+une cause logicielle (rien dans le firmware ne touche a la chaine
+audio/DAC cette session). Correspond exactement au symptome deja
+documente dans `AZ2_DAC_PCM5102A.md` pour **SCK flottant sur le
+PCM5102A** ("Flottant -> Souffle/bruit au lieu d'un son propre").
+Cause probable : manipulation du Teensy pour le flasher (USB debranche/
+rebranche) ayant deloge un fil/une soudure fragile SCK->GND. **A
+verifier par l'utilisateur** : continuite SCK-GND au multimetre sur la
+carte DAC, reconnecter/ressouder si mauvaise. Pas un bug de code.
+
+**Reste a verifier a l'oeil** (ecran maintenant allume) : la page
+SEQUENCEUR avec les 2 nouvelles colonnes PRB/CND (voir plus bas,
+kTrkSideX retreci a ~106px pour le panneau "patch actif").
+
 **[2026-09-18 matin -- premier flash reel de la session]** Teensy
 flashe (`pio run -e master_teensy -t upload`, /dev/ttyACM0, HalfKay
 detecte et programme sans probleme). Boot propre : SD dediee
