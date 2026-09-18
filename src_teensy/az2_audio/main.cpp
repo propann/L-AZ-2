@@ -1593,6 +1593,214 @@ void handleDexedParamCommand(const String &line) {
   relayLine(line);
 }
 
+// Borne max valide pour l'octet `globalIndex` du buffer de voix DX7
+// deballe (voir DexedVoiceOPParameters/DexedVoiceParameters dans
+// dexed.h -- 6 operateurs de 21 octets [0-125], puis 19 parametres
+// globaux [126-144], le nom occupant les octets suivants -- exclu de
+// DXR:, voir handleDexedRawCommand()). Callee a l'ecriture (clamp) ET
+// exposee cote UI via la meme table statique/reponse -- pas de
+// duplication a maintenir a la main de chaque cote.
+uint8_t dxpParamMax(uint16_t globalIndex) {
+  if (globalIndex < DEXED_VOICE_OFFSET) {
+    switch (globalIndex % 21) {
+      case DEXED_OP_SCL_LEFT_CURVE:
+      case DEXED_OP_SCL_RGHT_CURVE: return 3;
+      case DEXED_OP_OSC_RATE_SCALE: return 7;
+      case DEXED_OP_AMP_MOD_SENS: return 3;
+      case DEXED_OP_KEY_VEL_SENS: return 7;
+      case DEXED_OP_OSC_MODE: return 1;
+      case DEXED_OP_FREQ_COARSE: return 31;
+      case DEXED_OP_OSC_DETUNE: return 14;
+      default: return 99;  // EG R1-4/L1-4, break point, scl depth, output lev, freq fine
+    }
+  }
+  switch (globalIndex - DEXED_VOICE_OFFSET) {
+    case DEXED_ALGORITHM: return 31;
+    case DEXED_FEEDBACK: return 7;
+    case DEXED_OSC_KEY_SYNC: return 1;
+    case DEXED_LFO_SYNC: return 1;
+    case DEXED_LFO_WAVE: return 5;
+    case DEXED_LFO_PITCH_MOD_SENS: return 7;
+    case DEXED_TRANSPOSE: return 48;
+    default: return 99;  // pitch EG R1-4/L1-4, LFO speed/delay/PMD/AMD
+  }
+}
+
+// DXR:<piste>:<octet brut 0-144>:<valeur> -- editeur DX7 COMPLET
+// (2026-09-18, "un editeur de patch complet et completement reglable"),
+// en plus de DXP: (algo/feedback seuls, garde tel quel pour ne rien
+// casser cote UI existante). Acces direct a n'importe quel octet du
+// buffer de voix deballe (Dexed::setVoiceDataElement()/
+// getVoiceDataElement(), voir dexed.h) -- 0-125 = les 6 operateurs
+// (21 octets chacun, meme disposition, voir DexedVoiceOPParameters),
+// 126-144 = parametres globaux (voir DexedVoiceParameters). Le nom
+// (10 caracteres ASCII a partir de l'octet 145) est EXCLU ici -- pas
+// un reglage numerique, une future commande dediee si besoin.
+// DXR?<piste>:<octet> lit la valeur actuelle (meme format en retour,
+// indistinguable d'une confirmation d'ecriture pour l'UI).
+void handleDexedRawCommand(const String &line) {
+  // "DXR:" (ecriture, 2 ':' apres le prefixe) et "DXR?" (lecture, 1
+  // seul ':' apres le prefixe -- pas de 3e champ valeur) n'ont PAS la
+  // meme forme : les 2 prefixes font 4 caracteres, mais compter les
+  // ':' depuis le DEBUT de la ligne (comme les autres handlers de ce
+  // fichier) tombe juste pour "DXR:" (le ':' du prefixe lui-meme sert
+  // de 1er separateur) et FAUX pour "DXR?" (le prefixe n'a pas de ':').
+  // On cherche donc le ':' a partir de la fin du prefixe (4 car.), pas
+  // depuis 0.
+  const bool isQuery = line.startsWith("DXR?");
+  const int idx1 = line.indexOf(':', 4);
+  if (idx1 < 0) {
+    sendCommandError("DXR", "MALFORMED");
+    return;
+  }
+  const uint8_t track = static_cast<uint8_t>(line.substring(4, idx1).toInt());
+
+  int rawIndex;
+  int value = 0;
+  if (isQuery) {
+    rawIndex = line.substring(idx1 + 1).toInt();
+  } else {
+    const int idx2 = line.indexOf(':', idx1 + 1);
+    if (idx2 < 0) {
+      sendCommandError("DXR", "MALFORMED");
+      return;
+    }
+    rawIndex = line.substring(idx1 + 1, idx2).toInt();
+    value = line.substring(idx2 + 1).toInt();
+  }
+
+  if (track >= kTrackCount || rawIndex < 0 || rawIndex >= DEXED_VOICE_OFFSET + DEXED_NAME) {
+    sendCommandError("DXR", "OUT_OF_RANGE");
+    return;
+  }
+
+  if (isQuery) {
+    const uint8_t v = trackDexedEngine[track].getVoiceDataElement(static_cast<uint8_t>(rawIndex));
+    char msg[24];
+    snprintf(msg, sizeof(msg), "DXR:%d:%d:%d", track, rawIndex, v);
+    relayLine(msg);
+    return;
+  }
+
+  value = constrain(value, 0, static_cast<int>(dxpParamMax(static_cast<uint16_t>(rawIndex))));
+  trackDexedEngine[track].setVoiceDataElement(static_cast<uint8_t>(rawIndex), static_cast<uint8_t>(value));
+  relayLine(line);
+}
+
+// EXP:<piste>:<0-11>:<0-127> -- editeur EPIANO complet (2026-09-18,
+// "un editeur de patch complet"). mdaEPiano (voir mdaEPiano.h) expose
+// 12 vrais parametres continus, chacun un flottant 0.0-1.0 normalise
+// (convention standard des plugins mda -- aucun ne stocke une plage
+// differente, voir setParameter()/getParameter() dans mdaEPiano.cpp) :
+// avant cette commande, AUCUN n'etait reglable depuis l'ecran (seuls
+// les 5 "patches" figes de setProgram() l'etaient). AudioSynthEPiano
+// herite publiquement de mdaEPiano (voir synth_mda_epiano.h) -- les
+// setters/getters s'appellent donc directement sur
+// trackEPianoEngine[track]. EXP?<piste>:<index> lit la valeur
+// actuelle (meme format en retour).
+void handleEPianoParamCommand(const String &line) {
+  // Meme piege que DXR: ci-dessus -- "EXP?" (lecture) n'a pas de ':'
+  // dans son prefixe, contrairement a "EXP:" (ecriture) : chercher le
+  // 1er ':' depuis la fin du prefixe (4 car.), pas depuis le debut de
+  // la ligne.
+  const bool isQuery = line.startsWith("EXP?");
+  const int idx1 = line.indexOf(':', 4);
+  if (idx1 < 0) {
+    sendCommandError("EXP", "MALFORMED");
+    return;
+  }
+  const uint8_t track = static_cast<uint8_t>(line.substring(4, idx1).toInt());
+
+  int index;
+  int rawValue = 0;
+  if (isQuery) {
+    index = line.substring(idx1 + 1).toInt();
+  } else {
+    const int idx2 = line.indexOf(':', idx1 + 1);
+    if (idx2 < 0) {
+      sendCommandError("EXP", "MALFORMED");
+      return;
+    }
+    index = line.substring(idx1 + 1, idx2).toInt();
+    rawValue = line.substring(idx2 + 1).toInt();
+  }
+
+  if (track >= kTrackCount || index < 0 || index > 11) {
+    sendCommandError("EXP", "OUT_OF_RANGE");
+    return;
+  }
+  AudioSynthEPiano &eng = trackEPianoEngine[track];
+
+  if (isQuery) {
+    float v = 0.0f;
+    switch (index) {
+      case 0: v = eng.getDecay(); break;
+      case 1: v = eng.getRelease(); break;
+      case 2: v = eng.getHardness(); break;
+      case 3: v = eng.getTreble(); break;
+      case 4: v = eng.getPanTremolo(); break;
+      case 5: v = eng.getPanLFO(); break;
+      case 6: v = eng.getVelocitySense(); break;
+      case 7: v = eng.getStereo(); break;
+      case 8: v = eng.getTune(); break;
+      case 9: v = eng.getDetune(); break;
+      case 10: v = eng.getOverdrive(); break;
+      case 11: v = eng.getVolume(); break;
+    }
+    char msg[24];
+    snprintf(msg, sizeof(msg), "EXP:%d:%d:%d", track, index, static_cast<int>(v * 127.0f + 0.5f));
+    relayLine(msg);
+    return;
+  }
+
+  const float v = static_cast<float>(constrain(rawValue, 0, 127)) / 127.0f;
+  switch (index) {
+    case 0: eng.setDecay(v); break;
+    case 1: eng.setRelease(v); break;
+    case 2: eng.setHardness(v); break;
+    case 3: eng.setTreble(v); break;
+    case 4: eng.setPanTremolo(v); break;
+    case 5: eng.setPanLFO(v); break;
+    case 6: eng.setVelocitySense(v); break;
+    case 7: eng.setStereo(v); break;
+    case 8: eng.setTune(v); break;
+    case 9: eng.setDetune(v); break;
+    case 10: eng.setOverdrive(v); break;
+    case 11: eng.setVolume(v); break;
+  }
+  relayLine(line);
+}
+
+// BXP:<piste>:<0=color|1=timbre>:<0-127> -- BRAIDS n'exposait jusqu'ici
+// que la forme (set_braids_shape(), voir kBraidsShapeValues) ; color/
+// timbre existent dans synth_braids.h (set_braids_color()/
+// set_braids_timbre(), int16_t) mais n'etaient jamais appeles.
+// 0-127 mappe lineairement sur 0-32767 (16 bits signes, mais Braids
+// n'utilise en pratique que la moitie positive pour ces 2 controles).
+void handleBraidsParamCommand(const String &line) {
+  const int idx1 = line.indexOf(':');
+  const int idx2 = line.indexOf(':', idx1 + 1);
+  const int idx3 = line.indexOf(':', idx2 + 1);
+  if (idx1 < 0 || idx2 < 0 || idx3 < 0) {
+    sendCommandError("BXP", "MALFORMED");
+    return;
+  }
+  const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+  const int index = line.substring(idx2 + 1, idx3).toInt();
+  const int raw127 = constrain(line.substring(idx3 + 1).toInt(), 0, 127);
+  if (track >= kTrackCount || (index != 0 && index != 1)) {
+    sendCommandError("BXP", "OUT_OF_RANGE");
+    return;
+  }
+  const int16_t scaled = static_cast<int16_t>((raw127 * 32767) / 127);
+  if (index == 0) {
+    trackBraidsEngine[track].set_braids_color(scaled);
+  } else {
+    trackBraidsEngine[track].set_braids_timbre(scaled);
+  }
+  relayLine(line);
+}
+
 // SCOPE:<piste 0-7> pour observer cette piste (sortie post-filtre, voir
 // trackFilter[]), SCOPE:OFF pour arreter -- voir updateScope() plus bas
 // pour l'envoi effectif des paquets. Rebranche patchScopeTap a chaque
@@ -2140,6 +2348,21 @@ void handleCommand(const String &line) {
 
   if (line.startsWith("DXP:")) {
     handleDexedParamCommand(line);
+    return;
+  }
+
+  if (line.startsWith("DXR:") || line.startsWith("DXR?")) {
+    handleDexedRawCommand(line);
+    return;
+  }
+
+  if (line.startsWith("EXP:") || line.startsWith("EXP?")) {
+    handleEPianoParamCommand(line);
+    return;
+  }
+
+  if (line.startsWith("BXP:")) {
+    handleBraidsParamCommand(line);
     return;
   }
 
