@@ -47,6 +47,7 @@ Deux cartes, deux roles nets :
 - Liaison UART 230400 bauds entre les deux, protocole texte ligne par
   ligne + paquets binaires (audio GB, oscilloscope) -- partage via
   `lib/AZ2_Protocol/`.
+- **Périmètre figé le 2026-09-18 :** le boîtier AZ-2 est plein. Aucun rack multi-ESP ni recâblage de commandes ; les cartouches AZ-BUS/AZ-CHIP/AZ-VA sont reportées à l’AZ-3.
 
 Detail complet : [docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md](docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md).
 
@@ -69,10 +70,10 @@ Detail complet : [docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md](docs/AZ2_ARCHITECTUR
 - [Portage MicroDexed-touch](docs/AZ2_PORTAGE_MICRODEXED_TOUCH.md)
 - [Feuille de route du moteur audio](docs/AZ2_FEUILLE_DE_ROUTE_MOTEUR.md)
 - [Architecture multi-moteurs et sampler](docs/AZ2_ARCHITECTURE_MULTI_MOTEURS.md)
-- [AZ-BUS : rack de moteurs interchangeables](docs/AZ2_BUS_RACK_MOTEURS.md)
-- [Flash des modules moteurs depuis la machine](docs/AZ2_FLASH_MODULES.md)
-- [Premier module ESP32 : moteur AZ-VA1](docs/AZ2_MODULE_ESP32_AZ_VA1.md)
-- [Cartouche ESP8266 : moteurs console AZ-CHIP](docs/AZ2_MODULE_ESP8266_AZ_CHIP.md)
+- [Étude AZ-3 — rack de moteurs interchangeables](docs/AZ2_BUS_RACK_MOTEURS.md)
+- [Étude AZ-3 — flash des modules moteurs](docs/AZ2_FLASH_MODULES.md)
+- [Étude AZ-3 — module ESP32 AZ-VA1](docs/AZ2_MODULE_ESP32_AZ_VA1.md)
+- [Étude AZ-3 — cartouche ESP8266 AZ-CHIP](docs/AZ2_MODULE_ESP8266_AZ_CHIP.md)
 - [Cablage de base (historique)](docs/AZ2_CABLAGE_BASE.md)
 - [Pico -- tentative abandonnee](docs/AZ2_CABLAGE_PICO.md) /
   [TODO Pico (clos)](docs/AZ2_TODO_PICO.md)
