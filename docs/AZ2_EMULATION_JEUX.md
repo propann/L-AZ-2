@@ -246,9 +246,9 @@ Le passage à une tâche dédiée n’est validé qu’après vérification que 
 - réglage volume jeu, mute et mesure des paquets perdus ;
 - conserver le flux 8 kHz actuel comme mode secours.
 
-#### Palier B — avec rack ESP32
+#### Palier B — recherche AZ-3 uniquement
 
-Étudier un moteur APU Game Boy sur une cartouche AZ-BUS : l’écran enverrait les écritures de registres APU horodatées et le module générerait du 44,1 kHz stéréo renvoyé au Teensy par I2S. Cette voie peut produire un son bien supérieur sans envoyer du PCM sur l’UART écran, mais elle vient après le rack AZ-VA1 et exige une synchronisation précise.
+Cette piste est exclue du boîtier AZ-2 et conservée pour l’AZ-3 : étudier un moteur APU Game Boy sur une cartouche AZ-BUS. l’écran enverrait les écritures de registres APU horodatées et le module générerait du 44,1 kHz stéréo renvoyé au Teensy par I2S. Cette voie peut produire un son bien supérieur sans envoyer du PCM sur l’UART écran, mais elle vient après le rack AZ-VA1 et exige une synchronisation précise.
 
 Le module externe ne doit pas exécuter toute la console : renvoyer 160×144×16 bits à 59,7 Hz demanderait environ 2,75 Mo/s hors overhead, incompatible avec l’UART actuel. CPU et vidéo restent donc sur l’ESP32-S3 de l’écran.
 
@@ -322,10 +322,14 @@ Critère de sortie : 59,7275 Hz logique stable, audio sans coupure, commandes co
 | 4 | Menu pause D | réglages accessibles sans quitter brutalement |
 | 5 | Bibliothèque V2 | ROMs classées, récentes, favorites et diagnostics |
 | 6 | Validation | matrice de compatibilité GB/GBC |
-| 7 | Option rack APU | audio stéréo 44,1 kHz externe si utile |
+| 7 | Recherche AZ-3 séparée | éventuel APU externe, sans modifier l’AZ-2 |
 
 ### Hors périmètre immédiat
 
 - GBA : ne pas la promettre sur cet ESP32-S3 tant que GB/GBC ne sont pas parfaits ;
 - NES/multi-console : après validation GB/GBC ;
 - ROM commerciales : aucune fournie dans le dépôt ; utiliser homebrews, domaine public ou dumps personnels.
+
+## Décision matérielle 2026-09-18
+
+Les photos du prototype confirment que le boîtier AZ-2 est plein. L’amélioration de l’émulation doit utiliser exclusivement l’ESP32-S3 écran, le Teensy 4.1, leur UART existant, la SD et le PCM5102A déjà montés. Aucun ESP8266, ESP32 moteur, rack AZ-BUS, nouvelle carte ou déplacement de commande n’entre dans ce chantier. Les idées d’APU externe sont reportées à l’AZ-3.
