@@ -1,12 +1,19 @@
 # AZ-BUS — Rack modulaire de moteurs audio
 
 **Version :** concept V1, 18 septembre 2026  
+**Destination : AZ-3 — étude conservée, non destinée au boîtier AZ-2 actuel.**  
 **Projet :** AZ-2  
 **But :** raccorder au Teensy maître des moteurs locaux ou des cartes audio interchangeables utilisant toutes le même contrat.
 
-## Vision
+## Décision de périmètre
 
-AZ-2 possède un rack général de moteurs. Une piste ne parle plus directement à DEXED, BRAIDS, ANALOG ou à une carte précise. Elle parle à un **Engine Slot**.
+Le 18 septembre 2026, inspection du prototype physique : l’AZ-2 est à sa capacité mécanique et de câblage. Aucun rack, slot, ESP8266 ou ESP32 moteur ne sera ajouté à ce boîtier. Aucun GPIO AZ-2 ne doit être déplacé pour cette étude.
+
+Ce document devient la base de conception de **l’AZ-3**, plus grand et pensé dès le châssis pour recevoir plusieurs cartouches.
+
+## Vision AZ-3
+
+AZ-3 possède un rack général de moteurs. Une piste ne parle plus directement à DEXED, BRAIDS, ANALOG ou à une carte précise. Elle parle à un **Engine Slot**.
 
 Un slot peut contenir :
 
@@ -364,7 +371,7 @@ Ajouter les firmwares moteurs validés sans les charger tous dans le Teensy prin
 
 ## Conclusion
 
-Le concept est valide et puissant : AZ-2 devient une machine évolutive, pas une boîte figée. Le rack unifie d'abord les moteurs internes, puis le même contrat accueille des cartouches audio externes.
+Le concept est valide et puissant, mais il appartient désormais à l’AZ-3. L’AZ-2 reste une machine compacte à deux cerveaux, sans extension interne supplémentaire. Le rack unifie d'abord les moteurs internes, puis le même contrat accueille des cartouches audio externes.
 
 La première réalisation raisonnable est :
 
