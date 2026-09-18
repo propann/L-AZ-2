@@ -1,5 +1,36 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-18, nuit -- charge CPU/memoire mesuree : grosse marge sur
+les 3 axes, "tas critique" note plus haut ce soir infirme]**
+
+Demande : "on les fait tous sonner en meme temps pour voir la charge
+processeur et voir si on peut en ajouter sur le tensy". Mesure reelle,
+8 pistes actives simultanement (les 5 moteurs representes, notes
+differentes, meme filtre 15kHz) :
+
+- **CPU : 7.1% (pic mesure 11.2%).** Le Teensy 4.1 (600MHz Cortex-M7)
+  s'ennuie completement avec la charge actuelle -- large marge pour
+  plus de voix ou des moteurs plus lourds a calculer.
+- **Memoire audio (blocs DMA, `AudioMemory(200)`) : 125-139/200.**
+  Correct mais se resserre avec 8 voix actives -- a surveiller/
+  augmenter (`AudioMemory(N)`, cout RAM statique nul en pratique) si on
+  ajoute beaucoup plus de voix simultanees.
+- **Tas (malloc/new) : FAUSSE ALERTE corrigee.** mallinfo() ne
+  montrait que ~1.6 Ko libres dans l'arene ACTUELLE (36 Ko), note plus
+  haut ce soir comme piste possible pour le bruit blanc (avant de
+  trouver la vraie cause, le filtre) -- mais l'arene newlib grandit a
+  la demande via `_sbrk()` jusqu'a `_heap_end` (voir
+  `imxrt1062_t41.ld`/`startup.c` du coeur Teensy), PAS un plafond dur a
+  36 Ko. **Verifie empiriquement** (nouvelle commande `HEAPTEST:<Ko>`,
+  gardee dans le firmware) : allocation de 300 Ko d'un coup, ecriture/
+  lecture confirmee correcte, liberation propre -- l'arene est montee a
+  347712 o puis redescendue a 36416 o. Le rapport du linker
+  (`free for malloc/new: 454208`) est donc bien la vraie marge
+  disponible, pas juste une taille "annoncee" theorique.
+- **Conclusion : rien ne bloque cote ressources** pour enrichir les
+  patches (plus de parametres stockes par piste) ou ajouter des
+  moteurs -- CPU, memoire audio et tas ont tous une marge confortable.
+
 **[2026-09-18, nuit -- les 5 moteurs confirmes propres avec leur
 patch par defaut (objectif "on fait sonner proprement tout les moteur
 audio un par un" enfin atteint)]**

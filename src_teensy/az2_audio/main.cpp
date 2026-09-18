@@ -38,6 +38,7 @@ namespace {
 
 void checkPsram();  // definie plus bas, utilisee par handleCommand ("PSRAM?")
 void checkHeap();   // definie plus bas, utilisee par handleCommand ("HEAP?")
+void checkHeapTest(uint32_t bytes);  // definie plus bas, utilisee par handleCommand ("HEAPTEST:")
 
 // 8 (au lieu de 4) depuis la demande du 2026-09-14 ("on peut augmenter
 // les pistes monter a 8") -- performance mesuree reelle avant/apres ce
@@ -2101,6 +2102,12 @@ void handleCommand(const String &line) {
     return;
   }
 
+  if (line.startsWith("HEAPTEST:")) {
+    const uint32_t kb = static_cast<uint32_t>(line.substring(line.indexOf(':') + 1).toInt());
+    checkHeapTest(kb * 1024);
+    return;
+  }
+
   if (line.startsWith("FX:")) {
     handleFxCommand(line);
     return;
@@ -2563,6 +2570,42 @@ void checkHeap() {
   Serial.print(mi.fordblks);
   Serial.print(":arena=");
   Serial.println(mi.arena);
+}
+
+// HEAPTEST:<Ko> -- alloue puis libere N Ko pour VERIFIER EMPIRIQUEMENT
+// si le tas peut vraiment grandir au-dela de l'arene actuelle
+// (mi.arena ci-dessus, ~36 Ko avant cette allocation), plutot que de
+// deviner. Ajoute le 2026-09-18 ("on peut en ajouter [des moteurs]") --
+// le rapport de taille du linker (voir teensy_size dans la sortie de
+// build) annonce ~454 Ko libres en RAM2 pour malloc/new, largement plus
+// que l'arene mallinfo() actuelle : ceci confirme si ce chiffre est
+// reel (le tas grandit via _sbrk() jusqu'a _heap_end, voir startup.c
+// cote framework Teensy -- mi.arena ne reflete que ce qui a deja ete
+// demande, PAS un plafond dur) ou s'il y a un vrai mur avant.
+void checkHeapTest(uint32_t bytes) {
+  Serial.print("AZ2:HEAPTEST:requested=");
+  Serial.println(bytes);
+  checkHeap();
+  void *p = malloc(bytes);
+  if (p == nullptr) {
+    Serial.println("AZ2:HEAPTEST:MALLOC_FAILED");
+    return;
+  }
+  // Touche vraiment la memoire (pas juste reservee) -- ecrit puis relit
+  // un motif, comme checkPsram() ci-dessus, pour exclure une page
+  // "promise" mais pas utilisable.
+  memset(p, 0xA5, bytes);
+  bool ok = true;
+  for (uint32_t i = 0; i < bytes; i += 4096) {
+    if (static_cast<uint8_t *>(p)[i] != 0xA5) {
+      ok = false;
+      break;
+    }
+  }
+  Serial.println(ok ? "AZ2:HEAPTEST:WRITE_READ_OK" : "AZ2:HEAPTEST:WRITE_READ_FAILED");
+  checkHeap();
+  free(p);
+  checkHeap();
 }
 
 void sendStatus() {
