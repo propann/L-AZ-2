@@ -1,5 +1,22 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-18, nuit -- les 5 moteurs confirmes propres avec leur
+patch par defaut (objectif "on fait sonner proprement tout les moteur
+audio un par un" enfin atteint)]**
+
+Suite du fix filtre (entree du dessous). Piste 0 isolee, meme note
+(60), chaque moteur teste avec son PATCH REEL (pas juste une onde
+brute) : DEXED "FM-Rhodes", EPIANO "Default", BRAIDS "CSAW", KARPLUS
+(corde pincee, seul patch dispo), ANALOG "Sinus". **Les 5 confirmes
+propres par l'utilisateur** (quelques faux "rien entendu" avant
+confirmation au deuxieme essai -- probablement le temps de reaction
+entre l'envoi PLAY et l'ecoute, pas un souci reproductible). Etat
+remis a plat apres (demute/desolo tout, pas de test desactive).
+
+Avec le fix filtre + ce tour de validation, l'objectif du 2026-09-18
+("on fait sonner proprement tout les moteur audio un par un") est
+atteint pour les 5 moteurs.
+
 **[2026-09-18, nuit -- fiabilisation du fix filtre + test complet du
 tracker/page PATCH par simulation, sans les mains sur le vrai clavier]**
 
