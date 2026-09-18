@@ -1,7 +1,66 @@
 # AZ-2 - Etat des lieux
 
-**[2026-09-18, nuit -- bug de transmission SCOPE trouve et corrige (pas
-encore reteste sur le vrai materiel)]**
+**[2026-09-18, nuit -- RESOLU : le "bruit blanc" des moteurs (DEXED,
+EPIANO, BRAIDS, KARPLUS, puis ANALOG aussi) n'etait pas un bug moteur --
+c'etait le filtre partage, reglee par defaut dans sa zone d'instabilite]**
+
+Suite de l'investigation des entrees precedentes ("cause toujours pas
+trouvee"). Cause reelle trouvee et confirmee sur le vrai materiel :
+
+- **Le defaut au boot ET le plafond de la commande FILT: (127/127)
+  etaient a la MEME valeur : 18000Hz.** Donc TOUS les tests "moteur X
+  sonne mal" depuis le debut de cette investigation (hier soir et ce
+  soir) ont ete faits filtre grand ouvert a 18kHz, sans que personne
+  (utilisateur ni moi) ne le sache -- le filtre n'a jamais ete suspecte
+  parce que "grand ouvert" (127/127, le reglage par defaut affiche comme
+  "neutre") semblait la position la moins susceptible de deformer le
+  signal.
+- `AudioFilterStateVariable` (topologie Chamberlin SVF, voir
+  `filter_variable.h` dans la lib Audio Teensy) autorise en theorie
+  jusqu'a `AUDIO_SAMPLE_RATE_EXACT/2.5` (~17647Hz, son propre clamp
+  interne) mais devient en pratique instable/auto-oscillant pres de
+  cette limite, MEME a resonance minimale (0.7, la plus "plate"
+  possible ici) -- un defaut connu de cette topologie de filtre pres de
+  Nyquist, jamais documente dans ce projet avant ce soir.
+- **Teste en direct sur le vrai materiel, piste 0 isolee (MUTE sur les 7
+  autres pistes + SOLO:0:1), meme note (60), memes 5 moteurs un par
+  un** : a 18000Hz (defaut), bruit blanc reproductible identiquement
+  sur DEXED/EPIANO/BRAIDS/KARPLUS **ET ANALOG** (le moteur jusque-la
+  "epargne" -- premiere fois qu'il est retest apres le fix enveloppe
+  partagee d'hier soir, et il echoue aussi cette fois, ce qui a
+  relance l'enquete). A 8000Hz, 12000Hz puis 15000Hz : **note propre
+  sur les 5 moteurs**, confirme utilisateur ("la ca sonne", "pareil
+  une note qui monte en volume", "la ca sonne aussi de plus en plus
+  fort"). A 18000Hz encore une fois (retour au defaut) : bruit blanc de
+  nouveau. Correlation parfaite cutoff/bruit, aucune dependance au
+  moteur -- preuve directe que la CAUSE COMMUNE speculee dans l'entree
+  precedente ("chaine de signal... pas un bug isole par bibliotheque")
+  etait juste, et que c'etait le filtre partage.
+- **Corrige** (`src_teensy/az2_audio/main.cpp`) : plafond de
+  `handleFiltCommand()` et defaut au boot passes de 18000Hz a 15000Hz
+  (dernier point teste propre sur le vrai materiel -- 18000Hz ne
+  l'etait pas). Flashe et reteste sur le vrai materiel SANS aucune
+  commande FILT: (reglage par defaut du boot) : DEXED puis EPIANO/
+  BRAIDS/KARPLUS/ANALOG tous confirmes propres par l'utilisateur.
+- **Le fix "enveloppe partagee" d'hier soir (trackAnalogEnv[] commun
+  aux 5 moteurs) reste dans le code** -- n'a jamais ete la cause, mais
+  c'est une amelioration reelle et sans effet de bord (gating ADSR
+  propre au lieu d'un simple mute par moteur), gardee.
+- **Le bug de transmission SCOPE (entree du dessous) est une decouverte
+  separee et reste corrige independamment** -- utile pour la fiabilite
+  generale du lien, pas pour ce bug-ci (qui n'a jamais eu besoin du
+  scope pour etre resolu, juste d'un test methodique cutoff par
+  cutoff).
+- **Lecon a retenir** : quand plusieurs bibliotheques totalement
+  independantes (dont une classe officielle Teensy Audio Library)
+  produisent EXACTEMENT le meme symptome, chercher dans ce qu'elles ont
+  en commun (ici : le filtre partage en aval, identique pour toutes les
+  pistes) avant de re-suspecter chaque bibliotheque individuellement.
+
+**[2026-09-18, nuit -- bug de transmission SCOPE trouve et corrige,
+flashe et lien confirme stable sur le vrai materiel (voir entree
+au-dessus pour la suite -- ce correctif n'a PAS resolu le bruit moteur,
+c'etait une piste independante)]**
 
 Suite de l'entree precedente ("prochaine piste serieuse : reparer
 d'abord le bug SCOPE"). Analyse complete du chemin

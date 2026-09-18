@@ -1477,9 +1477,31 @@ void handleFiltCommand(const String &line) {
     return;
   }
 
-  // 20Hz a 18000Hz exponentiel : freq = 20 * (18000/20)^(cutoff/127).
+  // 20Hz a 15000Hz exponentiel : freq = 20 * (15000/20)^(cutoff/127).
+  //
+  // [2026-09-18] CAUSE REELLE du "bruit blanc" qui semblait toucher
+  // 4 (puis 5) moteurs sur 5 (voir AZ2_ETAT_DES_LIEUX.md) : le plafond
+  // etait a 18000Hz, et LE DEFAUT AU BOOT (voir setup()) etait DEJA a
+  // ce plafond -- donc TOUS les tests "moteur X sonne mal" depuis le
+  // debut de l'investigation ont ete faits filtre grand ouvert a
+  // 18kHz. AudioFilterStateVariable (Chamberlin SVF, voir
+  // filter_variable.h dans la lib Audio Teensy) est connu pour devenir
+  // instable/auto-osciller pres de sa limite haute -- meme a resonance
+  // MINIMALE (0.7, la plus "plate" possible). Confirme sur le vrai
+  // materiel le 2026-09-18 (soir) : le MEME test (meme moteur, meme
+  // note) est BRUIT BLANC a 18000Hz mais une VRAIE note propre a
+  // 8000/12000/15000Hz -- reproductible sur DEXED, EPIANO, BRAIDS,
+  // KARPLUS et ANALOG identiquement. Ce n'etait donc PAS un bug par
+  // moteur (aucune bibliotheque de synthese en cause) mais un reglage
+  // par defaut du filtre COMMUN a toutes les pistes, dans la zone
+  // d'instabilite du filtre resonant partage. 15000Hz choisi comme
+  // nouveau plafond -- dernier point teste propre sur le vrai
+  // materiel (18000Hz ne l'etait pas) ; garde une bonne marge sous la
+  // frequence de Nyquist/2.5 (~17647Hz) que la lib elle-meme autorise
+  // en theorie (voir AudioFilterStateVariable::frequency()) mais qui
+  // s'est reveille bruyante en pratique sur cette carte.
   const float ratio = static_cast<float>(cutoff) / 127.0f;
-  const float freq = 20.0f * powf(18000.0f / 20.0f, ratio);
+  const float freq = 20.0f * powf(15000.0f / 20.0f, ratio);
   trackFilter[track].frequency(freq);
   trackFilter[track].resonance(0.7f + (static_cast<float>(res) / 127.0f) * (5.0f - 0.7f));
 
@@ -2574,8 +2596,12 @@ void setup() {
   // le constructeur AudioFilterStateVariable part a 1000Hz (voir
   // filter_variable.h), ce qui couperait audiblement le son de TOUTES
   // les pistes des le premier boot si on ne le corrige pas ici.
+  // 15000Hz (pas 18000Hz) : voir le commentaire de handleFiltCommand()
+  // -- 18000Hz etait la VRAIE cause du "bruit blanc" attribue a tort
+  // aux moteurs de synthese (2026-09-18), confirme sur le vrai
+  // materiel identiquement sur les 5 moteurs.
   for (uint8_t t = 0; t < kTrackCount; ++t) {
-    trackFilter[t].frequency(18000.0f);
+    trackFilter[t].frequency(15000.0f);
     trackFilter[t].resonance(0.7f);
   }
   loadDexedPatch(liveVoice, 0);  // "FM-Rhodes" plutot qu'un init_voice vide
