@@ -494,3 +494,109 @@ reel** -- ecrit sans materiel branche. A verifier en priorite : le
 tempo moyen reste-t-il exact sur plusieurs mesures (pas de derive), et
 la sensation de swing est-elle audible/musicale aux positions
 extremes (32, 64, 96, 127) ?
+
+## Mise à jour 2026-09-18 — rack de moteurs interchangeables
+
+Le rack devient un axe officiel de la feuille de route, sans remplacer les moteurs locaux ni le sampler.
+
+Architecture retenue :
+
+- Teensy 4.1 maître : horloge, séquenceur, rack, mixage, effets et PCM5102A ;
+- ESP32-S3 écran : UI, SD, émulation GB/GBC et installation des firmwares ;
+- ESP32 moteur : cartouches de synthèse évoluée AZ-VA/AZ-WT ;
+- ESP8266/ESP-12F nus : cartouches AZ-CHIP dédiées aux moteurs de consoles et au lo-fi ;
+- AZ-BUS : UART de contrôle/flash et retour audio adapté à la famille de module.
+
+### Phase 9 — banc AZ-BUS
+
+| Priorité | Tâche | Validation |
+| ---: | --- | --- |
+| 1 | Inventorier les modules nus : référence, flash, dimensions, quantité | tableau matériel confirmé |
+| 2 | Valider UART matériel Teensy 28/29 | boucle locale sans erreur à 1 Mbaud |
+| 3 | Valider RESET/BOOT sur 30/31 | dix passages boot normal/chargeur |
+| 4 | Déplacer le bouton B de la broche 8 vers 26 ou 27 | contrôle physique toujours fonctionnel |
+| 5 | Ajouter AudioInputI2S sur la broche 8 pour les moteurs ESP32 | sinusoïde externe propre |
+| 6 | Créer HELLO/DESCRIBE/HEARTBEAT/METRICS | module détecté et panne non bloquante |
+| 7 | Valider mute, limiteur et timeout du slot | aucun bruit au boot/reset |
+
+Critère de sortie : un module de test se détecte, se réinitialise, produit une sinusoïde et peut tomber en panne sans arrêter l’AZ-2.
+
+### Phase 10 — cartouche ESP8266 AZ-CHIP
+
+| Priorité | Tâche | Validation |
+| ---: | --- | --- |
+| 1 | Dessiner la porteuse ESP-12F : 5 V→3,3 V, straps, découplage, antenne, header | schéma relu avant PCB |
+| 2 | Flasher un firmware de détection AZ-BUS | flash initial par programmateur |
+| 3 | Porter minigb_apu comme AZ-CHIP GB | motif de test puis notes |
+| 4 | Transporter le PCM par UART 1 Mbaud | 16 kHz/8 bits sans perte |
+| 5 | Tester 22,05 kHz et choisir le meilleur compromis | mesures de pertes/latence |
+| 6 | Ajouter patches/macros et sauvegarde | moteur utilisable dans une piste |
+| 7 | Ajouter PSG puis AY | catalogue de trois moteurs validés |
+
+Critère de sortie : AZ-CHIP GB joue 30 minutes sans coupure, se reflashe depuis la machine et reste silencieux au repos.
+
+### Phase 11 — cartouche ESP32 AZ-VA1
+
+| Priorité | Tâche | Validation |
+| ---: | --- | --- |
+| 1 | Identifier ESP32/S3 et PSRAM disponibles | environnement PlatformIO figé |
+| 2 | I2S esclave 44,1 kHz vers Teensy | sinusoïde stéréo stable |
+| 3 | AZ-VA1 minimal : 4 voix, 2 oscillateurs, ADSR, filtre | notes et paramètres stables |
+| 4 | Mesurer CPU/RAM/xruns | métriques visibles à l’écran |
+| 5 | Étendre vers 8 voix, wavetable, unisson, LFO, saturation, chorus | uniquement selon budget mesuré |
+| 6 | Ajouter patches et écran d’édition | sauvegarde/restauration cohérente |
+
+Critère de sortie : moteur polyphonique jouable, sans dérive d’horloge, avec latence stable et aucune allocation dans la boucle audio.
+
+### Phase 12 — installation depuis l’AZ-2
+
+| Priorité | Tâche | Validation |
+| ---: | --- | --- |
+| 1 | Manifestes firmware sur SD avec cible/version/SHA-256 | mauvaise image refusée |
+| 2 | Fenêtre Moteurs > Installer | module et compatibilité visibles |
+| 3 | FW_BEGIN/FW_CHUNK/FW_END/FW_COMMIT | progression et CRC |
+| 4 | Mute et arrêt transport automatiques | aucun bruit pendant flash |
+| 5 | Reboot, handshake et retour arrière | interruption volontaire récupérable |
+
+Le premier flash reste réalisé par le programmateur ou USB/SWD. La machine prend ensuite en charge les mises à jour AZ-BUS.
+
+## Mise à jour 2026-09-18 — émulation GB/GBC V2
+
+L’émulateur existe et une ROM fonctionne, mais la cible produit est désormais plus stricte : cadence logique officielle, son continu, vidéo stable, sauvegardes sûres et menu complet.
+
+### Phase 13 — instrumentation et vitesse
+
+| Priorité | Tâche | Validation |
+| ---: | --- | --- |
+| 1 | Mesurer FPS logique, FPS vidéo, temps CPU, temps blit et retard cumulé | statistiques une fois/seconde |
+| 2 | Compter frames sautées et audio underrun/overflow | diagnostic visible |
+| 3 | Isoler l’émulation dans une tâche dédiée | UI/tactile ne ralentissent plus le jeu |
+| 4 | Double buffering et frameskip Auto/Off/1 | 59,7275 Hz logique stable |
+| 5 | Exécuter ROM de test CPU/timers/PPU | résultats consignés |
+
+### Phase 14 — audio console
+
+| Priorité | Tâche | Validation |
+| ---: | --- | --- |
+| 1 | Passer le lien écran↔Teensy à 921600 après test réel | aucune erreur série |
+| 2 | Paquet audio V2 avec longueur 16 bits, séquence et pertes | protocole robuste |
+| 3 | Buffer audio non bloquant séparé | aucune attente UART dans la frame |
+| 4 | Tester 22,05 kHz mono 16 bits ou stéréo 8 bits | choix par écoute et mesures |
+| 5 | Conserver 8 kHz comme mode secours | repli automatique possible |
+| 6 | Étudier AZ-CHIP GB comme APU externe 44,1 kHz | seulement après rack fonctionnel |
+
+### Phase 15 — interface JEUX complète
+
+| Priorité | Tâche | Validation |
+| ---: | --- | --- |
+| 1 | Bibliothèque Tous/GB/GBC/Favoris/Récents | navigation tactile et croix |
+| 2 | Index SD paginé sans limite fixe à 40 | grande collection testée |
+| 3 | Bouton D = menu pause | Reprendre/Sauver/Reset/Réglages/Quitter |
+| 4 | Palettes DMG et frameskip configurable | réglages persistants |
+| 5 | Performance overlay optionnel | aucun coût quand masqué |
+| 6 | Sauvegarde RAM manuelle + périodique sûre | reprise après coupure contrôlée |
+| 7 | Jaquettes chargées à la demande | aucun accès SD pendant le jeu |
+
+Critère final émulation : 59,7275 Hz logique stable pendant 30 minutes, audio sans coupure, dix jeux homebrew GB/GBC testés, sauvegardes fiables et aucune fuite PSRAM après dix changements de ROM.
+
+Documents associés : AZ2_BUS_RACK_MOTEURS.md, AZ2_FLASH_MODULES.md, AZ2_MODULE_ESP32_AZ_VA1.md, AZ2_MODULE_ESP8266_AZ_CHIP.md et AZ2_EMULATION_JEUX.md.
