@@ -1408,10 +1408,13 @@ void patchRowRect(uint8_t i, int16_t &y) {
 // materiel reel : "la fenetre de patch on peut rien regler avec les
 // boutons" -- comme le panneau tracker avant son propre fix, cette page
 // n'etait pilotable qu'au tactile). 0-5 = les 6 lignes filtre/ADSR-ou-
-// DXP (voir patchParamRef()), 6 = la ligne VOLUME. Meme convention que
+// DXP (voir patchParamRef()), 6 = la ligne VOLUME, 7 = la ligne SLOT/
+// SAVE/LOAD (ajoutee ensuite, meme demande). Meme convention que
 // seqDetailCol : GAUCHE/DROITE changent la piste (patchTrack), HAUT/BAS
 // SEULS deplacent la ligne selectionnee, A maintenu + HAUT/BAS edite sa
-// valeur -- voir le gestionnaire de croix plus bas.
+// valeur -- SAUF sur la ligne SLOT ou A maintenu + GAUCHE/DROITE
+// declenchent SAVE/LOAD (pas une valeur continue) -- voir le
+// gestionnaire de croix plus bas.
 int8_t selectedPatchRow = 0;
 
 void drawPatchRow(uint8_t i) {
@@ -1560,10 +1563,12 @@ constexpr int16_t kPatchSlotBtnW = (kScreenSize - 2 * kMargin) / 3;
 void drawPatchSlotRow() {
   const int16_t saveX = static_cast<int16_t>(kMargin + kPatchSlotBtnW);
   const int16_t loadX = static_cast<int16_t>(kMargin + 2 * kPatchSlotBtnW);
+  const bool rowSelected = (selectedPatchRow == 7);
+  const uint16_t accent = kPalette[static_cast<uint8_t>(patchTrack) % kPaletteCount];
   gfx->fillRect(kMargin, kPatchSlotY, kScreenSize - 2 * kMargin, kPatchSlotH, RGB565_BLACK);
-  gfx->drawRect(kMargin, kPatchSlotY, kPatchSlotBtnW, kPatchSlotH, kFaint);
-  gfx->drawRect(saveX, kPatchSlotY, kPatchSlotBtnW, kPatchSlotH, kFaint);
-  gfx->drawRect(loadX, kPatchSlotY, kPatchSlotBtnW, kPatchSlotH, kFaint);
+  gfx->drawRect(kMargin, kPatchSlotY, kPatchSlotBtnW, kPatchSlotH, rowSelected ? accent : kFaint);
+  gfx->drawRect(saveX, kPatchSlotY, kPatchSlotBtnW, kPatchSlotH, rowSelected ? accent : kFaint);
+  gfx->drawRect(loadX, kPatchSlotY, kPatchSlotBtnW, kPatchSlotH, rowSelected ? accent : kFaint);
 
   gfx->setTextSize(2);
   gfx->setTextColor(RGB565_WHITE);
@@ -2901,7 +2906,20 @@ void handleTeensyLine(const String &line) {
         // sendPatchFilt()/sendPatchDxp()/sendPatchEnv()/sendPatchVol()).
         if (pressed && currentScreen == Screen::Patch) {
           const uint8_t t = static_cast<uint8_t>(patchTrack);
-          if (index == 2 || index == 3) {
+          // Ligne SLOT (2026-09-18, meme demande que le reste de cette
+          // page : "on peut rien regler avec les boutons") -- row 7,
+          // AJOUTEE sans toucher a la mise en page (la ligne SLOT/SAVE/
+          // LOAD existait deja a l'ecran, seulement au tactile). A
+          // maintenu + GAUCHE/DROITE = SAVE/LOAD (combinaison neuve,
+          // GAUCHE/DROITE seuls restent le changement de piste comme
+          // avant) ; A maintenu + HAUT/BAS = cycle le numero de slot.
+          if (btnState[0] && selectedPatchRow == 7 && (index == 2 || index == 3)) {
+            if (index == 3) {
+              savePatchSlot(patchSlot);
+            } else {
+              loadPatchSlot(patchSlot);
+            }
+          } else if (index == 2 || index == 3) {
             patchTrack = static_cast<int8_t>((patchTrack + (index == 3 ? 1 : kSeqTrackCount - 1)) % kSeqTrackCount);
             scopeHasData = false;
             char msg[12];
@@ -2912,9 +2930,9 @@ void handleTeensyLine(const String &line) {
             const int8_t prevRow = selectedPatchRow;
             const int8_t dir = (index == 0) ? -1 : 1;
             int8_t nextRow = selectedPatchRow;
-            for (uint8_t tries = 0; tries < 7; ++tries) {
-              nextRow = static_cast<int8_t>(((nextRow + dir) % 7 + 7) % 7);
-              if (nextRow == 6 || patchRowActive(t, static_cast<uint8_t>(nextRow))) {
+            for (uint8_t tries = 0; tries < 8; ++tries) {
+              nextRow = static_cast<int8_t>(((nextRow + dir) % 8 + 8) % 8);
+              if (nextRow == 6 || nextRow == 7 || patchRowActive(t, static_cast<uint8_t>(nextRow))) {
                 break;
               }
             }
@@ -2922,11 +2940,15 @@ void handleTeensyLine(const String &line) {
             if (selectedPatchRow != prevRow) {
               if (prevRow == 6) {
                 drawVolRow();
+              } else if (prevRow == 7) {
+                drawPatchSlotRow();
               } else {
                 drawPatchRow(static_cast<uint8_t>(prevRow));
               }
               if (selectedPatchRow == 6) {
                 drawVolRow();
+              } else if (selectedPatchRow == 7) {
+                drawPatchSlotRow();
               } else {
                 drawPatchRow(static_cast<uint8_t>(selectedPatchRow));
               }
@@ -2938,6 +2960,9 @@ void handleTeensyLine(const String &line) {
               vol = static_cast<uint8_t>(constrain(static_cast<int>(vol) + delta, 0, 127));
               drawVolRow();
               sendPatchVol();
+            } else if (selectedPatchRow == 7) {
+              patchSlot = static_cast<uint8_t>((static_cast<int>(patchSlot) + delta + kPatchSlotCount) % kPatchSlotCount);
+              drawPatchSlotRow();
             } else if (patchRowActive(t, static_cast<uint8_t>(selectedPatchRow))) {
               uint8_t &param = patchParamRef(t, static_cast<uint8_t>(selectedPatchRow));
               param = static_cast<uint8_t>(constrain(static_cast<int>(param) + delta, 0,

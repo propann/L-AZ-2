@@ -1,5 +1,24 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-18, apres-midi -- travail en autonomie, ESP32 debranche]**
+Utilisateur parti au travail ("continue par la suite"). Teensy encore
+branche, ESP32 non -- travail limite au code compile-verifie (pas
+flashe/teste sur l'ESP32, a confirmer au prochain reveil du materiel) :
+
+- **Page PATCH, ligne SLOT (7e ligne) ajoutee au meme systeme de
+  croix** que le reste de la page (voir le fix precedent) -- la ligne
+  SLOT/SAVE/LOAD existait deja a l'ecran (tactile uniquement), pas
+  besoin de redesign pour l'ajouter (contrairement a moteur/patch
+  integre, qui eux ne rentrent pas). A maintenu + HAUT/BAS cycle le
+  numero de slot ; A maintenu + GAUCHE/DROITE declenche SAVE/LOAD
+  (nouvelle combinaison, ne touche pas GAUCHE/DROITE seuls qui restent
+  le changement de piste). Compile verifie (3 environnements), **pas
+  flashe/teste** (ESP32 debranche).
+- **Fausse alerte SCOPE: corrigee** (voir plus bas dans le journal) --
+  erreur de methode de test de ma part, pas un bug firmware.
+
+**[2026-09-18 matin -- ESP32 flashe, les 2 cartes tournent ensemble]**
+
 **[2026-09-18, demande UI/UX -- gros chantier note, pas fait cette
 session]** Retour utilisateur en testant le tracker sur le vrai
 materiel : le panneau lateral "patch actif" (`drawTrkSidePanel()`,
