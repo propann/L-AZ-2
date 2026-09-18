@@ -1,5 +1,30 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-18 matin -- premier flash reel de la session]** Teensy
+flashe (`pio run -e master_teensy -t upload`, /dev/ttyACM0, HalfKay
+detecte et programme sans probleme). Boot propre : SD dediee
+(`SDTEENSY:READY:size_mb=59456`), PSRAM 16 Mo detectee + test lecture/
+ecriture OK, sequenceur `tracks=8:steps=16`. Teste en serie
+(pyserial) :
+- `PROB:0:0:50`/`COND:0:0:33`/`FILL:1`/`FILL:0` -- acceptees et
+  relayees normalement.
+- `PROB:0:0:150` (hors bornes) -> `PROB:ERROR:OUT_OF_RANGE` ;
+  `BPM:9999` (hors bornes) -> `BPM:ERROR:OUT_OF_RANGE` -- **premiere
+  verification en reel du retour d'erreur ajoute hier**, fonctionne
+  comme prevu.
+- Pattern joue avec `SWING:127` (le nouveau maximum, plafonne a
+  kTicksPerStep-2 depuis le fix d'hier) : les 16 pas s'enchainent sans
+  accroc ni pas manquant, `CPU?` -> usage=11.6%/max=11.8%,
+  memoire=133/141/200 blocs -- sain, coherent avec les mesures
+  precedentes (8-15%).
+
+**Confirme en reel pour la premiere fois** : le fix swing-max/CUT-
+RETRIG, PROB:/COND:/FILL:, et le retour d'erreur protocole -- les 3
+derniers points de l'audit du 2026-09-17, tous valides sur le vrai
+Teensy. Reste a verifier : l'ecran ESP32 (pas encore branche a ce
+stade de la session), donc les 2 nouvelles colonnes PRB/CND et le
+retrecissement du panneau lateral.
+
 **[2026-09-17, soir]** Nouvelle fonction tracker : **probabilite +
 condition par pas** (PROB:/COND:/FILL:, voir AZ2_Protocol.h et
 `SequencerTrack::stepProb/stepCondition` cote Teensy). Demandee par
