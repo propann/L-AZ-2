@@ -32,12 +32,19 @@ TRACKERS_GROOVEBOXES_2026.md) face a Elektron/Digitakt.
   parait trop serre a l'oeil.
 - Compile verifie pour les 3 environnements
   (`pio run -e master_teensy -e screen_esp -e ui_esp` -> SUCCESS).
-- **BTN D = "fill" maintenu**, cable directement dans
-  `updateDigitalControls()` cote Teensy (D etait libre, croix+A-D deja
-  cablee sur le Teensy -- plus simple/plus reactif que de faire un
-  aller-retour par l'ESP32). `FILL:0/1` reste dispo en plus pour
-  l'ESP32/un futur bouton dedie. Rend la fonction jouable des demain
-  sans toucher a l'ecran.
+- **BTN D = "fill" maintenu** -- **[2026-09-18 matin, corrige]** d'abord
+  cable directement cote Teensy (`updateDigitalControls()`), mais en
+  relisant le code au reveil : D a DEJA 2 sens existants selon l'ecran
+  ESP32 affiche (page AUDIO : bascule clavier live/edition-pas ; page
+  MOTEURS : bascule SOLO piste) -- le Teensy ne sachant PAS quel ecran
+  est affiche, sa lecture directe de D aurait active "fill" en arriere-
+  plan MEME en tenant D pour basculer solo/edition sur une autre page
+  (silencieux tant qu'aucun pas n'a de condition FILL, mais un vrai
+  piege des qu'on en programme un). Deplace cote ESP32 :
+  `handleTeensyLine()` envoie `FILL:1` sur BTN:D:DOWN SEULEMENT si
+  `currentScreen == Screen::Sequencer` (page ou D est libre), et
+  `FILL:0` sur BTN:D:UP SANS condition d'ecran (pour ne jamais rester
+  bloque a "actif" si on change de page en gardant D enfonce).
 - `randomSeed(micros())` ajoute dans `setup()` Teensy (sinon `random()`
   rejoue exactement le meme motif a chaque mise sous tension).
 - **Bug reel corrige** : `gbRecStart()` n'appelait pas `SD.remove()`

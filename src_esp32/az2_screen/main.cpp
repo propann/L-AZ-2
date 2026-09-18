@@ -2912,6 +2912,26 @@ void handleTeensyLine(const String &line) {
         padEditsStep = !padEditsStep;
         drawAudioPage();
       }
+      // Page SEQUENCEUR : D maintenu = "fill" (2026-09-17, voir
+      // kStepCondFill/fillActive cote Teensy) -- D est deja pris sur
+      // AUDIO/MOTEURS (ci-dessus/ci-dessous), mais LIBRE sur SEQUENCEUR
+      // (la croix gere colonne/valeur, aucune lettre n'y est mappee).
+      // D'abord cable directement cote Teensy (plus reactif), mais ca
+      // entrait en collision avec les 2 usages ci-dessus (D restait lu
+      // par le Teensy quelle que soit la page affichee a l'ecran) --
+      // deplace ici, scope par ecran, pour ne modifier fillActive QUE
+      // sur la page ou "fill" a un sens. RELACHEMENT jamais filtre par
+      // ecran (contrairement a l'appui) : si on change de page en
+      // gardant D enfonce (ex: B vers le menu), le relachement doit
+      // quand meme eteindre fillActive, sinon il resterait bloque a
+      // "actif" jusqu'au prochain appui+relachement sur SEQUENCEUR.
+      if (letter == 'D') {
+        if (pressed && currentScreen == Screen::Sequencer) {
+          sendToTeensy("FILL:1");
+        } else if (!pressed) {
+          sendToTeensy("FILL:0");  // no-op cote Teensy si fillActive etait deja false
+        }
+      }
       // Page MOTEURS : C bascule MUTE, D bascule SOLO pour la piste
       // choisie par la croix (priorite #1 de la liste indispensable).
       if (pressed && currentScreen == Screen::Engines && (letter == 'C' || letter == 'D')) {
