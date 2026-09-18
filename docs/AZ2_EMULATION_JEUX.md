@@ -195,3 +195,137 @@ seule ROM (`tobu.gb`).
   bien adaptes) : GBCCAT (gnuboy, ESP32 WROVER, ST7789) --
   https://github.com/Djamal-UK/GBCCAT ; lualiliu/esp32-gameboy --
   https://github.com/lualiliu/esp32-gameboy
+
+## Audit 2026-09-18 — objectif « console complète »
+
+Le mode JEUX est un vrai émulateur GB/GBC, mais il n’est pas encore validé comme une console finie. Une ROM démarre réellement ; cela ne prouve ni la cadence officielle sur la durée, ni la fidélité audio, ni la compatibilité d’une bibliothèque de jeux.
+
+### État exact du chemin actuel
+
+| Élément | Implémentation actuelle | Limite |
+| --- | --- | --- |
+| Cœur | Walnut-CGB | Bon candidat, mais aucune suite de ROM de test exécutée sur l’AZ-2 |
+| Cadence | appel de gbRunFrame depuis loop, cible 16 742 µs | dépend encore du tactile, de l’UI, de l’UART et du rendu |
+| Vidéo | framebuffer 480×432 en PSRAM, un transfert par image dessinée | frame_skip actif : affichage d’une image sur deux |
+| Audio APU | minigb_apu stéréo 16 bits en interne | réduit en mono 8 bits/8 kHz avant transport |
+| Transport audio | paquets sur UART 230400 partagé avec le contrôle | qualité limitée et appels Serial susceptibles de bloquer |
+| Sortie | rééchantillonnage Teensy vers 44,1 kHz, DAC PCM5102A | continuité et niveau pas encore validés à l’oreille |
+| Sauvegarde | RAM cartouche .sav sur SD à la sortie | pas de sauvegarde instantanée d’état |
+| Interface | liste paginée de 40 ROM maximum | pas de favoris, recherche, jaquette, détails ni menu pause |
+
+### Définition de « vitesse officielle »
+
+La référence GB est d’environ 59,7275 frames logiques par seconde, soit 16 742 µs par frame. Le nombre important n’est pas seulement le FPS affiché :
+
+- l’émulation doit produire 59,7275 frames logiques/s à 100 % ;
+- aucune rafale ne doit accélérer brutalement le jeu après un retard ;
+- le rendu peut omettre une image si nécessaire, jamais le CPU, les timers ou l’APU ;
+- l’audio doit rester continu et servir d’horloge de stabilité ;
+- mesurer moyenne, minimum, maximum, retard cumulé, frames vidéo sautées, sous-alimentations audio et temps de blit.
+
+### Architecture d’exécution V1
+
+1. Tâche émulation dédiée, priorité stable, séparée du tactile et des menus.
+2. Horloge monotone en microsecondes ; aucune cadence basée sur delay.
+3. Double framebuffer 160×144 ou 480×432 selon la mesure la plus rapide.
+4. File audio circulaire : le rendu APU ne doit jamais attendre que l’UART se vide.
+5. Tâche transport audio séparée avec compteur d’underrun/overflow.
+6. UI et journal série à fréquence réduite pendant le jeu.
+7. Frameskip automatique uniquement si le budget de 16 742 µs est dépassé ; option Off/Auto/1 dans le menu.
+
+Le passage à une tâche dédiée n’est validé qu’après vérification que les callbacks Walnut-CGB et le pilote d’écran ne sont pas appelés simultanément depuis deux contextes.
+
+### Audio à améliorer
+
+#### Palier A — sans nouveau câblage
+
+- porter l’UART écran↔Teensy à 921600 bauds, après test d’erreurs sur câble réel ;
+- protocole audio V2 avec longueur 16 bits, numéro de séquence et compteur de pertes ;
+- cible 22,05 kHz mono 16 bits ou stéréo 8 bits ;
+- tampon TX côté ESP32 et tampon RX côté Teensy ;
+- réglage volume jeu, mute et mesure des paquets perdus ;
+- conserver le flux 8 kHz actuel comme mode secours.
+
+#### Palier B — avec rack ESP32
+
+Étudier un moteur APU Game Boy sur une cartouche AZ-BUS : l’écran enverrait les écritures de registres APU horodatées et le module générerait du 44,1 kHz stéréo renvoyé au Teensy par I2S. Cette voie peut produire un son bien supérieur sans envoyer du PCM sur l’UART écran, mais elle vient après le rack AZ-VA1 et exige une synchronisation précise.
+
+Le module externe ne doit pas exécuter toute la console : renvoyer 160×144×16 bits à 59,7 Hz demanderait environ 2,75 Mo/s hors overhead, incompatible avec l’UART actuel. CPU et vidéo restent donc sur l’ESP32-S3 de l’écran.
+
+### Vidéo à améliorer
+
+- conserver l’échelle entière ×3 : 160×144 devient exactement 480×432 ;
+- rendre le frameskip configurable et mesurer son besoin réel ;
+- proposer palettes DMG : verte, gris neutre, ambre et bleu AZ-2 ;
+- option scanlines légère, désactivée par défaut ;
+- capture d’écran PNG/BMP vers SD hors chemin temps réel ;
+- overlay facultatif : FPS logique, FPS vidéo, temps frame et audio underruns ;
+- ne pas ajouter de filtre bilinéaire coûteux : l’esthétique pixel nette correspond mieux à l’écran et au projet.
+
+### Nouveau menu JEUX
+
+#### Bibliothèque
+
+- onglets Tous, GB, GBC, Favoris et Récents ;
+- tri alphabétique ;
+- nom complet, type de cartouche, présence d’une sauvegarde et dernière ouverture ;
+- pagination sans limite arbitraire à 40 : index SD paginé ou dynamique ;
+- jaquettes optionnelles chargées à la demande, jamais pendant l’émulation ;
+- écran d’erreur précis pour ROM, mapper, PSRAM ou sauvegarde.
+
+#### Menu en jeu sur le bouton D
+
+- Reprendre ;
+- Sauvegarder la RAM cartouche maintenant ;
+- Réinitialiser la console ;
+- Palette DMG ;
+- Frameskip Off/Auto/1 ;
+- Son : volume/mute/qualité ;
+- Afficher les performances ;
+- Sampler REC/STOP et accès au dernier sample ;
+- Quitter vers la bibliothèque.
+
+Le bouton C garde la sortie rapide actuelle. D ouvre le menu pause afin de ne pas sacrifier A, B, Start ou Select.
+
+### Sauvegardes
+
+Trois niveaux à distinguer :
+
+1. RAM cartouche .sav : existe, ajouter sauvegarde périodique sûre et commande manuelle.
+2. État instantané : nécessite une sérialisation explicite du cœur, de la RAM, des registres et de l’APU ; ne jamais écrire brutalement la structure C contenant des pointeurs.
+3. Reprise récente : mémoriser dernière ROM, palette, réglages et présence du .sav, sans démarrage automatique imposé.
+
+### Validation et décision sur le cœur
+
+Walnut-CGB reste le cœur V1 parce qu’il est déjà intégré, supporte GB/GBC et fournit les callbacks nécessaires. Il n’est remplacé ou doublé qu’après résultats mesurés.
+
+Tests requis :
+
+- ROM de test CPU/timers/instructions ;
+- ROM de test PPU et palettes CGB ;
+- ROM de test APU ;
+- au moins 5 homebrews GB et 5 GBC de tailles/mappers différents ;
+- session continue de 30 minutes ;
+- sauvegarde, sortie, recharge et vérification du .sav ;
+- stress tactile/boutons/REC pendant le jeu ;
+- mesure à 100 %, frameskip Off puis Auto.
+
+Critère de sortie : 59,7275 Hz logique stable, audio sans coupure, commandes complètes, sauvegarde fiable, aucune fuite PSRAM après dix chargements et menu pause utilisable.
+
+### Ordre de livraison
+
+| Priorité | Lot | Résultat attendu |
+| ---: | --- | --- |
+| 1 | Instrumentation | statistiques réelles au lieu d’impressions |
+| 2 | Ordonnanceur | vitesse logique officielle stable |
+| 3 | Audio UART V2 | son nettement meilleur et tamponné |
+| 4 | Menu pause D | réglages accessibles sans quitter brutalement |
+| 5 | Bibliothèque V2 | ROMs classées, récentes, favorites et diagnostics |
+| 6 | Validation | matrice de compatibilité GB/GBC |
+| 7 | Option rack APU | audio stéréo 44,1 kHz externe si utile |
+
+### Hors périmètre immédiat
+
+- GBA : ne pas la promettre sur cet ESP32-S3 tant que GB/GBC ne sont pas parfaits ;
+- NES/multi-console : après validation GB/GBC ;
+- ROM commerciales : aucune fournie dans le dépôt ; utiliser homebrews, domaine public ou dumps personnels.
