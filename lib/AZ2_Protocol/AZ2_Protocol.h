@@ -46,6 +46,16 @@ constexpr uint32_t kControlBaud = 921600;
 // le plafond actuel plutot que de risquer un paquet mal forme.
 constexpr uint8_t kGbAudioPacketMagic = 0x01;
 constexpr uint32_t kGbAudioSampleRate = 14000;
+// Nombre d'echantillons envoyes par paquet -- TOUJOURS le meme (voir
+// AUDIO_SAMPLES dans minigb_apu.h cote ESP32, meme formule reprise ici
+// pour que le Teensy puisse verifier la longueur recue SANS dependre de
+// ce header ESP32-only). A garder synchronise a la main si
+// kGbAudioSampleRate change (voir aussi le plafond ~15200 Hz documente
+// plus haut). Utilise cote Teensy comme garde-fou anti-desynchronisation
+// (voir AudioRxState/readStream dans src_teensy/az2_audio/main.cpp,
+// meme bug/correctif que kScopeSamplesPerPacket cote ESP32 -- trouve le
+// 2026-09-18, voir AZ2_ETAT_DES_LIEUX.md).
+constexpr uint8_t kGbAudioSamplesPerPacket = static_cast<uint8_t>(kGbAudioSampleRate / (4194304.0 / 70224.0));
 
 // Oscilloscope, Teensy -> ESP32 cette fois (demande 2026-09-15, "une
 // fenetre ou on voit l'onde du son jouer evoluer en modifiant le

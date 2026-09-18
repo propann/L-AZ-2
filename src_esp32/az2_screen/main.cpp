@@ -3523,39 +3523,99 @@ void handleTeensyLine(const String &line) {
 // kScopePacketMagic) -- mele au flux texte habituel sur Serial1, meme
 // principe que le son GB cote Teensy (voir AudioRxState dans
 // src_teensy/az2_audio/main.cpp) mais dans l'autre sens.
+//
+// [2026-09-18] Bug de desynchronisation trouve et corrige ici -- voir
+// AZ2_ETAT_DES_LIEUX.md "bruit blanc..." : le flux SCOPE dump'e a la
+// main montrait des valeurs chaotiques (0-255 sans forme d'onde) meme
+// pour ANALOG (propre a l'oreille), preuve que c'etait un bug de
+// RECEPTION et pas le bruit moteur lui-meme. Analyse : (1) aucune
+// verification/CRC -- un octet perdu decale la lecture "longueur" sur
+// n'importe quel octet suivant, puis "longueur" octets de charge utile
+// arbitraires sont avales comme si c'etait le paquet -- si un octet de
+// charge utile vaut par hasard 0x02 (1 chance sur 256, les echantillons
+// PCM couvrent tout 0-255), il est repris comme un NOUVEAU magic et le
+// desalignement s'auto-entretient indefiniment ; (2) handleScopePacket()
+// appelait drawPatchScope() (dessin SPI, plusieurs ms) DEPUIS la boucle
+// meme qui lit Serial1 octet par octet -- pendant ce temps le tampon RX
+// materiel continue de se remplir sans etre vide ; (3) tampon RX materiel
+// laisse a sa taille par defaut (256 o) alors que le lien tourne
+// maintenant a 921600 bauds (kControlBaud) - a cette vitesse 256 o se
+// remplit en ~2-3 ms, largement moins que le temps d'un dessin ecran ou
+// d'une frame GB -- tout depassement fait perdre des octets EN SILENCE
+// (HardwareSerial ne previent pas). Le (2)+(3) causaient des pertes
+// d'octets, le (1) transformait chaque perte en desynchronisation
+// durable -- d'ou le "bruit" apparemment aleatoire du tracer, identique
+// que le moteur audio source soit propre ou casse.
+// Correctifs : setRxBufferSize() plus genereux (voir setup()), dessin
+// sorti de la boucle de lecture (scopeNeedsRedraw, voir loop()), et
+// verification de longueur fixe (kScopeSamplesPerPacket -- le Teensy
+// n'envoie jamais que cette taille, voir updateScope()) qui rejette et
+// resynchronise immediatement tout paquet dont la longueur ne colle pas,
+// au lieu d'avaler des octets de charge utile bidon.
 struct ScopeRxState {
   bool inPacket = false;
   bool haveLen = false;
   uint8_t len = 0;
   uint8_t pos = 0;
+  uint32_t lastByteMs = 0;
   uint8_t buf[255];
 };
 ScopeRxState scopeRx;
 
+// Delai max pendant lequel on tolere d'etre "au milieu" d'un paquet
+// scope sans recevoir l'octet suivant avant de forcer un retour en mode
+// texte -- un paquet complet (magic+longueur+32 o) tient en ~0.3 ms a
+// 921600 bauds, 20 ms est donc tres large et ne se declenche que si le
+// lien est vraiment bloque/coupe.
+constexpr uint32_t kScopeRxTimeoutMs = 20;
+
+// Fixee par updateScope() cote Teensy (voir main.cpp la-bas) -- jamais
+// une autre valeur en pratique ; servir de garde-fou de resynchronisation
+// ici (voir commentaire ScopeRxState plus haut).
+static_assert(az2::kScopeSamplesPerPacket <= 255, "longueur scope tient sur 1 octet");
+
+// Dessin du tracer differe hors de la boucle de lecture Serial1 (voir
+// commentaire ScopeRxState) -- pose juste un flag ici, le dessin reel se
+// fait une fois par tour de loop().
+bool scopeNeedsRedraw = false;
+
 // Paquet binaire recu du Teensy (voir kScopePacketMagic dans
-// AZ2_Protocol.h) -- met a jour le tracer d'onde si la page PATCH est
-// affichee.
+// AZ2_Protocol.h) -- copie les echantillons, le dessin se fait plus tard
+// (voir scopeNeedsRedraw).
 void handleScopePacket(const uint8_t *data, uint8_t len) {
   const uint8_t n = min(len, az2::kScopeSamplesPerPacket);
   for (uint8_t i = 0; i < n; ++i) {
     scopeSamples[i] = data[i];
   }
   scopeHasData = true;
-  if (currentScreen == Screen::Patch && !screensaverActive) {
-    drawPatchScope();
-  }
+  scopeNeedsRedraw = true;
 }
 
 void readTeensyStatus() {
+  // Paquet reste "ouvert" trop longtemps (lien bloque/coupe au milieu) :
+  // on abandonne et on retourne en mode texte plutot que de rester
+  // coince a attendre un octet qui n'arrivera jamais.
+  if (scopeRx.inPacket && (millis() - scopeRx.lastByteMs) > kScopeRxTimeoutMs) {
+    scopeRx.inPacket = false;
+  }
+
   while (Serial1.available() > 0) {
     const uint8_t b = static_cast<uint8_t>(Serial1.read());
 
     if (scopeRx.inPacket) {
+      scopeRx.lastByteMs = millis();
       if (!scopeRx.haveLen) {
         scopeRx.len = b;
         scopeRx.pos = 0;
         scopeRx.haveLen = true;
-        if (scopeRx.len == 0) {
+        // Le Teensy n'envoie jamais qu'une longueur fixe -- toute autre
+        // valeur signifie qu'on a perdu l'alignement (magic tombe par
+        // hasard dans de la charge utile bidon) : on rejette tout de
+        // suite au lieu d'avaler N octets arbitraires en payload, ce qui
+        // ne ferait qu'aggraver le desalignement.
+        if (scopeRx.len != az2::kScopeSamplesPerPacket) {
+          scopeRx.inPacket = false;
+        } else if (scopeRx.len == 0) {
           scopeRx.inPacket = false;
         }
         continue;
@@ -3570,6 +3630,7 @@ void readTeensyStatus() {
     if (b == az2::kScopePacketMagic) {
       scopeRx.inPacket = true;
       scopeRx.haveLen = false;
+      scopeRx.lastByteMs = millis();
       continue;
     }
 
@@ -3733,6 +3794,13 @@ void setup() {
     Serial.println("DISPLAY:ERROR:BEGIN_FAILED");
   }
 
+  // Tampon RX materiel agrandi AVANT begin() (sans effet apres) -- 256 o
+  // par defaut se remplit en ~2-3 ms a 921600 bauds (kControlBaud), soit
+  // moins que certains blocages du loop() (dessin ecran, frame GB) ;
+  // tout depassement perd des octets EN SILENCE et desynchronise le
+  // parseur SCOPE (voir ScopeRxState plus haut). 2048 o donne une marge
+  // large sans cout memoire notable (PSRAM/RAM disponibles ici).
+  Serial1.setRxBufferSize(2048);
   Serial1.begin(az2::kControlBaud, SERIAL_8N1, kTeensyRxPin, kTeensyTxPin);
   sendToTeensy(az2::kHelloControl);
 
@@ -4069,6 +4137,16 @@ void loop() {
   const uint32_t now = millis();
 
   readTeensyStatus();
+  // Dessin du tracer scope differe hors de readTeensyStatus() -- voir
+  // commentaire ScopeRxState/scopeNeedsRedraw plus haut : dessiner un
+  // paquet a la fois DANS la boucle de lecture Serial1 bloquait la
+  // lecture assez longtemps pour perdre des octets a 921600 bauds.
+  if (scopeNeedsRedraw) {
+    scopeNeedsRedraw = false;
+    if (currentScreen == Screen::Patch && !screensaverActive) {
+      drawPatchScope();
+    }
+  }
 
   TouchPoint touches[2];
   readTouches(touches);

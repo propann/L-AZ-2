@@ -1,5 +1,62 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-18, nuit -- bug de transmission SCOPE trouve et corrige (pas
+encore reteste sur le vrai materiel)]**
+
+Suite de l'entree precedente ("prochaine piste serieuse : reparer
+d'abord le bug SCOPE"). Analyse complete du chemin
+`updateScope()` (Teensy) -> `readTeensyStatus()`/`handleScopePacket()`
+(ESP32), et de son jumeau symmetrique cote son GB
+(`AudioRxState`/`readStream()` sur le Teensy, ESP32 -> Teensy) :
+
+- **Cause racine identifiee** : (1) aucune verification de longueur ni
+  checksum dans le parseur binaire -- un SEUL octet perdu decale la
+  lecture "longueur" sur un octet de charge utile quelconque, qui peut a
+  son tour valoir par hasard l'octet magique et relancer un faux paquet
+  -- desynchronisation qui s'auto-entretient indefiniment une fois
+  declenchee (explique le "bruit" aleatoire identique du dump SCOPE,
+  qu'il vienne d'ANALOG propre ou d'un moteur casse : ce sont des
+  octets de charge utile arbitraires mal alignes, pas une propriete du
+  signal audio) ; (2) `handleScopePacket()` appelait `drawPatchScope()`
+  (dessin SPI, plusieurs ms) DEPUIS la boucle meme qui lit `Serial1`
+  octet par octet, bloquant la lecture assez longtemps pour perdre des
+  octets ; (3) tampon RX materiel laisse a sa taille par defaut (256 o
+  cote ESP32 ; petit aussi cote Teensy) alors que le lien tourne
+  maintenant a 921600 bauds -- se remplit en 2-3 ms, moins que certains
+  blocages du `loop()` (dessin ecran, frame GB), tout depassement perd
+  des octets EN SILENCE (aucune notification d'overflow lue par le
+  code).
+- **Corrige (compile sur les 3 environnements + 9 tests natifs OK,
+  PAS ENCORE flashe/verifie sur le vrai materiel a l'heure ou ceci est
+  ecrit)** :
+  - `Serial1.setRxBufferSize(2048)` cote ESP32 (avant `begin()`) et
+    `Serial1.addMemoryForRead(buf, 2048)` cote Teensy (API native du
+    core Teensy 4, avant `begin()`) -- marge large a 921600 bauds.
+  - Dessin du tracer (`drawPatchScope()`) sorti de la boucle de lecture
+    Serial1 -- `handleScopePacket()` ne fait plus que copier les
+    echantillons et poser `scopeNeedsRedraw`, le dessin reel se fait une
+    fois par tour de `loop()`, apres `readTeensyStatus()`.
+  - Verification de longueur stricte des deux cotes : le Teensy
+    n'envoie jamais qu'une longueur SCOPE fixe (32,
+    `kScopeSamplesPerPacket`) et l'ESP32 n'envoie jamais qu'une longueur
+    audio GB fixe (`kGbAudioSamplesPerPacket`, nouvelle constante
+    partagee dans `AZ2_Protocol.h`, meme formule que `AUDIO_SAMPLES`
+    dans `minigb_apu.h`) -- toute longueur recue differente = paquet
+    rejete et resynchronisation immediate au lieu d'avaler des octets de
+    charge utile bidon.
+  - Delai d'abandon (20 ms, tres large face a un paquet complet en <1 ms
+    a 921600 bauds) : un paquet reste "ouvert" trop longtemps (lien
+    bloque/coupe au milieu) force un retour en mode texte au lieu de
+    rester coince a attendre un octet qui n'arrivera jamais.
+- **A faire ensuite** : flasher les deux cartes, reverifier que le
+  dump SCOPE donne enfin une vraie forme d'onde coherente pour ANALOG
+  (propre) ET pour un moteur casse (KARPLUS/BRAIDS/EPIANO), PUIS s'en
+  servir comme vrai outil de diagnostic pour la cause du bruit moteur
+  lui-meme (toujours inconnue, voir entree precedente). Profiter aussi
+  de l'occasion pour re-verifier que le son GB (meme classe de
+  correctif applique cote Teensy) reste stable au niveau audio/visuel a
+  921600 bauds.
+
 **[2026-09-18, soir -- bruit blanc elargi a 4 moteurs sur 5, cause
 toujours pas trouvee malgre une investigation poussee]**
 

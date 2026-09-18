@@ -2345,27 +2345,56 @@ void feedGbAudioQueue() {
 
 // Etat de reception binaire (paquets audio GB), UNIQUEMENT pour Serial1
 // (ESP32) -- Serial (USB) n'en recoit jamais, voir readSerialCommands().
+//
+// [2026-09-18] Meme classe de bug que le tracer SCOPE cote ESP32 (voir
+// ScopeRxState dans src_esp32/az2_screen/main.cpp et AZ2_ETAT_DES_LIEUX.md
+// "bruit blanc...") : sans verification de longueur ni delai d'abandon,
+// un octet perdu quelque part decale durablement la lecture "longueur"
+// sur un octet de charge utile arbitraire, qui peut a son tour valoir
+// par hasard kGbAudioPacketMagic et relancer un faux paquet -- corrige
+// ici en verifiant que la longueur recue correspond EXACTEMENT a
+// kGbAudioSamplesPerPacket (le paquet envoye par gb_emulator.cpp cote
+// ESP32 a toujours cette taille fixe) et en abandonnant un paquet reste
+// "ouvert" trop longtemps.
 struct AudioRxState {
   bool inPacket = false;
   bool haveLen = false;
   uint8_t len = 0;
   uint8_t pos = 0;
+  uint32_t lastByteMs = 0;
   uint8_t buf[255];
 };
 AudioRxState gbAudioRx;
 
+// Un paquet complet (magic+longueur+kGbAudioSamplesPerPacket octets)
+// tient en <1 ms a kControlBaud -- 20 ms est tres large, ne se declenche
+// que si le lien est vraiment bloque/coupe au milieu d'un paquet.
+constexpr uint32_t kAudioRxTimeoutMs = 20;
+
 void readStream(Stream &in, String &lineBuffer, AudioRxState *audioState) {
+  if (audioState != nullptr && audioState->inPacket &&
+      (millis() - audioState->lastByteMs) > kAudioRxTimeoutMs) {
+    audioState->inPacket = false;
+  }
+
   while (in.available() > 0) {
     const uint8_t b = static_cast<uint8_t>(in.read());
 
     if (audioState != nullptr) {
       if (audioState->inPacket) {
+        audioState->lastByteMs = millis();
         if (!audioState->haveLen) {
           audioState->len = b;
           audioState->pos = 0;
           audioState->haveLen = true;
-          if (audioState->len == 0) {
-            audioState->inPacket = false;  // paquet vide, rien a faire
+          // Longueur toujours fixe en pratique (voir
+          // kGbAudioSamplesPerPacket) -- toute autre valeur signifie
+          // qu'on a perdu l'alignement (magic tombe par hasard dans de
+          // la charge utile bidon) : on rejette tout de suite au lieu
+          // d'avaler N octets arbitraires en payload, ce qui ne ferait
+          // qu'aggraver le desalignement.
+          if (audioState->len != az2::kGbAudioSamplesPerPacket || audioState->len == 0) {
+            audioState->inPacket = false;
           }
           continue;
         }
@@ -2379,6 +2408,7 @@ void readStream(Stream &in, String &lineBuffer, AudioRxState *audioState) {
       if (b == az2::kGbAudioPacketMagic) {
         audioState->inPacket = true;
         audioState->haveLen = false;
+        audioState->lastByteMs = millis();
         continue;
       }
     }
@@ -2490,6 +2520,14 @@ void sendStatus() {
 
 void setup() {
   Serial.begin(az2::kControlBaud);
+  // Tampon RX agrandi AVANT begin() (sans effet apres) -- le defaut du
+  // core Teensy est petit face a 921600 bauds (kControlBaud) et aux
+  // paquets audio GB binaires qui arrivent en rafale sur Serial1 ; un
+  // depassement perd des octets EN SILENCE et desynchronise le parseur
+  // (voir AudioRxState plus haut, meme classe de bug que kScopeSamplesPerPacket
+  // cote ESP32). static = duree de vie du programme, pas de la pile.
+  static uint8_t serial1RxBuf[2048];
+  Serial1.addMemoryForRead(serial1RxBuf, sizeof(serial1RxBuf));
   Serial1.begin(az2::kControlBaud);
   // Graine pour random() (PROB:, voir advanceTick()) -- micros() au boot
   // varie assez d'un demarrage a l'autre (delais SD/audio/etc. avant ici)
