@@ -1,5 +1,35 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-18, suite du diagnostic DEXED]** Ajoute `checkHeap()` /
+commande `HEAP?` (mallinfo(), voir le commentaire dans le code) pour
+verifier la piste "allocation echouee silencieusement" (`new` sans
+verification dans `Dexed::Dexed()`, voir plus bas). Resultat mesure sur
+le vrai materiel, au repos, apres boot : `used=34800:
+free_in_arena=1616:arena=36416` -- seulement 1.6 Ko de marge dans le
+tas actuellement obtenu du systeme. Serre, un vrai point a corriger
+(augmenter la marge, ou reduire le nombre d'instances Dexed
+simultanees), **mais probablement pas la cause principale du bruit** :
+une allocation ratee produirait plutot un comportement casse/incoherent
+tout de suite, pas "silence tant qu'on ne joue pas, bruit uniquement
+en jouant une note, jusqu'a redemarrage complet" -- ce dernier pattern
+ressemble plus a une corruption d'etat numerique DANS le calcul FM une
+fois une voix declenchee (pas a une allocation qui echoue).
+
+**Bug separe trouve en cours de route** : l'oscilloscope (`SCOPE:`) ne
+renvoie AUCUN paquet binaire (verifie par capture serie brute, aucun
+octet 0x02 sur plusieurs essais, meme avec PLAY actif) alors que la
+commande est bien acceptee (relayee sans erreur) -- pas investigue plus
+loin faute de temps, mais un outil precieux a reparer en priorite pour
+la prochaine session : sans lui, diagnostiquer un bug audio comme celui
+de DEXED se fait a l'aveugle (comme cette session).
+
+**Conclusion honnete** : la vraie cause du bruit DEXED (probablement
+dans le coeur FM de `src_teensy/microdexed-touch/third-party/
+Synth_Dexed/src/` -- fm_core.cpp/fm_op_kernel.cpp/dx7note.cpp) demande
+un vrai outillage (SCOPE: fonctionnel au minimum) pour etre
+diagnostiquee sans deviner. Pas fait cette session -- **en attendant,
+eviter DEXED**, utiliser EPIANO/BRAIDS/KARPLUS/ANALOG.
+
 **[2026-09-18, session de flash -- BUG REEL confirme sur DEXED, pas
 materiel]** Long diagnostic en direct avec l'utilisateur sur un
 "souffle" audio signale des le premier flash. Piste materielle (SCK/GND

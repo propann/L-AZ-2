@@ -22,6 +22,7 @@
 #include <synth_dexed.h>
 #include <synth_mda_epiano.h>
 #include <synth_braids.h>
+#include <malloc.h>  // mallinfo() -- voir checkHeap(), diagnostic 2026-09-18
 
 // Rempli par le coeur Teensyduino au boot (startup.c) en sommant les 2
 // puces PSRAM soudees au dos du Teensy 4.1 : 0 si aucune detectee, sinon
@@ -36,6 +37,7 @@ EXTMEM uint8_t psramTestBuffer[1024];
 namespace {
 
 void checkPsram();  // definie plus bas, utilisee par handleCommand ("PSRAM?")
+void checkHeap();   // definie plus bas, utilisee par handleCommand ("HEAP?")
 
 // 8 (au lieu de 4) depuis la demande du 2026-09-14 ("on peut augmenter
 // les pistes monter a 8") -- performance mesuree reelle avant/apres ce
@@ -2019,6 +2021,11 @@ void handleCommand(const String &line) {
     return;
   }
 
+  if (line == "HEAP?") {
+    checkHeap();
+    return;
+  }
+
   if (line.startsWith("FX:")) {
     handleFxCommand(line);
     return;
@@ -2393,6 +2400,29 @@ void checkPsram() {
   Serial.println(ok ? "AZ2:PSRAM:READ_WRITE_OK" : "AZ2:PSRAM:READ_WRITE_FAILED");
 }
 
+// Diagnostic tas C++ (2026-09-18, piste sur le souffle DEXED) : chaque
+// AudioSynthDexed alloue ses voix (Dx7Note, ~692 octets chacune) via `new`
+// SANS AUCUNE verification d'echec (voir Dexed::Dexed() dans
+// src_teensy/microdexed-touch/third-party/Synth_Dexed/src/dexed.cpp) -- si
+// `new` echoue silencieusement (tas sature), le pointeur qui en resulte
+// pointe n'importe ou, et la lecture qui suit peut produire n'importe quoi
+// -- coherent avec "bruit au lieu d'une note". AZ-2 cree 9 instances
+// completes de Dexed (8 pistes + liveVoice), plus gourmand que
+// l'architecture MicroDexed-touch d'origine. mallinfo() donne uordblks
+// (tas utilise) / fordblks (libre dans les blocs deja obtenus du systeme)
+// -- pas une preuve definitive (l'allocateur newlib peut aussi juste
+// demander plus de RAM au systeme), mais un fordblks proche de 0 au boot,
+// APRES construction des 9 Dexed, serait un signal fort.
+void checkHeap() {
+  struct mallinfo mi = mallinfo();
+  Serial.print("AZ2:HEAP:used=");
+  Serial.print(mi.uordblks);
+  Serial.print(":free_in_arena=");
+  Serial.print(mi.fordblks);
+  Serial.print(":arena=");
+  Serial.println(mi.arena);
+}
+
 void sendStatus() {
   const uint32_t now = millis();
   if (now - lastStatusMs < 1000) {
@@ -2478,6 +2508,7 @@ void setup() {
   setupSampleSd();
 
   checkPsram();
+  checkHeap();  // 2026-09-18 -- piste sur le souffle DEXED, voir le commentaire de checkHeap()
 
   delay(300);
   Serial.println("AZ2:ENGINE:SYNTH_DEXED_MULTIVOICE");
