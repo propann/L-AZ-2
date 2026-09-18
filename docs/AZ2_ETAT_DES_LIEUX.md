@@ -1,5 +1,73 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-18, nuit -- editeur de patch complet DEXED/EPIANO/BRAIDS,
+page PATCH a defilement, valide sur le vrai materiel]**
+
+Demande : "un editeur de patch complet et completement reglable ...
+sovegardable". Suite du protocole firmware (DXR:/EXP:/BXP:, voir
+l'entree plus bas) -- cote ecran ESP32 cette fois.
+
+- **Decision de layout** : la page PATCH etait deja pleine (8 lignes,
+  zero place libre -- verifie : les 8 lignes existantes occupaient
+  deja tout l'espace vertical disponible). Demande a l'utilisateur
+  comment caser 12 a 17 parametres de plus par moteur -- **choix :
+  liste a defilement dans la MEME page PATCH** (pas un nouvel ecran).
+- **Implemente** (`src_esp32/az2_screen/main.cpp`) :
+  - `patchExtraCount(track)` : 0 (KARPLUS/ANALOG, rien de plus a
+    exposer), 2 (BRAIDS : color/timbre), 12 (EPIANO : les 12 vrais
+    parametres continus), 17 (DEXED : parametres globaux DX7, pitch
+    EG + LFO + transpose -- algo/feedback restent lignes 2-3, le nom
+    hors scope).
+  - VOLUME et SLOT ne sont plus fixes aux lignes 6/7 -- decales
+    dynamiquement apres les lignes extra du moteur affiche
+    (`patchVolRow()`/`patchSlotRow()`/`patchTotalRows()`).
+  - Fenetre de 8 lignes visibles (`kPatchVisibleRows`, MEME
+    disposition pixel qu'avant) qui defile sur le nombre de lignes
+    LOGIQUES reel (`patchScroll`, meme principe que la liste de ROM
+    GB) -- `patchRowVisible()` centralise le calcul/la visibilite,
+    tout redessin hors champ devient un no-op propre plutot qu'un
+    mauvais rafraichissement.
+  - `patchExtraVal[piste][17]` -- shadow des valeurs courantes,
+    peuple par une rafale de requetes (`DXR?`/`EXP?`) a l'entree sur
+    la page/au changement de piste/moteur (`queryPatchExtra()`), tenu
+    a jour ensuite par les echos DXR:/EXP:/BXP: (nouveaux cas dans
+    `handleTeensyLine()`).
+  - Bug latent trouve et corrige au passage : `patchRowActive()`
+    (verifiait `row >= 4` pour Dexed) aurait desactive a tort TOUTES
+    les lignes extra DEXED (>= 6) -- corrige en `row >= 4 && row < 6`,
+    son domaine reel (les 6 lignes fixes seulement).
+  - Touche tactile : portee VOLONTAIREMENT limitee aux 6 lignes fixes
+    et a VOLUME/SLOT UNIQUEMENT quand ils sont a leur position
+    d'origine (moteur sans ligne extra, ou pas encore scrolle) --
+    au-dela, la croix reste le seul chemin fiable. Choix delibere pour
+    tenir dans le temps disponible, documente dans le code.
+- **Valide sur le vrai materiel** via le meme outil SIMNAV:/SIMBTN:
+  que le test tracker plus haut (navigation profonde + defilement +
+  edition, verifie par les commandes DXR:/EXP:/BXP: exactement
+  attendues a chaque etape, PAS par une lecture visuelle de l'ecran --
+  meme limite honnete que le test tracker) :
+  - **DEXED** : entree sur la page -> 17x `DXR?0:X` envoyes (bon
+    octet brut a chaque fois) -> 17 reponses avec de vraies valeurs de
+    patch. 6 appuis BAS depuis la ligne 0 amenent en fait a la ligne 8
+    (pas 6 -- les lignes 4-5 inactives chez Dexed sont sautees en UN
+    seul appui par la boucle de recherche existante, comportement
+    INCHANGE, juste reverifie) : edition -> `DXR:0:2:21` (PEG R3),
+    correct. 10 appuis BAS de plus (defilement declenche, verifie sans
+    erreur) -> ligne 18 -> edition -> `DXR:0:14:1` (LFO AMD), correct.
+  - **EPIANO** : changement de moteur -> 12x `EXP?0:X` automatique,
+    vraies valeurs mda par defaut recuperees (64/64/64/64/64/83/32/
+    64/64/19/0/82). Edition de la 1ere ligne extra -> `EXP:0:0:65`,
+    correct (DECAY).
+  - **BRAIDS** : changement de moteur -> confirme. Edition de la 1ere
+    ligne extra -> `BXP:0:0:66`, correct (COLOR).
+- **A faire** : verification VISUELLE par l'utilisateur (surlignage,
+  texte, alignement des lignes extra/volume/slot une fois scrollees --
+  jamais vu a l'ecran, seulement verifie par le journal serie) ;
+  recuperation de vrais bancs de patches (DX7 notamment, format
+  compatible avec DXR:) pour peupler kDexedPatchBank plus largement ;
+  eventuellement un editeur par operateur DEXED (les 126 octets
+  restants, 6 x 21 -- hors scope ce soir, cible la plus lourde des 3).
+
 **[2026-09-18, nuit -- charge CPU/memoire mesuree : grosse marge sur
 les 3 axes, "tas critique" note plus haut ce soir infirme]**
 

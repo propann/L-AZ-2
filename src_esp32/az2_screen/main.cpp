@@ -1307,9 +1307,16 @@ const char *const kPatchLabelsDexed[6] = {"CUTOFF", "RESONANCE", "ALGO (DX7)", "
 
 // Lignes 2-5 de la page PATCH dependent du moteur de la piste : ADSR
 // generique pour tout le monde SAUF Dexed (rows 4-5 sans effet chez lui,
-// voir le commentaire au-dessus de trackAlgo[]).
+// voir le commentaire au-dessus de trackAlgo[]). Ne concerne QUE les 6
+// lignes fixes (0-5) -- "row < 6" ajoute avec les lignes extra
+// (2026-09-18) : sans lui, "row >= 4" desactiverait a tort TOUTES les
+// lignes extra de DEXED (6 et plus), qui n'ont rien a voir avec ce cas
+// Dexed-ADSR precis. Les appelants ne doivent d'ailleurs appeler ceci
+// que pour row < 6 (voir patchExtraCount()/patchVolRow() pour le reste
+// de la page) -- le clamp reste par securite si jamais appele hors de
+// ce domaine.
 bool patchRowActive(uint8_t track, uint8_t row) {
-  return !(trackEngine[track] == az2::kEngineDexed && row >= 4);
+  return !(trackEngine[track] == az2::kEngineDexed && row >= 4 && row < 6);
 }
 
 const char *patchRowLabel(uint8_t track, uint8_t row) {
@@ -1348,6 +1355,124 @@ uint8_t &patchParamRef(uint8_t track, uint8_t row) {
     case 3: return trackDecay[track];
     case 4: return trackSustain[track];
     default: return trackRelease[track];
+  }
+}
+
+// ---------------------------------------------------------------------
+// Lignes "extra" de la page PATCH (2026-09-18, "un editeur de patch
+// complet et completement reglable ... sovegardable") -- au-dela des
+// 6 lignes filtre/ADSR-ou-DXP fixes ci-dessus, chaque moteur peut
+// exposer un nombre different de parametres supplementaires (DXR:/EXP:/
+// BXP: cote Teensy, voir handleDexedRawCommand()/handleEPianoParamCommand()/
+// handleBraidsParamCommand()). Ces lignes viennent APRES les 6 lignes
+// fixes et AVANT volume/slot (qui se decalent donc dynamiquement --
+// voir patchVolRow()/patchSlotRow() -- au lieu d'etre fixes a 6/7).
+// KARPLUS/ANALOG n'ont rien de plus a exposer (0 ligne extra, page
+// inchangee -- meme mise en page qu'avant ce chantier).
+uint8_t patchExtraCount(uint8_t track) {
+  switch (trackEngine[track]) {
+    case az2::kEngineDexed: return 17;   // parametres globaux DX7 (hors algo/feedback deja lignes 2-3, hors nom)
+    case az2::kEngineEPiano: return 12;  // les 12 parametres continus mdaEPiano
+    case az2::kEngineBraids: return 2;   // color, timbre (shape reste sur la page MOTEURS)
+    default: return 0;
+  }
+}
+uint8_t patchVolRow(uint8_t track) { return static_cast<uint8_t>(6 + patchExtraCount(track)); }
+uint8_t patchSlotRow(uint8_t track) { return static_cast<uint8_t>(patchVolRow(track) + 1); }
+uint8_t patchTotalRows(uint8_t track) { return static_cast<uint8_t>(patchSlotRow(track) + 1); }
+
+// Octet brut DXR (0-144) pour chaque ligne extra DEXED, dans l'ordre
+// d'affichage -- voir DexedVoiceParameters dans dexed.h cote Teensy
+// (offset 126 dans le buffer deballe, ajoute ici a l'envoi/la lecture).
+// ALGO/FEEDBACK/NOM exclus (deja geres ou hors scope, voir
+// patchExtraCount()).
+constexpr uint8_t kDexedExtraRaw[17] = {
+    0, 1, 2, 3, 4, 5, 6, 7,  // PEG R1-4, L1-4
+    10,                      // OSC_KEY_SYNC
+    11, 12, 13, 14,          // LFO SPEED/DELAY/PMD/AMD
+    15, 16, 17,              // LFO SYNC/WAVE/PMS
+    18,                      // TRANSPOSE
+};
+constexpr const char *kDexedExtraLabel[17] = {
+    "PEG R1", "PEG R2", "PEG R3", "PEG R4", "PEG L1", "PEG L2", "PEG L3", "PEG L4",
+    "KEY SYNC", "LFO SPEED", "LFO DELAY", "LFO PMD", "LFO AMD", "LFO SYNC", "LFO WAVE", "LFO PMS",
+    "TRANSPOSE",
+};
+constexpr uint8_t kDexedExtraMax[17] = {
+    99, 99, 99, 99, 99, 99, 99, 99,
+    1, 99, 99, 99, 99, 1, 5, 7,
+    48,
+};
+
+constexpr const char *kEPianoExtraLabel[12] = {
+    "DECAY", "RELEASE", "HARDNESS", "TREBLE", "TREMOLO", "LFO RATE",
+    "VEL SENSE", "STEREO", "TUNE", "DETUNE", "OVERDRIVE", "VOLUME",
+};
+
+constexpr const char *kBraidsExtraLabel[2] = {"COLOR", "TIMBRE"};
+
+const char *patchExtraLabel(uint8_t track, uint8_t extraIdx) {
+  switch (trackEngine[track]) {
+    case az2::kEngineDexed: return kDexedExtraLabel[extraIdx];
+    case az2::kEngineEPiano: return kEPianoExtraLabel[extraIdx];
+    case az2::kEngineBraids: return kBraidsExtraLabel[extraIdx];
+    default: return "?";
+  }
+}
+
+uint8_t patchExtraMax(uint8_t track, uint8_t extraIdx) {
+  // EPIANO/BRAIDS : toutes leurs lignes extra sont sur l'echelle
+  // 0-127 (voir EXP:/BXP: cote Teensy) -- seul DEXED a une plage
+  // reelle differente par parametre (voir kDexedExtraMax, reprise des
+  // vraies bornes DX7).
+  if (trackEngine[track] == az2::kEngineDexed) {
+    return kDexedExtraMax[extraIdx];
+  }
+  return 127;
+}
+
+// Valeur courante de chaque ligne extra, par piste -- 17 = le plus
+// grand des 3 moteurs concernes (DEXED), reutilise tel quel pour
+// EPIANO (12) et BRAIDS (2), le reste de la ligne n'etant simplement
+// jamais lu/affiche pour ces moteurs (voir patchExtraCount()).
+uint8_t patchExtraVal[kSeqTrackCount][17] = {};
+
+void sendPatchExtra(uint8_t track, uint8_t extraIdx) {
+  char msg[24];
+  switch (trackEngine[track]) {
+    case az2::kEngineDexed:
+      snprintf(msg, sizeof(msg), "DXR:%d:%d:%d", track, kDexedExtraRaw[extraIdx], patchExtraVal[track][extraIdx]);
+      break;
+    case az2::kEngineEPiano:
+      snprintf(msg, sizeof(msg), "EXP:%d:%d:%d", track, extraIdx, patchExtraVal[track][extraIdx]);
+      break;
+    case az2::kEngineBraids:
+      snprintf(msg, sizeof(msg), "BXP:%d:%d:%d", track, extraIdx, patchExtraVal[track][extraIdx]);
+      break;
+    default:
+      return;
+  }
+  sendToTeensy(msg);
+}
+
+// Interroge le Teensy pour peupler patchExtraVal[track][] a l'entree
+// sur la page/piste/moteur -- sans ca, l'ecran afficherait 0 pour tout
+// tant que l'utilisateur n'a pas lui-meme modifie chaque ligne au
+// moins une fois. Les reponses arrivent en DXR:/EXP: (BXP: n'a pas de
+// forme "?", voir handleBraidsParamCommand() cote Teensy -- write-only,
+// pas grave : color/timbre partent a 0 a l'affectation du moteur, une
+// valeur de depart raisonnable pour 2 reglages de couleur sonore).
+void queryPatchExtra(uint8_t track) {
+  const uint8_t count = patchExtraCount(track);
+  char msg[16];
+  for (uint8_t i = 0; i < count; ++i) {
+    if (trackEngine[track] == az2::kEngineDexed) {
+      snprintf(msg, sizeof(msg), "DXR?%d:%d", track, kDexedExtraRaw[i]);
+      sendToTeensy(msg);
+    } else if (trackEngine[track] == az2::kEngineEPiano) {
+      snprintf(msg, sizeof(msg), "EXP?%d:%d", track, i);
+      sendToTeensy(msg);
+    }
   }
 }
 
@@ -1403,16 +1528,41 @@ void drawPatchScope() {
   }
 }
 
-void patchRowRect(uint8_t i, int16_t &y) {
-  y = static_cast<int16_t>(kPatchRowTop + i * kPatchRowH);
+// Nombre de lignes affichees a l'ecran en meme temps -- INCHANGE
+// depuis l'origine de cette page (8 lignes, meme disposition pixel),
+// mais desormais une FENETRE qui defile sur un nombre de lignes
+// LOGIQUES variable (6 fixes + patchExtraCount(track) + volume + slot,
+// voir plus haut) plutot que toujours exactement 8 -- necessaire
+// depuis l'ajout des lignes extra par moteur (2026-09-18, "un editeur
+// de patch complet", jusqu'a 17 lignes de plus pour DEXED : aucune
+// place libre sur l'ecran pour les caser sans defilement).
+constexpr uint8_t kPatchVisibleRows = 8;
+uint8_t patchScroll = 0;  // 1ere ligne LOGIQUE affichee en haut de la fenetre
+
+// Si `logicalRow` est actuellement dans la fenetre visible
+// (patchScroll..patchScroll+7), calcule son Y et renvoie true ; sinon
+// renvoie false SANS rien dessiner -- les appelants existants (echo
+// FILT:/ENV:/DXP:/VOL: notamment) redessinent par NUMERO DE LIGNE
+// LOGIQUE, pas par position ecran : quand cette ligne est scrollee
+// hors champ, le bon geste est de ne rien dessiner (le shadow reste a
+// jour, elle se redessine correctement au retour), pas de planter ou
+// de dessiner au mauvais endroit.
+bool patchRowVisible(uint8_t logicalRow, int16_t &y) {
+  if (logicalRow < patchScroll || logicalRow >= patchScroll + kPatchVisibleRows) {
+    return false;
+  }
+  y = static_cast<int16_t>(kPatchRowTop + (logicalRow - patchScroll) * kPatchRowH);
+  return true;
 }
 
 // Ligne selectionnee par la croix (2026-09-18, retour utilisateur sur
 // materiel reel : "la fenetre de patch on peut rien regler avec les
 // boutons" -- comme le panneau tracker avant son propre fix, cette page
 // n'etait pilotable qu'au tactile). 0-5 = les 6 lignes filtre/ADSR-ou-
-// DXP (voir patchParamRef()), 6 = la ligne VOLUME, 7 = la ligne SLOT/
-// SAVE/LOAD (ajoutee ensuite, meme demande). Meme convention que
+// DXP (voir patchParamRef()), 6..patchVolRow(t)-1 = les lignes extra du
+// moteur (voir patchExtraCount()), puis VOLUME puis SLOT/SAVE/LOAD
+// (index dynamique, voir patchVolRow()/patchSlotRow() -- ne sont plus
+// fixes a 6/7 depuis l'ajout des lignes extra). Meme convention que
 // seqDetailCol : GAUCHE/DROITE changent la piste (patchTrack), HAUT/BAS
 // SEULS deplacent la ligne selectionnee, A maintenu + HAUT/BAS edite sa
 // valeur -- SAUF sur la ligne SLOT ou A maintenu + GAUCHE/DROITE
@@ -1420,9 +1570,15 @@ void patchRowRect(uint8_t i, int16_t &y) {
 // gestionnaire de croix plus bas.
 int8_t selectedPatchRow = 0;
 
+// Dessine la ligne LOGIQUE `i` (0-5 uniquement -- les lignes extra ont
+// leur propre fonction, drawPatchExtraRow() plus bas) si elle est
+// actuellement visible dans la fenetre de defilement ; ne fait rien
+// sinon (voir patchRowVisible()).
 void drawPatchRow(uint8_t i) {
   int16_t y;
-  patchRowRect(i, y);
+  if (!patchRowVisible(i, y)) {
+    return;
+  }
   const int16_t rowH = static_cast<int16_t>(kPatchRowH - 4);
   const uint8_t track = static_cast<uint8_t>(patchTrack);
   const bool rowSelected = (selectedPatchRow == static_cast<int8_t>(i));
@@ -1470,6 +1626,47 @@ void drawPatchRow(uint8_t i) {
   gfx->print('+');
 }
 
+// Dessine une ligne EXTRA (logicalRow >= 6, < patchVolRow(track)) --
+// meme habillage visuel que drawPatchRow() ci-dessus (cadre/valeur/
+// boutons +/-), juste une source de donnees differente (patchExtraVal[]
+// au lieu de patchParamRef()). Ne fait rien si hors fenetre visible,
+// meme convention que drawPatchRow().
+void drawPatchExtraRow(uint8_t logicalRow) {
+  int16_t y;
+  if (!patchRowVisible(logicalRow, y)) {
+    return;
+  }
+  const int16_t rowH = static_cast<int16_t>(kPatchRowH - 4);
+  const uint8_t track = static_cast<uint8_t>(patchTrack);
+  const uint8_t extraIdx = static_cast<uint8_t>(logicalRow - 6);
+  const bool rowSelected = (selectedPatchRow == static_cast<int8_t>(logicalRow));
+  const uint16_t accent = kPalette[track % kPaletteCount];
+  const int16_t minusX = static_cast<int16_t>(kScreenSize - kMargin - 2 * kPatchBtnW - 4);
+  const int16_t plusX = static_cast<int16_t>(kScreenSize - kMargin - kPatchBtnW);
+
+  gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, rowH, RGB565_BLACK);
+  gfx->drawRect(kMargin, y, kScreenSize - 2 * kMargin, rowH, rowSelected ? accent : kFaint);
+  gfx->drawRect(minusX, y, kPatchBtnW, rowH, kFaint);
+  gfx->drawRect(plusX, y, kPatchBtnW, rowH, kFaint);
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(static_cast<int16_t>(kMargin + 6), static_cast<int16_t>(y + 4));
+  gfx->print(patchExtraLabel(track, extraIdx));
+
+  char buf[6];
+  snprintf(buf, sizeof(buf), "%3d", patchExtraVal[track][extraIdx]);
+  gfx->setTextSize(2);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(static_cast<int16_t>(kMargin + 130), static_cast<int16_t>(y + 2));
+  gfx->print(buf);
+
+  gfx->setCursor(static_cast<int16_t>(minusX + 12), static_cast<int16_t>(y + 4));
+  gfx->print('-');
+  gfx->setCursor(static_cast<int16_t>(plusX + 12), static_cast<int16_t>(y + 4));
+  gfx->print('+');
+}
+
 void sendPatchFilt() {
   const uint8_t t = static_cast<uint8_t>(patchTrack);
   char msg[24];
@@ -1502,36 +1699,46 @@ void sendPatchDxp(uint8_t index) {
 // le meler a cette logique conditionnelle). Voir trackVolume[] et le
 // commentaire du piege Braids cote Teensy (AZ2_FEUILLE_DE_ROUTE.md).
 uint8_t trackVolume[kSeqTrackCount] = {127, 127, 127, 127, 127, 127, 127, 127};
+// Position "historique" (moteur sans ligne extra, KARPLUS/ANALOG,
+// patchScroll=0 -- le cas le plus courant) -- servent de reference aux
+// hitTest*() ci-dessous, qui restent tactiles UNIQUEMENT dans ce cas
+// (voir le commentaire de patchVolRow()/patchSlotRow() plus haut : au-
+// dela, VOLUME/SLOT sont scrolles ailleurs, la croix reste le chemin
+// fiable -- meme choix que documente pour les lignes extra).
 constexpr int16_t kVolRowY = kPatchRowTop + 6 * kPatchRowH;
 constexpr int16_t kVolRowH = kPatchRowH - 4;
 
 void drawVolRow() {
   const uint8_t t = static_cast<uint8_t>(patchTrack);
+  int16_t y;
+  if (!patchRowVisible(patchVolRow(t), y)) {
+    return;
+  }
   const int16_t minusX = static_cast<int16_t>(kScreenSize - kMargin - 2 * kPatchBtnW - 4);
   const int16_t plusX = static_cast<int16_t>(kScreenSize - kMargin - kPatchBtnW);
-  const bool rowSelected = (selectedPatchRow == 6);
+  const bool rowSelected = (selectedPatchRow == static_cast<int8_t>(patchVolRow(t)));
   const uint16_t accent = kPalette[t % kPaletteCount];
 
-  gfx->fillRect(kMargin, kVolRowY, kScreenSize - 2 * kMargin, kVolRowH, RGB565_BLACK);
-  gfx->drawRect(kMargin, kVolRowY, kScreenSize - 2 * kMargin, kVolRowH, rowSelected ? accent : kFaint);
-  gfx->drawRect(minusX, kVolRowY, kPatchBtnW, kVolRowH, kFaint);
-  gfx->drawRect(plusX, kVolRowY, kPatchBtnW, kVolRowH, kFaint);
+  gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, kVolRowH, RGB565_BLACK);
+  gfx->drawRect(kMargin, y, kScreenSize - 2 * kMargin, kVolRowH, rowSelected ? accent : kFaint);
+  gfx->drawRect(minusX, y, kPatchBtnW, kVolRowH, kFaint);
+  gfx->drawRect(plusX, y, kPatchBtnW, kVolRowH, kFaint);
 
   gfx->setTextSize(1);
   gfx->setTextColor(kDim);
-  gfx->setCursor(static_cast<int16_t>(kMargin + 6), static_cast<int16_t>(kVolRowY + 4));
+  gfx->setCursor(static_cast<int16_t>(kMargin + 6), static_cast<int16_t>(y + 4));
   gfx->print("VOLUME");
 
   char buf[6];
   snprintf(buf, sizeof(buf), "%3d", trackVolume[t]);
   gfx->setTextSize(2);
   gfx->setTextColor(RGB565_WHITE);
-  gfx->setCursor(static_cast<int16_t>(kMargin + 130), static_cast<int16_t>(kVolRowY + 2));
+  gfx->setCursor(static_cast<int16_t>(kMargin + 130), static_cast<int16_t>(y + 2));
   gfx->print(buf);
 
-  gfx->setCursor(static_cast<int16_t>(minusX + 12), static_cast<int16_t>(kVolRowY + 4));
+  gfx->setCursor(static_cast<int16_t>(minusX + 12), static_cast<int16_t>(y + 4));
   gfx->print('-');
-  gfx->setCursor(static_cast<int16_t>(plusX + 12), static_cast<int16_t>(kVolRowY + 4));
+  gfx->setCursor(static_cast<int16_t>(plusX + 12), static_cast<int16_t>(y + 4));
   gfx->print('+');
 }
 
@@ -1559,33 +1766,40 @@ void sendPatchVol() {
 // VOLUME juste au-dessus.
 constexpr uint8_t kPatchSlotCount = 8;
 uint8_t patchSlot = 0;
-constexpr int16_t kPatchSlotY = kPatchRowTop + 7 * kPatchRowH + 2;
+// Position "historique" (voir le commentaire de kVolRowY plus haut,
+// meme raisonnement) -- reference des hitTest*() ci-dessous seulement.
+constexpr int16_t kPatchSlotY = kPatchRowTop + 7 * kPatchRowH;
 constexpr int16_t kPatchSlotH = 32;
 constexpr int16_t kPatchSlotBtnW = (kScreenSize - 2 * kMargin) / 3;
 
 void drawPatchSlotRow() {
+  const uint8_t t = static_cast<uint8_t>(patchTrack);
+  int16_t y;
+  if (!patchRowVisible(patchSlotRow(t), y)) {
+    return;
+  }
   const int16_t saveX = static_cast<int16_t>(kMargin + kPatchSlotBtnW);
   const int16_t loadX = static_cast<int16_t>(kMargin + 2 * kPatchSlotBtnW);
-  const bool rowSelected = (selectedPatchRow == 7);
-  const uint16_t accent = kPalette[static_cast<uint8_t>(patchTrack) % kPaletteCount];
-  gfx->fillRect(kMargin, kPatchSlotY, kScreenSize - 2 * kMargin, kPatchSlotH, RGB565_BLACK);
-  gfx->drawRect(kMargin, kPatchSlotY, kPatchSlotBtnW, kPatchSlotH, rowSelected ? accent : kFaint);
-  gfx->drawRect(saveX, kPatchSlotY, kPatchSlotBtnW, kPatchSlotH, rowSelected ? accent : kFaint);
-  gfx->drawRect(loadX, kPatchSlotY, kPatchSlotBtnW, kPatchSlotH, rowSelected ? accent : kFaint);
+  const bool rowSelected = (selectedPatchRow == static_cast<int8_t>(patchSlotRow(t)));
+  const uint16_t accent = kPalette[t % kPaletteCount];
+  gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, kPatchSlotH, RGB565_BLACK);
+  gfx->drawRect(kMargin, y, kPatchSlotBtnW, kPatchSlotH, rowSelected ? accent : kFaint);
+  gfx->drawRect(saveX, y, kPatchSlotBtnW, kPatchSlotH, rowSelected ? accent : kFaint);
+  gfx->drawRect(loadX, y, kPatchSlotBtnW, kPatchSlotH, rowSelected ? accent : kFaint);
 
   gfx->setTextSize(2);
   gfx->setTextColor(RGB565_WHITE);
   char buf[12];
   snprintf(buf, sizeof(buf), "SLOT %d", patchSlot);
-  gfx->setCursor(static_cast<int16_t>(kMargin + 6), static_cast<int16_t>(kPatchSlotY + 8));
+  gfx->setCursor(static_cast<int16_t>(kMargin + 6), static_cast<int16_t>(y + 8));
   gfx->print(buf);
 
   gfx->setTextColor(kPalette[1 % kPaletteCount]);
-  gfx->setCursor(static_cast<int16_t>(saveX + 14), static_cast<int16_t>(kPatchSlotY + 8));
+  gfx->setCursor(static_cast<int16_t>(saveX + 14), static_cast<int16_t>(y + 8));
   gfx->print("SAVE");
 
   gfx->setTextColor(kPalette[2 % kPaletteCount]);
-  gfx->setCursor(static_cast<int16_t>(loadX + 14), static_cast<int16_t>(kPatchSlotY + 8));
+  gfx->setCursor(static_cast<int16_t>(loadX + 14), static_cast<int16_t>(y + 8));
   gfx->print("LOAD");
 }
 
@@ -1681,6 +1895,57 @@ void loadPatchSlot(uint8_t slot) {
   Serial.println(path);
 }
 
+// Dessine (ou efface) TOUTE la fenetre de 8 lignes visibles d'un coup
+// -- utilisee par drawPatchPage() (premier affichage) ET par tout
+// changement qui peut deplacer patchScroll (navigation croix au-dela
+// des 6 lignes fixes, changement de piste/moteur). Plus simple et plus
+// robuste qu'un redessin ligne-par-ligne "au bon endroit" une fois le
+// defilement possible -- un peu plus de travail ecran, sans
+// consequence (pas appelee a haute frequence, contrairement au tracer
+// scope qui a son propre chemin dedie).
+void drawPatchWindow() {
+  const uint8_t t = static_cast<uint8_t>(patchTrack);
+  const uint8_t total = patchTotalRows(t);
+  const uint8_t volRow = patchVolRow(t);
+  const uint8_t slotRow = patchSlotRow(t);
+  for (uint8_t slot = 0; slot < kPatchVisibleRows; ++slot) {
+    const uint8_t logicalRow = static_cast<uint8_t>(patchScroll + slot);
+    if (logicalRow >= total) {
+      int16_t y;
+      if (patchRowVisible(logicalRow, y)) {
+        gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, kPatchRowH - 4, RGB565_BLACK);
+      }
+      continue;
+    }
+    if (logicalRow < 6) {
+      drawPatchRow(logicalRow);
+    } else if (logicalRow == volRow) {
+      drawVolRow();
+    } else if (logicalRow == slotRow) {
+      drawPatchSlotRow();
+    } else {
+      drawPatchExtraRow(logicalRow);
+    }
+  }
+}
+
+// Redessine UNE ligne logique par son numero, quel que soit son type
+// (fixe/extra/volume/slot) -- petit repartiteur utilise par la
+// navigation croix (deux lignes a rafraichir a chaque pas : celle
+// qu'on quitte et celle qu'on selectionne), pour ne pas dupliquer ce
+// if/else a chaque appel.
+void redrawPatchLogicalRow(uint8_t track, uint8_t row) {
+  if (row < 6) {
+    drawPatchRow(row);
+  } else if (row == patchVolRow(track)) {
+    drawVolRow();
+  } else if (row == patchSlotRow(track)) {
+    drawPatchSlotRow();
+  } else {
+    drawPatchExtraRow(row);
+  }
+}
+
 void drawPatchPage() {
   drawSubHeader("PATCH", kPalette[4]);
   drawPatchTrackRow();
@@ -1689,11 +1954,7 @@ void drawPatchPage() {
   // commentaire.
   gfx->drawRect(kMargin, kPatchScopeTop, kScreenSize - 2 * kMargin, kPatchScopeH, kFaint);
   drawPatchScope();
-  for (uint8_t i = 0; i < 6; ++i) {
-    drawPatchRow(i);
-  }
-  drawVolRow();
-  drawPatchSlotRow();
+  drawPatchWindow();
 }
 
 bool hitTestPatchTrackPrev(int16_t x, int16_t y) {
@@ -1704,10 +1965,17 @@ bool hitTestPatchTrackNext(int16_t x, int16_t y) {
 }
 
 // Renvoie -1 (aucun), sinon l'index de ligne (0-5) ; isPlusSide indique -/+.
+// Ne detecte quelque chose que si la ligne est actuellement visible
+// (voir patchRowVisible() -- vrai par defaut, patchScroll ne bouge que
+// si l'utilisateur navigue a la croix au-dela des lignes fixes, voir
+// leur commentaire plus haut : le tactile reste fiable pour ces 6
+// lignes dans l'usage courant, moins si on est reste scrolle plus bas).
 int8_t hitTestPatchRow(int16_t x, int16_t y, bool &isPlusSide) {
   for (uint8_t i = 0; i < 6; ++i) {
     int16_t rowY;
-    patchRowRect(i, rowY);
+    if (!patchRowVisible(i, rowY)) {
+      continue;
+    }
     const int16_t rowH = static_cast<int16_t>(kPatchRowH - 4);
     const int16_t minusX = static_cast<int16_t>(kScreenSize - kMargin - 2 * kPatchBtnW - 4);
     const int16_t plusX = static_cast<int16_t>(kScreenSize - kMargin - kPatchBtnW);
@@ -2655,6 +2923,14 @@ void goTo(Screen s) {
     snprintf(msg, sizeof(msg), "SCOPE:%d", patchTrack);
     sendToTeensy(msg);
     scopeHasData = false;
+    // Repart toujours du haut de la page/de la fenetre en y entrant
+    // (2026-09-18, lignes extra -- voir patchScroll()) et relit les
+    // valeurs courantes du moteur affiche (sinon 0 partout tant que
+    // l'utilisateur n'a pas lui-meme touche chaque ligne au moins une
+    // fois, voir queryPatchExtra()).
+    selectedPatchRow = 0;
+    patchScroll = 0;
+    queryPatchExtra(static_cast<uint8_t>(patchTrack));
   } else if (currentScreen == Screen::Patch) {
     sendToTeensy("SCOPE:OFF");
   }
@@ -2907,16 +3183,24 @@ void handleTeensyLine(const String &line) {
         // maintenu + HAUT/BAS edite sa valeur. Reutilise exactement la
         // meme logique que les +/- tactiles (patchParamRef()/
         // sendPatchFilt()/sendPatchDxp()/sendPatchEnv()/sendPatchVol()).
+        // (2026-09-18, suite : lignes EXTRA par moteur, voir
+        // patchExtraCount()/patchVolRow()/patchSlotRow() plus haut --
+        // VOLUME/SLOT ne sont plus fixes a 6/7, la boucle de
+        // navigation et le defilement (patchScroll) suivent le nombre
+        // total de lignes REEL de la piste/moteur affiche.)
         if (pressed && currentScreen == Screen::Patch) {
           const uint8_t t = static_cast<uint8_t>(patchTrack);
+          const uint8_t total = patchTotalRows(t);
+          const uint8_t volRow = patchVolRow(t);
+          const uint8_t slotRow = patchSlotRow(t);
           // Ligne SLOT (2026-09-18, meme demande que le reste de cette
-          // page : "on peut rien regler avec les boutons") -- row 7,
-          // AJOUTEE sans toucher a la mise en page (la ligne SLOT/SAVE/
-          // LOAD existait deja a l'ecran, seulement au tactile). A
+          // page : "on peut rien regler avec les boutons") -- AJOUTEE
+          // sans toucher a la mise en page (la ligne SLOT/SAVE/LOAD
+          // existait deja a l'ecran, seulement au tactile). A
           // maintenu + GAUCHE/DROITE = SAVE/LOAD (combinaison neuve,
           // GAUCHE/DROITE seuls restent le changement de piste comme
           // avant) ; A maintenu + HAUT/BAS = cycle le numero de slot.
-          if (btnState[0] && selectedPatchRow == 7 && (index == 2 || index == 3)) {
+          if (btnState[0] && selectedPatchRow == static_cast<int8_t>(slotRow) && (index == 2 || index == 3)) {
             if (index == 3) {
               savePatchSlot(patchSlot);
             } else {
@@ -2925,48 +3209,61 @@ void handleTeensyLine(const String &line) {
           } else if (index == 2 || index == 3) {
             patchTrack = static_cast<int8_t>((patchTrack + (index == 3 ? 1 : kSeqTrackCount - 1)) % kSeqTrackCount);
             scopeHasData = false;
+            // Piste differente = potentiellement un moteur different,
+            // donc un nombre de lignes different -- repart du haut de
+            // la fenetre plutot que de garder une selection/un
+            // defilement qui ne correspondrait plus a rien.
+            selectedPatchRow = 0;
+            patchScroll = 0;
             char msg[12];
             snprintf(msg, sizeof(msg), "SCOPE:%d", patchTrack);
             sendToTeensy(msg);
+            queryPatchExtra(static_cast<uint8_t>(patchTrack));
             drawPatchPage();
           } else if ((index == 0 || index == 1) && !btnState[0]) {
             const int8_t prevRow = selectedPatchRow;
             const int8_t dir = (index == 0) ? -1 : 1;
             int8_t nextRow = selectedPatchRow;
-            for (uint8_t tries = 0; tries < 8; ++tries) {
-              nextRow = static_cast<int8_t>(((nextRow + dir) % 8 + 8) % 8);
-              if (nextRow == 6 || nextRow == 7 || patchRowActive(t, static_cast<uint8_t>(nextRow))) {
+            for (uint8_t tries = 0; tries < total; ++tries) {
+              nextRow = static_cast<int8_t>(((nextRow + dir) % total + total) % total);
+              // patchRowActive() ne s'applique qu'aux 6 lignes fixes
+              // (voir son commentaire) -- toute ligne extra/volume/
+              // slot (>= 6) est toujours un arret valide.
+              if (nextRow >= 6 || patchRowActive(t, static_cast<uint8_t>(nextRow))) {
                 break;
               }
             }
             selectedPatchRow = nextRow;
             if (selectedPatchRow != prevRow) {
-              if (prevRow == 6) {
-                drawVolRow();
-              } else if (prevRow == 7) {
-                drawPatchSlotRow();
-              } else {
-                drawPatchRow(static_cast<uint8_t>(prevRow));
+              // Fait suivre le defilement si la nouvelle selection
+              // sort de la fenetre visible -- meme principe que
+              // selectedRomIndex/gbRomScroll pour la liste de ROM.
+              bool scrolled = false;
+              if (selectedPatchRow < static_cast<int8_t>(patchScroll)) {
+                patchScroll = static_cast<uint8_t>(selectedPatchRow);
+                scrolled = true;
+              } else if (selectedPatchRow >= static_cast<int8_t>(patchScroll + kPatchVisibleRows)) {
+                patchScroll = static_cast<uint8_t>(selectedPatchRow - kPatchVisibleRows + 1);
+                scrolled = true;
               }
-              if (selectedPatchRow == 6) {
-                drawVolRow();
-              } else if (selectedPatchRow == 7) {
-                drawPatchSlotRow();
+              if (scrolled) {
+                drawPatchWindow();
               } else {
-                drawPatchRow(static_cast<uint8_t>(selectedPatchRow));
+                redrawPatchLogicalRow(t, static_cast<uint8_t>(prevRow));
+                redrawPatchLogicalRow(t, static_cast<uint8_t>(selectedPatchRow));
               }
             }
           } else if (index == 0 || index == 1) {
             const int delta = (index == 0) ? 1 : -1;
-            if (selectedPatchRow == 6) {
+            if (selectedPatchRow == static_cast<int8_t>(volRow)) {
               uint8_t &vol = trackVolume[t];
               vol = static_cast<uint8_t>(constrain(static_cast<int>(vol) + delta, 0, 127));
               drawVolRow();
               sendPatchVol();
-            } else if (selectedPatchRow == 7) {
+            } else if (selectedPatchRow == static_cast<int8_t>(slotRow)) {
               patchSlot = static_cast<uint8_t>((static_cast<int>(patchSlot) + delta + kPatchSlotCount) % kPatchSlotCount);
               drawPatchSlotRow();
-            } else if (patchRowActive(t, static_cast<uint8_t>(selectedPatchRow))) {
+            } else if (selectedPatchRow < 6 && patchRowActive(t, static_cast<uint8_t>(selectedPatchRow))) {
               uint8_t &param = patchParamRef(t, static_cast<uint8_t>(selectedPatchRow));
               param = static_cast<uint8_t>(constrain(static_cast<int>(param) + delta, 0,
                                                        static_cast<int>(patchRowMax(t, static_cast<uint8_t>(selectedPatchRow)))));
@@ -2978,6 +3275,15 @@ void handleTeensyLine(const String &line) {
               } else {
                 sendPatchEnv();
               }
+            } else if (selectedPatchRow >= 6) {
+              // Ligne EXTRA (2026-09-18) -- envoie DXR:/EXP:/BXP: selon
+              // le moteur (voir sendPatchExtra()).
+              const uint8_t extraIdx = static_cast<uint8_t>(selectedPatchRow - 6);
+              uint8_t &val = patchExtraVal[t][extraIdx];
+              val = static_cast<uint8_t>(
+                  constrain(static_cast<int>(val) + delta, 0, static_cast<int>(patchExtraMax(t, extraIdx))));
+              drawPatchExtraRow(static_cast<uint8_t>(selectedPatchRow));
+              sendPatchExtra(t, extraIdx);
             }
           }
         }
@@ -3354,7 +3660,14 @@ void handleTeensyLine(const String &line) {
           drawEngRow(track);
         } else if (currentScreen == Screen::Patch && track == patchTrack && !screensaverActive) {
           // Les lignes 2-5 changent de sens selon le moteur (ADSR vs
-          // ALGO/FEEDBACK Dexed, voir patchRowLabel()) -- tout redessiner.
+          // ALGO/FEEDBACK Dexed, voir patchRowLabel()), ET le nombre de
+          // lignes extra change aussi (2026-09-18, voir
+          // patchExtraCount()) -- repart du haut plutot que de garder
+          // une selection/un defilement qui ne correspondrait plus a
+          // rien pour ce nouveau moteur, puis relit ses valeurs.
+          selectedPatchRow = 0;
+          patchScroll = 0;
+          queryPatchExtra(track);
           drawPatchPage();
         } else if (currentScreen == Screen::Sequencer && track == selectedSeqTrack && !screensaverActive) {
           drawTrkSidePanel();
@@ -3484,6 +3797,67 @@ void handleTeensyLine(const String &line) {
           drawPatchRow(3);
         } else if (currentScreen == Screen::Sequencer && track == selectedSeqTrack && !screensaverActive) {
           drawTrkSidePanel();
+        }
+      }
+    }
+  } else if (line.startsWith("DXR:")) {
+    // Echo/reponse des lignes extra DEXED (voir handleDexedRawCommand()
+    // cote Teensy -- DXR:<piste>:<octet brut>:<valeur>, meme forme pour
+    // une ecriture confirmee et une reponse a DXR?). Retrouve
+    // l'extraIdx correspondant a cet octet brut (kDexedExtraRaw[]) --
+    // un octet qui n'y figure pas (algo/feedback/nom) est simplement
+    // ignore ici, deja gere par DXP: ou hors scope de l'editeur.
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    const int i3 = line.indexOf(':', i2 + 1);
+    if (i1 >= 0 && i2 >= 0 && i3 >= 0) {
+      const uint8_t track = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
+      const uint8_t rawByte = static_cast<uint8_t>(line.substring(i2 + 1, i3).toInt());
+      const uint8_t value = static_cast<uint8_t>(line.substring(i3 + 1).toInt());
+      if (track < kSeqTrackCount) {
+        for (uint8_t extraIdx = 0; extraIdx < 17; ++extraIdx) {
+          if (kDexedExtraRaw[extraIdx] == rawByte) {
+            patchExtraVal[track][extraIdx] = value;
+            if (currentScreen == Screen::Patch && track == patchTrack && !screensaverActive) {
+              drawPatchExtraRow(static_cast<uint8_t>(6 + extraIdx));
+            }
+            break;
+          }
+        }
+      }
+    }
+  } else if (line.startsWith("EXP:")) {
+    // Echo/reponse des lignes extra EPIANO (voir
+    // handleEPianoParamCommand() cote Teensy).
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    const int i3 = line.indexOf(':', i2 + 1);
+    if (i1 >= 0 && i2 >= 0 && i3 >= 0) {
+      const uint8_t track = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
+      const uint8_t index = static_cast<uint8_t>(line.substring(i2 + 1, i3).toInt());
+      const uint8_t value = static_cast<uint8_t>(line.substring(i3 + 1).toInt());
+      if (track < kSeqTrackCount && index < 12) {
+        patchExtraVal[track][index] = value;
+        if (currentScreen == Screen::Patch && track == patchTrack && !screensaverActive) {
+          drawPatchExtraRow(static_cast<uint8_t>(6 + index));
+        }
+      }
+    }
+  } else if (line.startsWith("BXP:")) {
+    // Echo des lignes extra BRAIDS (voir handleBraidsParamCommand()
+    // cote Teensy -- write-only, pas de forme "?", mais l'ecriture est
+    // tout de meme relayee/confirmee).
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    const int i3 = line.indexOf(':', i2 + 1);
+    if (i1 >= 0 && i2 >= 0 && i3 >= 0) {
+      const uint8_t track = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
+      const uint8_t index = static_cast<uint8_t>(line.substring(i2 + 1, i3).toInt());
+      const uint8_t value = static_cast<uint8_t>(line.substring(i3 + 1).toInt());
+      if (track < kSeqTrackCount && index < 2) {
+        patchExtraVal[track][index] = value;
+        if (currentScreen == Screen::Patch && track == patchTrack && !screensaverActive) {
+          drawPatchExtraRow(static_cast<uint8_t>(6 + index));
         }
       }
     }
