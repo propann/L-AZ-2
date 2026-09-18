@@ -536,6 +536,32 @@ void drawPotBar(uint8_t index) {
   }
 }
 
+// Temoin de potard superpose EN HAUT de l'ecran, visible sur N'IMPORTE
+// QUELLE page (2026-09-18, retour utilisateur : "quand on bouge le
+// volume on a pas de jauge qui apparait, il faut que ca apparaisse en
+// haut ou bas qu'on sache ou on en est") -- drawPotBar() existant reste
+// EXCLUSIF a la page CONTROLES (position fixe dans sa mise en page),
+// celui-ci est un second affichage indépendant, une simple bande fine
+// tout en haut (y=0..10, avant le contenu de n'importe quelle page).
+// S'auto-efface apres kPotToastTimeoutMs en relancant un rendu complet
+// de la page courante (voir loop()) -- plus simple/robuste que de
+// retenir ce qu'il y avait dessous pour le redessiner a la main.
+constexpr int16_t kPotToastY = 0;
+constexpr int16_t kPotToastH = 10;
+constexpr uint32_t kPotToastTimeoutMs = 1500;
+bool potToastActive = false;
+uint32_t potToastLastMs = 0;
+
+void drawPotToast(uint8_t index) {
+  gfx->fillRect(0, kPotToastY, kScreenSize, kPotToastH, RGB565_BLACK);
+  const int16_t fillW = static_cast<int16_t>(static_cast<float>(potValue[index]) / 127.0f * kScreenSize);
+  if (fillW > 0) {
+    gfx->fillRect(0, kPotToastY, fillW, kPotToastH, kPalette[index % kPaletteCount]);
+  }
+  potToastActive = true;
+  potToastLastMs = millis();
+}
+
 void drawControlsPage() {
   drawSubHeader("CONTROLES", kPalette[0]);
   for (uint8_t i = 0; i < 4; ++i) {
@@ -1378,11 +1404,23 @@ void patchRowRect(uint8_t i, int16_t &y) {
   y = static_cast<int16_t>(kPatchRowTop + i * kPatchRowH);
 }
 
+// Ligne selectionnee par la croix (2026-09-18, retour utilisateur sur
+// materiel reel : "la fenetre de patch on peut rien regler avec les
+// boutons" -- comme le panneau tracker avant son propre fix, cette page
+// n'etait pilotable qu'au tactile). 0-5 = les 6 lignes filtre/ADSR-ou-
+// DXP (voir patchParamRef()), 6 = la ligne VOLUME. Meme convention que
+// seqDetailCol : GAUCHE/DROITE changent la piste (patchTrack), HAUT/BAS
+// SEULS deplacent la ligne selectionnee, A maintenu + HAUT/BAS edite sa
+// valeur -- voir le gestionnaire de croix plus bas.
+int8_t selectedPatchRow = 0;
+
 void drawPatchRow(uint8_t i) {
   int16_t y;
   patchRowRect(i, y);
   const int16_t rowH = static_cast<int16_t>(kPatchRowH - 4);
   const uint8_t track = static_cast<uint8_t>(patchTrack);
+  const bool rowSelected = (selectedPatchRow == static_cast<int8_t>(i));
+  const uint16_t accent = kPalette[track % kPaletteCount];
 
   gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, rowH, RGB565_BLACK);
 
@@ -1401,7 +1439,7 @@ void drawPatchRow(uint8_t i) {
   const int16_t minusX = static_cast<int16_t>(kScreenSize - kMargin - 2 * kPatchBtnW - 4);
   const int16_t plusX = static_cast<int16_t>(kScreenSize - kMargin - kPatchBtnW);
 
-  gfx->drawRect(kMargin, y, kScreenSize - 2 * kMargin, rowH, kFaint);
+  gfx->drawRect(kMargin, y, kScreenSize - 2 * kMargin, rowH, rowSelected ? accent : kFaint);
   gfx->drawRect(minusX, y, kPatchBtnW, rowH, kFaint);
   gfx->drawRect(plusX, y, kPatchBtnW, rowH, kFaint);
 
@@ -1465,9 +1503,11 @@ void drawVolRow() {
   const uint8_t t = static_cast<uint8_t>(patchTrack);
   const int16_t minusX = static_cast<int16_t>(kScreenSize - kMargin - 2 * kPatchBtnW - 4);
   const int16_t plusX = static_cast<int16_t>(kScreenSize - kMargin - kPatchBtnW);
+  const bool rowSelected = (selectedPatchRow == 6);
+  const uint16_t accent = kPalette[t % kPaletteCount];
 
   gfx->fillRect(kMargin, kVolRowY, kScreenSize - 2 * kMargin, kVolRowH, RGB565_BLACK);
-  gfx->drawRect(kMargin, kVolRowY, kScreenSize - 2 * kMargin, kVolRowH, kFaint);
+  gfx->drawRect(kMargin, kVolRowY, kScreenSize - 2 * kMargin, kVolRowH, rowSelected ? accent : kFaint);
   gfx->drawRect(minusX, kVolRowY, kPatchBtnW, kVolRowH, kFaint);
   gfx->drawRect(plusX, kVolRowY, kPatchBtnW, kVolRowH, kFaint);
 
@@ -2851,6 +2891,68 @@ void handleTeensyLine(const String &line) {
             }
           }
         }
+        // Page PATCH : meme convention que la page SEQUENCEUR ci-dessus
+        // (2026-09-18, retour utilisateur sur materiel reel : "la
+        // fenetre de patch on peut rien regler avec les boutons") --
+        // GAUCHE/DROITE changent de piste, HAUT/BAS SEULS deplacent la
+        // ligne selectionnee (0-5 = filtre/ADSR-ou-DXP, 6 = volume), A
+        // maintenu + HAUT/BAS edite sa valeur. Reutilise exactement la
+        // meme logique que les +/- tactiles (patchParamRef()/
+        // sendPatchFilt()/sendPatchDxp()/sendPatchEnv()/sendPatchVol()).
+        if (pressed && currentScreen == Screen::Patch) {
+          const uint8_t t = static_cast<uint8_t>(patchTrack);
+          if (index == 2 || index == 3) {
+            patchTrack = static_cast<int8_t>((patchTrack + (index == 3 ? 1 : kSeqTrackCount - 1)) % kSeqTrackCount);
+            scopeHasData = false;
+            char msg[12];
+            snprintf(msg, sizeof(msg), "SCOPE:%d", patchTrack);
+            sendToTeensy(msg);
+            drawPatchPage();
+          } else if ((index == 0 || index == 1) && !btnState[0]) {
+            const int8_t prevRow = selectedPatchRow;
+            const int8_t dir = (index == 0) ? -1 : 1;
+            int8_t nextRow = selectedPatchRow;
+            for (uint8_t tries = 0; tries < 7; ++tries) {
+              nextRow = static_cast<int8_t>(((nextRow + dir) % 7 + 7) % 7);
+              if (nextRow == 6 || patchRowActive(t, static_cast<uint8_t>(nextRow))) {
+                break;
+              }
+            }
+            selectedPatchRow = nextRow;
+            if (selectedPatchRow != prevRow) {
+              if (prevRow == 6) {
+                drawVolRow();
+              } else {
+                drawPatchRow(static_cast<uint8_t>(prevRow));
+              }
+              if (selectedPatchRow == 6) {
+                drawVolRow();
+              } else {
+                drawPatchRow(static_cast<uint8_t>(selectedPatchRow));
+              }
+            }
+          } else if (index == 0 || index == 1) {
+            const int delta = (index == 0) ? 1 : -1;
+            if (selectedPatchRow == 6) {
+              uint8_t &vol = trackVolume[t];
+              vol = static_cast<uint8_t>(constrain(static_cast<int>(vol) + delta, 0, 127));
+              drawVolRow();
+              sendPatchVol();
+            } else if (patchRowActive(t, static_cast<uint8_t>(selectedPatchRow))) {
+              uint8_t &param = patchParamRef(t, static_cast<uint8_t>(selectedPatchRow));
+              param = static_cast<uint8_t>(constrain(static_cast<int>(param) + delta, 0,
+                                                       static_cast<int>(patchRowMax(t, static_cast<uint8_t>(selectedPatchRow)))));
+              drawPatchRow(static_cast<uint8_t>(selectedPatchRow));
+              if (selectedPatchRow < 2) {
+                sendPatchFilt();
+              } else if (trackEngine[t] == az2::kEngineDexed) {
+                sendPatchDxp(static_cast<uint8_t>(selectedPatchRow - 2));
+              } else {
+                sendPatchEnv();
+              }
+            }
+          }
+        }
       }
     }
   } else if (line.startsWith("BTN:") && line.length() >= 6) {
@@ -2989,6 +3091,9 @@ void handleTeensyLine(const String &line) {
         potValue[index] = value;
         if (currentScreen == Screen::Controls && !screensaverActive) {
           drawPotBar(index);
+        }
+        if (!screensaverActive) {
+          drawPotToast(index);
         }
       }
     }
@@ -3966,6 +4071,16 @@ void loop() {
   }
   if (screensaverActive) {
     screensaverStep();
+  }
+
+  // Efface le temoin de potard (voir drawPotToast()) apres son delai --
+  // relance un rendu complet de la page courante plutot que de retenir
+  // ce qu'il y avait sous la bande, plus simple/robuste.
+  if (potToastActive && (nowForIdle - potToastLastMs) >= kPotToastTimeoutMs) {
+    potToastActive = false;
+    if (!screensaverActive) {
+      drawScreen(currentScreen);
+    }
   }
 
   // Emulateur Game Boy (page JEUX, voir gb_emulator.h) : cadence CIBLE

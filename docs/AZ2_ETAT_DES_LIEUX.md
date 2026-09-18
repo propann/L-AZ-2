@@ -30,6 +30,17 @@ d'effets par piste + fonctionnalite musicale complete a concevoir
 proprement, pas a bacler en direct pendant une session de debug
 materiel). A traiter dans une session dediee.
 
+**Precision donnee plus tard dans la meme conversation** : le panneau
+affiche aujourd'hui le moteur + la pattern (deja visibles ailleurs a
+l'ecran -- redondant, "on l'a deja a cote, pas besoin de rappel").
+Remplacer ce contenu par des BOUTONS qui appellent chacun un ecran de
+reglage dedie : choix du moteur, choix/reglage de l'effet assigne a la
+piste, reglages moteur (filtre/ADSR/algo selon le moteur), clavier
+tactile, arpegiateur -- "que tous les outils soient disponibles,
+appelables par des boutons dans le cadre". Confirme la meme direction
+que les points 1-3 ci-dessus, precise le contenu exact des boutons a
+prevoir.
+
 **[2026-09-18, suite du diagnostic DEXED]** Ajoute `checkHeap()` /
 commande `HEAP?` (mallinfo(), voir le commentaire dans le code) pour
 verifier la piste "allocation echouee silencieusement" (`new` sans
