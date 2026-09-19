@@ -2644,8 +2644,8 @@ void drawRetroPage() {
     gfx->print(gbRomTitle());
     // Rappel discret : C quitte la partie (voir le commentaire pres de
     // "il faut un truc pour sortir de l'emulateur", 2026-09-17).
-    gfx->setCursor(static_cast<int16_t>(kScreenSize - kMargin - 48), 4);
-    gfx->print("C:MENU");
+    gfx->setCursor(static_cast<int16_t>(kScreenSize - kMargin - 94), 4);
+    gfx->print("C:MENU D:SAVE");
     drawGbRecIndicator();
     return;
   }
@@ -3797,6 +3797,16 @@ void handleTeensyLine(const String &line) {
       // ailleurs desormais), pas force au menu.
       if (pressed && letter == 'C' && inGbGame) {
         goTo(navPrevious);
+      }
+      // Sauvegarde manuelle LSDJ/GB : D force l'ecriture de la SRAM
+      // sans quitter la partie. Le message tient dans la bande de titre.
+      if (pressed && letter == 'D' && inGbGame) {
+        const bool saved = gbSaveNow();
+        gfx->fillRect(0, 0, kScreenSize, 22, RGB565_BLACK);
+        gfx->setTextSize(1);
+        gfx->setTextColor(saved ? kDim : RGB565_RED);
+        gfx->setCursor(kMargin, 5);
+        gfx->print(saved ? "GB SAVE OK" : "GB SAVE ERROR - D:RETRY");
       }
       // Menu principal : A confirme la selection surlignee par la
       // croix (voir menuSelected ci-dessus) -- demande 2026-09-15.
