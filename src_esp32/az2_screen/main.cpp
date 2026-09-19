@@ -2311,6 +2311,48 @@ int8_t hitTestPatchParam(int16_t x, int16_t y) {
   return -1;
 }
 
+// Applique `delta` a la valeur du parametre actuellement selectionne
+// (selectedPatchRow) et l'envoie au Teensy -- factorise le 2026-09-19
+// ("on devrait pouvoir changer les valeurs ... en maintenant A et en
+// pressant droite/gauche [en plus de haut/bas]") : A+GAUCHE/DROITE
+// edite desormais la valeur exactement comme A+HAUT/BAS (meme
+// fonction, meme convention de signe -- DROITE/HAUT = +1). Reprend
+// mot pour mot la logique qui vivait avant dans le gestionnaire de
+// croix (voir son commentaire pour le detail de chaque cas : VOLUME/
+// SLOT/ligne fixe-ou-DXP/ligne EXTRA).
+void patchApplyDelta(uint8_t t, int delta) {
+  const uint8_t volRow = patchVolRow(t);
+  const uint8_t slotRow = patchSlotRow(t);
+  if (selectedPatchRow == static_cast<int8_t>(volRow)) {
+    uint8_t &vol = trackVolume[t];
+    vol = static_cast<uint8_t>(constrain(static_cast<int>(vol) + delta, 0, 127));
+    drawVolRow();
+    sendPatchVol();
+  } else if (selectedPatchRow == static_cast<int8_t>(slotRow)) {
+    patchSlot = static_cast<uint8_t>((static_cast<int>(patchSlot) + delta + kPatchSlotCount) % kPatchSlotCount);
+    drawPatchSlotRow();
+  } else if (selectedPatchRow < 6 && patchRowActive(t, static_cast<uint8_t>(selectedPatchRow))) {
+    uint8_t &param = patchParamRef(t, static_cast<uint8_t>(selectedPatchRow));
+    param = static_cast<uint8_t>(constrain(static_cast<int>(param) + delta, 0,
+                                             static_cast<int>(patchRowMax(t, static_cast<uint8_t>(selectedPatchRow)))));
+    drawPatchRow(static_cast<uint8_t>(selectedPatchRow));
+    if (selectedPatchRow < 2) {
+      sendPatchFilt();
+    } else if (trackEngine[t] == az2::kEngineDexed) {
+      sendPatchDxp(static_cast<uint8_t>(selectedPatchRow - 2));
+    } else {
+      sendPatchEnv();
+    }
+  } else if (selectedPatchRow >= 6) {
+    const uint8_t extraIdx = static_cast<uint8_t>(selectedPatchRow - 6);
+    uint8_t &val = patchExtraVal[t][extraIdx];
+    val = static_cast<uint8_t>(
+        constrain(static_cast<int>(val) + delta, 0, static_cast<int>(patchExtraMax(t, extraIdx))));
+    drawPatchExtraRow(static_cast<uint8_t>(selectedPatchRow));
+    sendPatchExtra(t, extraIdx);
+  }
+}
+
 // ---------------------------------------------------------------------
 // Page SONG -- chainage de patterns, demande le 2026-09-16 ("c'est
 // plus un sequenceur qui peut nous permettre d'assembler des patterns,
@@ -3582,13 +3624,17 @@ void handleTeensyLine(const String &line) {
         // (patchStepVisual()). La ligne PISTE (ou GAUCHE/DROITE change
         // vraiment de piste, comme avant ce chantier) ne s'atteint plus
         // qu'en montant depuis la toute premiere ligne. A maintenu +
-        // HAUT/BAS edite toujours la valeur selectionnee, inchange.
-        // Ligne SLOT : A maintenu + GAUCHE/DROITE reste SAVE/LOAD,
-        // seule ligne ou GAUCHE/DROITE garde un role hors navigation.
+        // HAUT/BAS OU A maintenu + GAUCHE/DROITE editent tous les deux
+        // la valeur selectionnee (2026-09-19, suite : "on devrait
+        // pouvoir changer les valeurs ... en maintenant A et en
+        // pressant droite/gauche [en plus de haut/bas]" -- meme
+        // fonction patchApplyDelta(), simple confort d'avoir le choix
+        // du sens de croix). Ligne SLOT : A maintenu + GAUCHE/DROITE
+        // reste SAVE/LOAD (verifie AVANT le cas general ci-dessous),
+        // seule ligne ou GAUCHE/DROITE garde un role hors edition.
         if (pressed && currentScreen == Screen::Patch) {
           const uint8_t t = static_cast<uint8_t>(patchTrack);
           const uint8_t total = patchTotalRows(t);
-          const uint8_t volRow = patchVolRow(t);
           const uint8_t slotRow = patchSlotRow(t);
           if (btnState[0] && !patchOnTrackRow && selectedPatchRow == static_cast<int8_t>(slotRow) &&
               (index == 2 || index == 3)) {
@@ -3667,41 +3713,15 @@ void handleTeensyLine(const String &line) {
                 redrawPatchLogicalRow(t, static_cast<uint8_t>(selectedPatchRow));
               }
             }
-          } else if (index == 0 || index == 1) {
-            // A maintenu + HAUT/BAS : edite la valeur de la ligne
-            // selectionnee (inchange, reutilise patchParamRef()/
-            // sendPatchFilt()/sendPatchDxp()/sendPatchEnv()/sendPatchVol()/
-            // sendPatchExtra()).
-            const int delta = (index == 0) ? 1 : -1;
-            if (selectedPatchRow == static_cast<int8_t>(volRow)) {
-              uint8_t &vol = trackVolume[t];
-              vol = static_cast<uint8_t>(constrain(static_cast<int>(vol) + delta, 0, 127));
-              drawVolRow();
-              sendPatchVol();
-            } else if (selectedPatchRow == static_cast<int8_t>(slotRow)) {
-              patchSlot = static_cast<uint8_t>((static_cast<int>(patchSlot) + delta + kPatchSlotCount) % kPatchSlotCount);
-              drawPatchSlotRow();
-            } else if (selectedPatchRow < 6 && patchRowActive(t, static_cast<uint8_t>(selectedPatchRow))) {
-              uint8_t &param = patchParamRef(t, static_cast<uint8_t>(selectedPatchRow));
-              param = static_cast<uint8_t>(constrain(static_cast<int>(param) + delta, 0,
-                                                       static_cast<int>(patchRowMax(t, static_cast<uint8_t>(selectedPatchRow)))));
-              drawPatchRow(static_cast<uint8_t>(selectedPatchRow));
-              if (selectedPatchRow < 2) {
-                sendPatchFilt();
-              } else if (trackEngine[t] == az2::kEngineDexed) {
-                sendPatchDxp(static_cast<uint8_t>(selectedPatchRow - 2));
-              } else {
-                sendPatchEnv();
-              }
-            } else if (selectedPatchRow >= 6) {
-              // Ligne EXTRA (2026-09-18) -- envoie DXR:/EXP:/BXP: selon
-              // le moteur (voir sendPatchExtra()).
-              const uint8_t extraIdx = static_cast<uint8_t>(selectedPatchRow - 6);
-              uint8_t &val = patchExtraVal[t][extraIdx];
-              val = static_cast<uint8_t>(
-                  constrain(static_cast<int>(val) + delta, 0, static_cast<int>(patchExtraMax(t, extraIdx))));
-              drawPatchExtraRow(static_cast<uint8_t>(selectedPatchRow));
-              sendPatchExtra(t, extraIdx);
+          } else {
+            // A maintenu (et pas le cas SLOT+GAUCHE/DROITE deja capte
+            // plus haut) : edite la valeur de la ligne selectionnee,
+            // HAUT/DROITE = +1, BAS/GAUCHE = -1 -- voir patchApplyDelta()
+            // et le commentaire au-dessus de ce bloc.
+            if (index == 0 || index == 1) {
+              patchApplyDelta(t, (index == 0) ? 1 : -1);
+            } else {
+              patchApplyDelta(t, (index == 3) ? 1 : -1);
             }
           }
         }

@@ -1,5 +1,25 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-19 -- page PATCH : A+GAUCHE/DROITE edite la valeur, en plus
+de A+HAUT/BAS -- teste sur le vrai materiel]**
+
+Demande immediate suite au chantier de navigation ci-dessous : "on
+devrait pouvoir changer les valeurs avec droite gauche ... en
+maintenant A et en pressant droite gauche pour changer les valeurs du
+patch". La logique d'edition (VOLUME/SLOT/ligne fixe-ou-DXP/ligne
+EXTRA) est sortie du gestionnaire de croix vers une fonction dediee
+`patchApplyDelta(track, delta)`, appelee desormais aussi bien par A+
+HAUT/BAS (HAUT=+1) que par A+GAUCHE/DROITE (DROITE=+1) -- simple choix
+de confort, les 2 sens de croix marchent pour editer. La ligne SLOT
+garde son cas particulier (A+GAUCHE/DROITE = SAVE/LOAD, verifie avant
+le cas general). GAUCHE/DROITE SEUL (sans A) continue de juste
+selectionner, inchange.
+
+**Valide sur le vrai materiel** (SIMNAV:/SIMBTN:) : A+DROITE sur
+CUTOFF envoie `FILT:0:127:0`, A+GAUCHE juste apres envoie
+`FILT:0:126:0` (bien decremente) ; DROITE seul (sans A) juste apres ne
+declenche aucune commande (selection seule, comme prevu).
+
 **[2026-09-19 -- page PATCH : 2 reglages par ligne + navigation
 repensee (GAUCHE/DROITE choisit le reglage, PISTE sur sa propre
 ligne) -- teste sur le vrai materiel]**
