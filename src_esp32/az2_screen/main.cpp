@@ -239,9 +239,13 @@ constexpr int16_t kStatusY = kScreenSize - 30;
 // verticale (grille 16 pas + panneau lateral + barre transport, voir
 // kTrkControlsY), et cette ligne n'apporte rien d'utile pendant
 // l'edition d'un morceau (le lien Teensy est deja implicitement
-// confirme par le simple fait que jouer/editer fonctionne).
+// confirme par le simple fait que jouer/editer fonctionne). Exclue
+// aussi de la page PATCH le meme jour ("on a le tensy en vert en bas
+// qui nous empeche de voir les dernieres lignes") -- meme raisonnement,
+// la page defile deja (voir patchScroll) et a besoin de tout l'espace
+// vertical disponible.
 bool drawLinkStatusExcluded() {
-  return currentScreen == Screen::Sequencer;
+  return currentScreen == Screen::Sequencer || currentScreen == Screen::Patch;
 }
 
 void drawLinkStatus() {
@@ -1271,9 +1275,15 @@ void drawEngListRow(uint8_t engineIdx) {
 
   gfx->fillRect(kMargin, y, kEngListLeftW, h, isCurrent ? accent : RGB565_BLACK);
   gfx->drawRect(kMargin, y, kEngListLeftW, h, isCurrent ? accent : kFaint);
+  // Contour BLANC EPAIS (3px, 2026-09-19 -- "on fait un truc en
+  // surbrillance plus visible pour qu'on voit mieux ce qui est
+  // selectionne") quand c'est la ligne au focus croix -- un seul pixel
+  // se voyait mal par-dessus le remplissage deja colore.
   if (focused) {
-    gfx->drawRect(static_cast<int16_t>(kMargin + 1), static_cast<int16_t>(y + 1), static_cast<int16_t>(kEngListLeftW - 2),
-                  static_cast<int16_t>(h - 2), RGB565_WHITE);
+    for (int16_t o = 0; o < 3; ++o) {
+      gfx->drawRect(static_cast<int16_t>(kMargin + 1 + o), static_cast<int16_t>(y + 1 + o),
+                    static_cast<int16_t>(kEngListLeftW - 2 - 2 * o), static_cast<int16_t>(h - 2 - 2 * o), RGB565_WHITE);
+    }
   }
   gfx->setTextSize(2);
   gfx->setTextColor(isCurrent ? RGB565_BLACK : RGB565_WHITE);
@@ -1300,9 +1310,12 @@ void drawEngPatchRow(uint8_t slot) {
 
   gfx->fillRect(kEngListRightX, y, kEngListRightW, h, isCurrent ? accent : RGB565_BLACK);
   gfx->drawRect(kEngListRightX, y, kEngListRightW, h, isCurrent ? accent : kFaint);
+  // Contour epais -- meme raison/meme technique que drawEngListRow().
   if (focused) {
-    gfx->drawRect(static_cast<int16_t>(kEngListRightX + 1), static_cast<int16_t>(y + 1),
-                  static_cast<int16_t>(kEngListRightW - 2), static_cast<int16_t>(h - 2), RGB565_WHITE);
+    for (int16_t o = 0; o < 3; ++o) {
+      gfx->drawRect(static_cast<int16_t>(kEngListRightX + 1 + o), static_cast<int16_t>(y + 1 + o),
+                    static_cast<int16_t>(kEngListRightW - 2 - 2 * o), static_cast<int16_t>(h - 2 - 2 * o), RGB565_WHITE);
+    }
   }
   gfx->setTextSize(1);
   gfx->setTextColor(isCurrent ? RGB565_BLACK : RGB565_WHITE);
@@ -1318,6 +1331,20 @@ void drawEngLists() {
   }
   for (uint8_t s = 0; s < kEngListVisibleRows; ++s) {
     drawEngPatchRow(s);
+  }
+  // Cadre epais AUTOUR DE TOUTE LA LISTE qui a le focus croix
+  // (2026-09-19, meme demande que le contour de ligne plus haut) --
+  // dessine EN DERNIER (par-dessus les lignes) pour voir tout de suite
+  // "de quel cote" on est (moteur ou patch), pas seulement quelle
+  // ligne precise -- utile des qu'on hesite en un coup d'oeil rapide.
+  if (!engOnTrackRow) {
+    const uint16_t accent = kPalette[selectedEngineTrack % kPaletteCount];
+    const int16_t boxX = engineColPatch ? kEngListRightX : kMargin;
+    const int16_t boxW = engineColPatch ? kEngListRightW : kEngListLeftW;
+    for (int16_t o = 0; o < 3; ++o) {
+      gfx->drawRect(static_cast<int16_t>(boxX - o), static_cast<int16_t>(kEngListTop - o),
+                    static_cast<int16_t>(boxW + 2 * o), static_cast<int16_t>(kEngListH + 2 * o), accent);
+    }
   }
 }
 
@@ -3620,9 +3647,18 @@ void handleTeensyLine(const String &line) {
           }
         }
       }
-      // Page MOTEURS : le focus (A+GAUCHE/DROITE) est gere directement
-      // dans le bloc NAV: ci-dessus desormais (2026-09-19) -- A seul
-      // n'a plus de role ici.
+      // Page MOTEURS (2026-09-19) : A ouvre la page PATCH complete pour
+      // le patch actuellement selectionne -- demande explicite ("si on
+      // en selectionne un [patch] il faut que quand on presse A ca
+      // envoie aux reglages du patch"). Seulement quand le focus est
+      // sur la liste PATCH (pas sur MOTEUR ni sur la ligne PISTE, ou A
+      // n'aurait pas de sens ici) -- meme action que toucher le
+      // bandeau mini-reglages en bas (voir hitTestEngMini()).
+      if (pressed && letter == 'A' && currentScreen == Screen::Engines && !engOnTrackRow && engineColPatch) {
+        patchTrack = selectedEngineTrack;
+        scopeHasData = false;
+        goTo(Screen::Patch);
+      }
       // Bouton RETOUR : C (2026-09-19, "le bouton retour on le met sur
       // c c'est plus cool moins tendance a appuyer dessus" -- deplace
       // de B, confirme fonctionnel sur le vrai materiel : "tout les
@@ -3642,6 +3678,30 @@ void handleTeensyLine(const String &line) {
       }
       if (pressed && letter == 'C' && currentScreen != Screen::Menu && !inGbGame) {
         goTo(navPrevious);
+      }
+      // Page PATCH : B joue/coupe une note de test DIRECTEMENT sur la
+      // piste affichee (2026-09-19, "il faut utiliser le bouton B pour
+      // jouer une note qu'on entende les modifications") -- indispensable
+      // pour entendre l'effet d'un reglage en cours d'edition sans
+      // devoir lancer PLAY/le sequenceur. Note fixe (MIDI 60 = C4,
+      // meme note utilisee pour tous les tests manuels ce soir) ;
+      // TIENT tant que B reste enfonce (relachement = TEST:...:0,
+      // jamais filtre par ecran -- meme raison que FILL: sur D plus
+      // bas : si on change de page en gardant B enfonce, la note ne
+      // doit pas rester bloquee "on").
+      if (letter == 'B' && currentScreen == Screen::Patch) {
+        char msg[16];
+        snprintf(msg, sizeof(msg), "TEST:%d:60:%d", patchTrack, pressed ? 1 : 0);
+        sendToTeensy(msg);
+      } else if (letter == 'B' && !pressed) {
+        // Relachement B ailleurs qu'en pleine page PATCH -- coupe quand
+        // meme au cas ou on aurait change de page en gardant B enfonce
+        // (meme garde-fou que FILL: sur D). patchTrack, pas
+        // selectedSeqTrack/selectedEngineTrack : c'est la piste de la
+        // page PATCH qui a pu recevoir un TEST:...:1 juste avant.
+        char msg[16];
+        snprintf(msg, sizeof(msg), "TEST:%d:60:0", patchTrack);
+        sendToTeensy(msg);
       }
       // Page AUDIO : D bascule le clavier tactile entre "jouer en
       // direct" et "poser la note sur le pas selectionne du

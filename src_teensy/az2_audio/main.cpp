@@ -2316,6 +2316,36 @@ void handleCommand(const String &line) {
     return;
   }
 
+  // TEST:<piste>:<note MIDI>:<0|1> -- declenche/coupe une note
+  // DIRECTEMENT sur une piste, HORS sequenceur (2026-09-19, "il faut
+  // utiliser le bouton B pour jouer une note qu'on entende les
+  // modifications" -- la page PATCH n'avait aucun moyen d'entendre le
+  // patch en cours de reglage sans passer par le sequenceur/PLAY).
+  // Meme trackNoteOn()/trackNoteOff() que le sequenceur, appeles
+  // directement -- fonctionne que PLAY tourne ou non.
+  if (line.startsWith("TEST:")) {
+    const int idx1 = line.indexOf(':');
+    const int idx2 = line.indexOf(':', idx1 + 1);
+    const int idx3 = line.indexOf(':', idx2 + 1);
+    if (idx1 < 0 || idx2 < 0 || idx3 < 0) {
+      sendCommandError("TEST", "MALFORMED");
+      return;
+    }
+    const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+    const int note = line.substring(idx2 + 1, idx3).toInt();
+    const bool on = line.substring(idx3 + 1).toInt() != 0;
+    if (track >= kTrackCount || note < 0 || note > 127) {
+      sendCommandError("TEST", "OUT_OF_RANGE");
+      return;
+    }
+    if (on) {
+      trackNoteOn(track, static_cast<uint8_t>(note), 100);
+    } else {
+      trackNoteOff(track, static_cast<uint8_t>(note));
+    }
+    return;
+  }
+
   if (line.startsWith("ENGINE:")) {
     handleEngineCommand(line);
     return;

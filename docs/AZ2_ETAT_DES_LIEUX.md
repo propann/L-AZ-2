@@ -1,5 +1,48 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-19 -- page MOTEURS : A ouvre PATCH + surbrillance plus
+visible ; page PATCH : barre TEENSY retiree + bouton B pour entendre
+les reglages en direct -- teste sur le vrai materiel]**
+
+3 retours utilisateur enchaines :
+
+- **Page MOTEURS, A ouvre la page PATCH** : "si on en selectionne un
+  [patch] il faut que quand on presse A ca envoie aux reglages du
+  patch". Ajoute (uniquement quand le focus croix est sur la liste
+  PATCH, pas MOTEUR ni la ligne PISTE) -- meme action que toucher le
+  bandeau mini-reglages.
+- **Surbrillance plus visible** : le contour blanc de la ligne au
+  focus passe de 1px a 3px (3 rectangles imbriques, GFX Library n'a
+  pas de parametre d'epaisseur de trait). Ajoute en plus un cadre
+  epais (3px) autour de TOUTE la liste (moteur OU patch) qui a le
+  focus croix, dessine par-dessus les lignes -- vue d'ensemble
+  immediate de "quel cote" en plus du detail "quelle ligne".
+- **Page PATCH** : 3 choses --
+  1. Barre TEENSY (vert, en bas) retiree de cette page aussi (meme
+     raisonnement que la page SEQUENCEUR plus haut ce soir) : "elle
+     nous empeche de voir les dernieres lignes".
+  2. Bouton B joue/coupe une note de test (MIDI 60 fixe) DIRECTEMENT
+     sur la piste affichee, hors sequenceur : "il faut utiliser le
+     bouton B pour jouer une note qu'on entende les modifications" --
+     nouvelle commande Teensy `TEST:<piste>:<note>:<0|1>`, appelle
+     directement trackNoteOn()/trackNoteOff() (memes fonctions que le
+     sequenceur), fonctionne que PLAY tourne ou non. Relachement B
+     jamais filtre par ecran (meme garde-fou que FILL: sur D) pour ne
+     pas laisser une note bloquee "on" si on change de page en gardant
+     B enfonce.
+  3. Le rectangle du tracer d'onde etait vide -- pas un bug distinct,
+     juste qu'il n'y avait aucun moyen de declencher une note pour le
+     voir bouger avant le bouton B ci-dessus (le systeme SCOPE:
+     lui-meme, fixe hier soir, n'a pas ete retouche).
+
+**Valide sur le vrai materiel** : `TEST:0:60:1` puis `TEST:0:60:0`
+confirmes envoyes correctement au relachement de B (via SIMNAV:/
+SIMBTN:), note entendue par l'utilisateur pendant les 2s de maintien
+("c'est top"). Retour mineur note : un leger "saut d'ecran" pendant le
+test -- pas bloquant, a surveiller mais pas encore diagnostique (peut-
+etre le redessin du reste de la page suite au retrait de la barre
+TEENSY, pas confirme).
+
 **[2026-09-19 -- les 3 defauts P1 de l'audit de code corriges (INST
 0xFF, sauvegardes atomiques patch/projet/GB, autosave GB periodique),
 teste et un bug trouve+corrige sur le vrai materiel]**
