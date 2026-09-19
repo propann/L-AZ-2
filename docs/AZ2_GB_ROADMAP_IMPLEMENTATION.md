@@ -24,7 +24,7 @@ Ce document distingue **code intégré**, **à implémenter**, et **à valider s
 
 ### Lot 1 — Instrumenter et qualifier la cadence (à implémenter/valider)
 
-- [ ] Enregistrer par ROM/firmware FPS logique, FPS affiché, temps moyen/max/p99 de frame, LCD, APU, SD et UART, ainsi que frames en retard.
+- [x] Instrumentation de base intégrée : FPS observé, temps moyen/max de frame, missed frames, total frames et échecs d'autosave, avec affichage dans la bande supérieure et logs série. [ ] Ajouter p99 séparé, timings LCD/APU/SD/UART et qualification sur matériel.
 - [ ] Vérifier la cadence 59,7275 Hz sur machine pendant 30 minutes ; capturer aussi les ralentissements, pas seulement la moyenne.
 - [ ] Bench A/B gb_run_frame() et gb_run_frame_dualfetch() avec tests CPU/timers/interruptions/DMA.
 - [ ] Vérifier le vrai rendu écran 60 Hz et les transactions par bande ; ajouter un double buffer uniquement après contrôle des échanges avec le panneau.
@@ -43,11 +43,11 @@ Ce document distingue **code intégré**, **à implémenter**, et **à valider s
 
 - [ ] Copier un snapshot SRAM cohérent et l'écrire hors boucle critique (tâche basse priorité, accès SD sérialisé avec le rendu/lecteur de ROM).
 - [ ] Séquencer les snapshots avec génération/dirty flag : si la SRAM change pendant une écriture, ne pas effacer l'indicateur dirty correspondant.
-- [ ] Ajouter sauvegarde manuelle, retour d'erreur visible, retry, tests 100 cycles et récupération après coupure au pire moment.
+- [x] Sauvegarde manuelle sur D, retour d'erreur visible et retry sans quitter la partie. [ ] Tests 100 cycles et récupération après coupure au pire moment.
 
 ### Lot 4 — Console / LSDJ / Sampler
 
-- [ ] Menu Console : ROMs paginées, noms distincts, boutons configurables, sauvegarde explicite, palette, volume, stats.
+- [ ] Menu Console : ROMs paginées, noms distincts, sauvegarde explicite et stats sont désormais présents en base. Restent boutons configurables, palette/volume dédiés et polish de l'interface.
 - [ ] Mode LSDJ Studio : combos Start/Select ergonomiques, sortie sûre, mixage stéréo, lecture simultanée.
 - [ ] Capture audio GB depuis le mixeur AVANT effets si choix dry et APRÈS effets si choix wet ; enregistrer WAV valide avec durée/échantillonnage/canaux.
 - [ ] Envoi au sampleur utilisateur (le sampleur actuel ne dispose pas encore du parcours complet de banque/capture).
