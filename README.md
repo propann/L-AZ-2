@@ -24,7 +24,7 @@
 | Tracker 8 pistes, patterns, song, swing, effets par pas, mute/solo | Émulation GB/GBC sur écran tactile avec croix et boutons physiques | Mixage via Teensy et DAC I²S, capture WAV du son du jeu, sampleur one-shot |
 | Dexed FM · ePiano · Braids · Karplus · Analog · Sampler | Navigateur de ROM sur carte SD, sauvegarde cartouche | Six moteurs audio au choix par piste |
 
-**Intention produit :** composer au tracker, jouer à la Game Boy et faire dialoguer le son chiptune avec les synthétiseurs de la machine. La capture WAV est présente ; la conversion de ces enregistrements en banques du sampleur reste à développer.
+**Intention produit :** composer au tracker, jouer à la Game Boy et faire dialoguer le son chiptune avec les synthétiseurs de la machine. La capture WAV est présente et le dernier enregistrement Game Boy peut désormais être chargé en PSRAM comme patch dynamique **SAMPLER / GB Capture** ; la gestion d'une vraie bibliothèque multi-captures reste à développer.
 
 ## Deux firmwares, un seul instrument
 
@@ -75,7 +75,8 @@ Le matériel Teensy et l'écran ESP32 disposent de configurations de compilation
 | :-- | :-- |
 | Cœur Walnut-CGB, chargement ROM depuis SD, commandes physiques | Intégré ; compatibilité à qualifier ROM par ROM |
 | Rendu sans frame-skip par défaut, dual-fetch, télémétrie FPS/temps/missed | Intégré ; cadence réelle à relever sur la machine |
-| Sauvegarde SRAM périodique, SAVE NOW sur D, fichier de secours | Intégré ; robustesse en cas de coupure encore à durcir |
+| Audio V2 séquencé + CRC + L/R PCM8 stéréo | Intégré derrière un pilote désactivé ; sortie Teensy encore downmixée sur le bus mono actuel |
+| Sauvegarde SRAM périodique, SAVE NOW sur D, `.sav/.bak` et RTC MBC3 séparé | Intégré ; qualification coupure/RTC sur matériel encore nécessaire |
 | Audio GB vers Teensy | Intégré, actuellement **mono 8 bits / 14 kHz** |
 | Audio stéréo haute fidélité, APU horodatée, protocole V2 | **Non livré** |
 | Synchronisation LSDJ, capture → banque de samples utilisateur | **Non livré** |
