@@ -3746,6 +3746,12 @@ void handleTeensyLine(const String &line) {
         // (menuCategory<0) : les 4 directions naviguent le 2x2. Sous-
         // liste (menuCategory>=0) : HAUT/BAS parcourent la liste,
         // GAUCHE revient a la grille.
+        if (pressed && currentScreen == Screen::Config) {
+          if (index == 0) configSelectedRow = (configSelectedRow + 3) % 4;
+          else if (index == 1) configSelectedRow = (configSelectedRow + 1) % 4;
+          else if (index == 2 || index == 3) configChangeRow(index == 2 ? -1 : 1);
+          if (index == 0 || index == 1) drawConfigPage();
+        }
         if (pressed && currentScreen == Screen::Menu) {
           if (menuCategory < 0) {
             const int8_t previous = menuSelected;
@@ -4159,6 +4165,9 @@ void handleTeensyLine(const String &line) {
       // croix (voir menuSelected ci-dessus) -- demande 2026-09-15.
       // Grille de categories -> entre dans la categorie ; sous-liste ->
       // ouvre la page choisie (comme un tap tactile).
+      if (pressed && letter == 'A' && currentScreen == Screen::Config) {
+        configChangeRow(1);
+      }
       if (pressed && letter == 'A' && currentScreen == Screen::Menu) {
         if (menuCategory < 0) {
           menuCategory = menuSelected;
@@ -5488,19 +5497,27 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       drawProjectPage();
     }
   } else if (currentScreen == Screen::Config) {
-    if (hitTestCfgMinus(x, y)) {
+    if (hitTestSaverStyle(x, y)) {
+      configSelectedRow = 0;
+      configChangeRow(x < kScreenSize / 2 ? -1 : 1);
+    } else if (hitTestCfgMinus(x, y)) {
+      configSelectedRow = 1;
       screensaverTimeoutSec = screensaverTimeoutSec >= kScreensaverStepSec ? screensaverTimeoutSec - kScreensaverStepSec : 0;
       drawConfigPage();
     } else if (hitTestCfgPlus(x, y)) {
+      configSelectedRow = 1;
       screensaverTimeoutSec = static_cast<uint16_t>(min<uint32_t>(screensaverTimeoutSec + kScreensaverStepSec, kScreensaverMaxSec));
       drawConfigPage();
     } else if (hitTestScaleMinus(x, y)) {
+      configSelectedRow = 2;
       currentScaleIndex = static_cast<uint8_t>((currentScaleIndex + kScaleCount - 1) % kScaleCount);
       drawConfigPage();
     } else if (hitTestScalePlus(x, y)) {
+      configSelectedRow = 2;
       currentScaleIndex = static_cast<uint8_t>((currentScaleIndex + 1) % kScaleCount);
       drawConfigPage();
     } else if (hitTestSwingMinus(x, y) || hitTestSwingPlus(x, y)) {
+      configSelectedRow = 3;
       const int delta = hitTestSwingPlus(x, y) ? kSwingStep : -kSwingStep;
       swingValue = static_cast<uint8_t>(constrain(static_cast<int>(swingValue) + delta, 0, 127));
       drawConfigPage();
