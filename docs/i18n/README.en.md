@@ -59,3 +59,11 @@ Test save files and RTC against power interruptions, measure real FPS/audio on t
 ## Contributions and licensing
 
 Useful bug reports include the commit SHA, board, reproduction steps, logs and freely distributable test ROMs. Do not publish commercial ROMs, personal save files or secrets. See [CONTRIBUTING.md](../../CONTRIBUTING.md), [LICENSE](../../LICENSE) and [third-party licenses (French)](../AZ2_LICENCES.md).
+
+## Screensaver — styles and controls
+
+Under **CONFIGURATION**, select **Matrix** (classic characters), **Note Rain** (notes from steps in the current pattern), **8 Tracks** (one falling column per tracker track), or **Dashboard** (BPM, pattern, step, PLAY/STOP state, engines and notes for all eight tracks). Notes and events are read from the tracker mirror already stored on the ESP32; the animation adds no UART traffic.
+
+**D-pad:** UP/DOWN selects a setting row; LEFT/RIGHT changes its style, timeout, scale or swing. **A:** confirms by selecting the next value. **Touch:** tap the arrows in that row for the same operation. A key/button wakes the display. Style and timeout persist in ESP32 NVS after reboot; a zero timeout disables the screensaver.
+
+The screensaver does not pause the tracker or audio. Actual display smoothness, readability and non-interference with GB gameplay still require hardware testing.
