@@ -9,7 +9,7 @@ sauvegarde SD et l'emulation GB/GBC.
 ## Ce que la machine fait aujourd'hui
 
 - **8 pistes**, chacune avec son propre moteur au choix (Dexed FM,
-  mda ePiano, Braids, Karplus-Strong, oscillateur analogique), filtre
+  mda ePiano, Braids, Karplus-Strong, oscillateur analogique, sampleur), filtre
   resonant, ADSR et volume editables en direct, avec un oscilloscope
   pour voir l'onde changer en reglant les parametres. Reglages propres
   au Dexed (algorithme/feedback DX7). **Mute/solo par piste.**
@@ -22,8 +22,9 @@ sauvegarde SD et l'emulation GB/GBC.
   4 emplacements), sur la carte SD de l'ESP32.
 - **Emulateur Game Boy/GBC** (Walnut-CGB), son du jeu route jusqu'au
   DAC du Teensy, sauvegarde de la RAM de cartouche sur la SD, liste de
-  ROM paginee. Sampler (capture REC/STOP -> `.wav` sur la SD dediee du
-  Teensy) -- capture faite, lecture pas encore.
+  ROM paginee. Capture REC/STOP vers `.wav` sur la SD du Teensy ; moteur
+  sampleur one-shot Kick/Snare actif, les WAV captures ne sont pas encore
+  injectables dans sa banque.
 - **MIDI notes IN** (USB) vers la voix live.
 - **Croix + 4 boutons + 3 encodeurs rotatifs** (avec bouton integre)
   cables directement sur le Teensy -- navigation dans les menus,
