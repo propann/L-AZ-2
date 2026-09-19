@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 58056)
+Total output lines: 5209
+
 // AZ-2 - Ecran + intro + menu de test NAVIGABLE. Carte reelle identifiee
 // via l'etiquette sur le flex de l'ecran (2026-09-13): VIEWE
 // UEDX48480040E-WB-V1.3, driver GC9503V (pas le generique
@@ -2261,764 +2264,7 @@ void drawPatchWindow() {
 void redrawPatchLogicalRow(uint8_t track, uint8_t row) {
   if (row < 6) {
     drawPatchRow(row);
-  } else if (row == patchVolRow(track)) {
-    drawVolRow();
-  } else if (row == patchSlotRow(track)) {
-    drawPatchSlotRow();
-  } else {
-    drawPatchExtraRow(row);
-  }
-}
-
-void drawPatchPage() {
-  drawSubHeader("PATCH", kPalette[4]);
-  drawPatchTrackRow();
-  // Cadre du tracer dessine UNE fois ici -- drawPatchScope() (appelee a
-  // chaque paquet SCOPE recu) ne touche plus que l'interieur, voir son
-  // commentaire.
-  gfx->drawRect(kMargin, kPatchScopeTop, kScreenSize - 2 * kMargin, kPatchScopeH, kFaint);
-  drawPatchScope();
-  drawPatchWindow();
-}
-
-bool hitTestPatchTrackPrev(int16_t x, int16_t y) {
-  return inBox(x, y, kMargin, kPatchTrackRowY, kScreenSize / 2 - kMargin, 22);
-}
-bool hitTestPatchTrackNext(int16_t x, int16_t y) {
-  return inBox(x, y, kScreenSize / 2, kPatchTrackRowY, kScreenSize / 2 - kMargin, 22);
-}
-
-// Renvoie -1 (aucun), sinon l'index du PARAMETRE LOGIQUE touche (0..
-// patchVolRow(track) inclus -- base+extra+VOLUME, tous appariees 2 par
-// ligne desormais ; SLOT garde ses propres hitTest*() dedies, voir
-// plus bas, jamais couvert ici). Un tap SELECTIONNE seulement
-// (2026-09-19, plus d'edition +/- directe au tactile -- voir le
-// commentaire de patchRowVisible()) : l'edition se fait ensuite a la
-// croix (A maintenu + HAUT/BAS), meme reflexe que partout ailleurs.
-int8_t hitTestPatchParam(int16_t x, int16_t y) {
-  const uint8_t t = static_cast<uint8_t>(patchTrack);
-  const uint8_t volRow = patchVolRow(t);
-  const int16_t rowH = static_cast<int16_t>(kPatchRowH - 4);
-  for (uint8_t i = 0; i <= volRow; ++i) {
-    int16_t rowY, rowX, rowW;
-    if (!patchRowVisible(i, rowY, rowX, rowW)) {
-      continue;
-    }
-    if (inBox(x, y, rowX, rowY, rowW, rowH)) {
-      return static_cast<int8_t>(i);
-    }
-  }
-  return -1;
-}
-
-// Applique `delta` a la valeur du parametre actuellement selectionne
-// (selectedPatchRow) et l'envoie au Teensy -- factorise le 2026-09-19
-// ("on devrait pouvoir changer les valeurs ... en maintenant A et en
-// pressant droite/gauche [en plus de haut/bas]") : A+GAUCHE/DROITE
-// edite desormais la valeur exactement comme A+HAUT/BAS (meme
-// fonction, meme convention de signe -- DROITE/HAUT = +1). Reprend
-// mot pour mot la logique qui vivait avant dans le gestionnaire de
-// croix (voir son commentaire pour le detail de chaque cas : VOLUME/
-// SLOT/ligne fixe-ou-DXP/ligne EXTRA).
-void patchApplyDelta(uint8_t t, int delta) {
-  const uint8_t volRow = patchVolRow(t);
-  const uint8_t slotRow = patchSlotRow(t);
-  if (selectedPatchRow == static_cast<int8_t>(volRow)) {
-    uint8_t &vol = trackVolume[t];
-    vol = static_cast<uint8_t>(constrain(static_cast<int>(vol) + delta, 0, 127));
-    drawVolRow();
-    sendPatchVol();
-  } else if (selectedPatchRow == static_cast<int8_t>(slotRow)) {
-    patchSlot = static_cast<uint8_t>((static_cast<int>(patchSlot) + delta + kPatchSlotCount) % kPatchSlotCount);
-    drawPatchSlotRow();
-  } else if (selectedPatchRow < 6 && patchRowActive(t, static_cast<uint8_t>(selectedPatchRow))) {
-    uint8_t &param = patchParamRef(t, static_cast<uint8_t>(selectedPatchRow));
-    param = static_cast<uint8_t>(constrain(static_cast<int>(param) + delta, 0,
-                                             static_cast<int>(patchRowMax(t, static_cast<uint8_t>(selectedPatchRow)))));
-    drawPatchRow(static_cast<uint8_t>(selectedPatchRow));
-    if (selectedPatchRow < 2) {
-      sendPatchFilt();
-    } else if (trackEngine[t] == az2::kEngineDexed) {
-      sendPatchDxp(static_cast<uint8_t>(selectedPatchRow - 2));
-    } else {
-      sendPatchEnv();
-    }
-  } else if (selectedPatchRow >= 6) {
-    const uint8_t extraIdx = static_cast<uint8_t>(selectedPatchRow - 6);
-    uint8_t &val = patchExtraVal[t][extraIdx];
-    val = static_cast<uint8_t>(
-        constrain(static_cast<int>(val) + delta, 0, static_cast<int>(patchExtraMax(t, extraIdx))));
-    drawPatchExtraRow(static_cast<uint8_t>(selectedPatchRow));
-    sendPatchExtra(t, extraIdx);
-  }
-}
-
-// ---------------------------------------------------------------------
-// Page SONG -- chainage de patterns, demande le 2026-09-16 ("c'est
-// plus un sequenceur qui peut nous permettre d'assembler des patterns,
-// mais il faut un tracker complet"). Modele Polyend (le plus simple des
-// 3 references etudiees, voir AZ2_TRACKER_ETUDE.md) : chaque case de
-// song = un pattern ENTIER (8 pistes ensemble). MODE bascule boucle
-// simple (comportement d'origine) / song ; LONGUEUR (0-16) ; grille de
-// 16 cases, touche pour cycler le pattern assigne (0-7).
-// ---------------------------------------------------------------------
-constexpr int16_t kSongModeRowY = 90;
-constexpr int16_t kSongRowH = 38;
-constexpr int16_t kSongBtnW = 70;
-constexpr int16_t kSongLenRowY = kSongModeRowY + kSongRowH + 8;
-constexpr int16_t kSongGridTop = kSongLenRowY + kSongRowH + 12;
-constexpr uint8_t kSongCols = 4;
-constexpr int16_t kSongSlotGap = 6;
-constexpr int16_t kSongSlotW = (kScreenSize - 2 * kMargin - (kSongCols - 1) * kSongSlotGap) / kSongCols;
-constexpr int16_t kSongSlotH = 56;
-
-void drawSongModeRow() {
-  gfx->fillRect(kMargin, kSongModeRowY, kScreenSize - 2 * kMargin, kSongRowH, RGB565_BLACK);
-  gfx->drawRect(kMargin, kSongModeRowY, kScreenSize - 2 * kMargin, kSongRowH, kFaint);
-  gfx->setTextSize(1);
-  gfx->setTextColor(kDim);
-  gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(kSongModeRowY + 3));
-  gfx->print("MODE (toucher pour changer)");
-  gfx->setTextSize(2);
-  gfx->setTextColor(songMode ? kPalette[1] : RGB565_WHITE);
-  gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(kSongModeRowY + 16));
-  gfx->print(songMode ? "SONG" : "BOUCLE SIMPLE");
-}
-
-void drawSongLenRow() {
-  const int16_t minusX = kMargin;
-  const int16_t plusX = static_cast<int16_t>(kScreenSize - kMargin - kSongBtnW);
-  gfx->fillRect(kMargin, kSongLenRowY, kScreenSize - 2 * kMargin, kSongRowH, RGB565_BLACK);
-  gfx->drawRect(minusX, kSongLenRowY, kSongBtnW, kSongRowH, kFaint);
-  gfx->drawRect(plusX, kSongLenRowY, kSongBtnW, kSongRowH, kFaint);
-  gfx->setTextSize(2);
-  gfx->setTextColor(RGB565_WHITE);
-  gfx->setCursor(static_cast<int16_t>(minusX + 24), static_cast<int16_t>(kSongLenRowY + 6));
-  gfx->print('-');
-  gfx->setCursor(static_cast<int16_t>(plusX + 24), static_cast<int16_t>(kSongLenRowY + 6));
-  gfx->print('+');
-  char buf[20];
-  snprintf(buf, sizeof(buf), "LONGUEUR: %d", songLen);
-  gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - 55), static_cast<int16_t>(kSongLenRowY + 10));
-  gfx->print(buf);
-}
-
-void songSlotRect(uint8_t i, int16_t &x, int16_t &y) {
-  const uint8_t col = static_cast<uint8_t>(i % kSongCols);
-  const uint8_t row = static_cast<uint8_t>(i / kSongCols);
-  x = static_cast<int16_t>(kMargin + col * (kSongSlotW + kSongSlotGap));
-  y = static_cast<int16_t>(kSongGridTop + row * (kSongSlotH + kSongSlotGap));
-}
-
-void drawSongSlot(uint8_t i) {
-  int16_t x, y;
-  songSlotRect(i, x, y);
-  const bool active = i < songLen;
-  const uint8_t patt = songPatterns[i];
-
-  gfx->fillRect(x, y, kSongSlotW, kSongSlotH, active ? kPalette[patt % kPaletteCount] : RGB565_BLACK);
-  gfx->drawRect(x, y, kSongSlotW, kSongSlotH, kFaint);
-
-  gfx->setTextSize(1);
-  gfx->setTextColor(active ? RGB565_BLACK : kDim);
-  char lbl[6];
-  snprintf(lbl, sizeof(lbl), "%02d", i);
-  gfx->setCursor(static_cast<int16_t>(x + 4), static_cast<int16_t>(y + 3));
-  gfx->print(lbl);
-
-  gfx->setTextSize(3);
-  gfx->setTextColor(active ? RGB565_BLACK : kFaint);
-  char buf[4];
-  if (active) {
-    snprintf(buf, sizeof(buf), "%d", patt);
-  } else {
-    snprintf(buf, sizeof(buf), "--");
-  }
-  gfx->setCursor(static_cast<int16_t>(x + kSongSlotW / 2 - 10), static_cast<int16_t>(y + kSongSlotH / 2 - 12));
-  gfx->print(buf);
-}
-
-void drawSongPage() {
-  drawSubHeader("SONG", kPalette[3]);
-  drawSongModeRow();
-  drawSongLenRow();
-  for (uint8_t i = 0; i < kSongLength; ++i) {
-    drawSongSlot(i);
-  }
-}
-
-bool hitTestSongMode(int16_t x, int16_t y) {
-  return inBox(x, y, kMargin, kSongModeRowY, kScreenSize - 2 * kMargin, kSongRowH);
-}
-bool hitTestSongLenMinus(int16_t x, int16_t y) {
-  return inBox(x, y, kMargin, kSongLenRowY, kSongBtnW, kSongRowH);
-}
-bool hitTestSongLenPlus(int16_t x, int16_t y) {
-  return inBox(x, y, static_cast<int16_t>(kScreenSize - kMargin - kSongBtnW), kSongLenRowY, kSongBtnW, kSongRowH);
-}
-int8_t hitTestSongSlot(int16_t x, int16_t y) {
-  for (uint8_t i = 0; i < kSongLength; ++i) {
-    int16_t sx, sy;
-    songSlotRect(i, sx, sy);
-    if (inBox(x, y, sx, sy, kSongSlotW, kSongSlotH)) {
-      return static_cast<int8_t>(i);
-    }
-  }
-  return -1;
-}
-
-// ---------------------------------------------------------------------
-// Page LIENS SERIE -- journal des dernieres lignes Teensy
-// ---------------------------------------------------------------------
-void drawLinksPage() {
-  drawSubHeader("LIENS SERIE", kPalette[3]);
-  gfx->setTextSize(1);
-  for (uint8_t i = 0; i < logCount; ++i) {
-    gfx->setTextColor(i == 0 ? RGB565_WHITE : kDim);
-    gfx->setCursor(kMargin, static_cast<int16_t>(90 + i * 20));
-    gfx->print(logBuf[i]);
-  }
-}
-
-// ---------------------------------------------------------------------
-// Page JEUX -- emulation Game Boy / Game Boy Color (Walnut-CGB, voir
-// gb_emulator.h/.cpp et docs/AZ2_EMULATION_JEUX.md). GBA ecarte du v0
-// (~20fps mesures sur ESP32-S3 avec les coeurs existants, pas fluide).
-// Liste des ROM /games/*.gb(c) rescannee en entrant sur la page (voir
-// goTo()) -- toucher une ligne la charge et demarre le jeu ; ROM
-// dechargee en quittant la page. PAS DE SON pour l'instant (voir
-// gb_emulator.cpp).
-// ---------------------------------------------------------------------
-char gbRomNames[kGbMaxRoms][kGbRomNameLen];
-uint8_t gbRomCount = 0;
-
-constexpr int16_t kRomRowTop = 90;
-constexpr int16_t kRomRowH = 40;
-// Pagination (demande 2026-09-17, "met en plus des trucs cool ... genre
-// 20 30") -- avant, toutes les ROM trouvees etaient dessinees a la
-// suite sans defilement : au-dela de ~9-10 lignes, le reste tombait
-// hors ecran (480px de haut) et devenait injoignable au tactile. 8
-// lignes visibles (meme convention que les 8 pistes ailleurs dans
-// l'appli) + une rangee de pagination en bas si besoin.
-constexpr uint8_t kRomVisibleRows = 8;
-constexpr int16_t kRomListH = kRomVisibleRows * kRomRowH;
-constexpr int16_t kRomPageY = kRomRowTop + kRomListH + 6;
-constexpr int16_t kRomPageH = 32;
-constexpr int16_t kRomPageBtnW = 60;
-uint8_t gbRomScroll = 0;  // index (absolu) de la 1ere ROM visible
-// Selection croix (demande 2026-09-17 : "je peux pas selectionner une
-// rom avec la croix et A/B et avoir le nom en surbrillance") -- avant,
-// la croix sur cette page etait toujours routee vers gbSetButton() (les
-// boutons du JEU), meme quand aucune ROM n'etait encore chargee, donc
-// aucune navigation clavier possible dans la liste.
-int8_t selectedRomIndex = 0;
-
-void romRowRect(uint8_t visibleRow, int16_t &y) {
-  y = static_cast<int16_t>(kRomRowTop + visibleRow * kRomRowH);
-}
-
-// index : absolu dans gbRomNames[], pas relatif a la page -- ne dessine
-// rien s'il tombe hors de la fenetre visible actuelle (gbRomScroll).
-void drawRomRow(uint8_t index) {
-  if (index < gbRomScroll || index >= gbRomScroll + kRomVisibleRows) {
-    return;
-  }
-  int16_t y;
-  romRowRect(static_cast<uint8_t>(index - gbRomScroll), y);
-  gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, kRomRowH - 6, RGB565_BLACK);
-  gfx->drawRect(kMargin, y, kScreenSize - 2 * kMargin, kRomRowH - 6, kPalette[index % kPaletteCount]);
-  if (index == selectedRomIndex) {
-    // Ligne selectionnee par la croix -- meme convention que la piste
-    // choisie sur la page MOTEURS (contour blanc double).
-    gfx->drawRect(static_cast<int16_t>(kMargin + 1), static_cast<int16_t>(y + 1), kScreenSize - 2 * kMargin - 2,
-                  kRomRowH - 8, RGB565_WHITE);
-  }
-  gfx->setTextSize(2);
-  gfx->setTextColor(RGB565_WHITE);
-  gfx->setCursor(static_cast<int16_t>(kMargin + 10), static_cast<int16_t>(y + 6));
-  gfx->print(gbRomNames[index]);
-}
-
-// Renvoie l'index ABSOLU (pas relatif a la page) de la ROM touchee.
-int8_t hitTestRomRow(int16_t x, int16_t y) {
-  if (x < kMargin || x > kScreenSize - kMargin) {
-    return -1;
-  }
-  const uint8_t visibleCount = static_cast<uint8_t>(min<int>(kRomVisibleRows, gbRomCount - gbRomScroll));
-  for (uint8_t row = 0; row < visibleCount; ++row) {
-    int16_t rowY;
-    romRowRect(row, rowY);
-    if (y >= rowY && y < rowY + (kRomRowH - 6)) {
-      return static_cast<int8_t>(gbRomScroll + row);
-    }
-  }
-  return -1;
-}
-
-void drawRomPageRow() {
-  if (gbRomCount <= kRomVisibleRows) {
-    return;  // tout tient sur une page, pas besoin de pagination
-  }
-  const int16_t prevX = kMargin;
-  const int16_t nextX = static_cast<int16_t>(kScreenSize - kMargin - kRomPageBtnW);
-  gfx->fillRect(kMargin, kRomPageY, kScreenSize - 2 * kMargin, kRomPageH, RGB565_BLACK);
-  gfx->drawRect(prevX, kRomPageY, kRomPageBtnW, kRomPageH, kFaint);
-  gfx->drawRect(nextX, kRomPageY, kRomPageBtnW, kRomPageH, kFaint);
-  gfx->setTextSize(2);
-  gfx->setTextColor(gbRomScroll > 0 ? RGB565_WHITE : kFaint);
-  gfx->setCursor(static_cast<int16_t>(prevX + 14), static_cast<int16_t>(kRomPageY + 8));
-  gfx->print('<');
-  gfx->setTextColor(gbRomScroll + kRomVisibleRows < gbRomCount ? RGB565_WHITE : kFaint);
-  gfx->setCursor(static_cast<int16_t>(nextX + 14), static_cast<int16_t>(kRomPageY + 8));
-  gfx->print('>');
-
-  char buf[16];
-  const uint8_t lastShown = static_cast<uint8_t>(min<int>(gbRomScroll + kRomVisibleRows, gbRomCount));
-  snprintf(buf, sizeof(buf), "%d-%d / %d", gbRomScroll + 1, lastShown, gbRomCount);
-  gfx->setTextSize(1);
-  gfx->setTextColor(kDim);
-  gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - 30), static_cast<int16_t>(kRomPageY + 12));
-  gfx->print(buf);
-}
-
-bool hitTestRomPagePrev(int16_t x, int16_t y) {
-  return inBox(x, y, kMargin, kRomPageY, kRomPageBtnW, kRomPageH);
-}
-bool hitTestRomPageNext(int16_t x, int16_t y) {
-  return inBox(x, y, static_cast<int16_t>(kScreenSize - kMargin - kRomPageBtnW), kRomPageY, kRomPageBtnW, kRomPageH);
-}
-
-// Sampler GB (demande 2026-09-15 "sampler la Game Boy", precisee
-// 2026-09-17 "REC/STOP, capter les sons de l'emulateur") -- encodeur 0
-// (Volume, bouton integre) demarre/arrete l'enregistrement cote Teensy
-// (REC:START/REC:STOP, voir handleRecCommand() dans src_teensy/
-// az2_audio/main.cpp -- ecrit un .wav sur LA SD DU TEENSY, pas celle-ci).
-// gbRecActive suit l'etat CONFIRME par l'echo REC:STARTED:/REC:STOPPED:
-// (voir handleTeensyLine()), jamais mis a jour de facon optimiste --
-// meme convention que FILT:/ENV:, important ici car le Teensy peut
-// aussi arreter tout seul (garde-fou 30s, voir kGbRecMaxSamples).
-// Phase 1 : demarrer/arreter + indicateur seulement. PAS FAIT (voir
-// AZ2_FEUILLE_DE_ROUTE.md) : vue d'onde en direct, decoupage tactile,
-// decoupage automatique, clavier de nom personnalise.
-bool gbRecActive = false;
-
-void drawGbRecIndicator() {
-  if (!gbIsLoaded()) {
-    return;
-  }
-  constexpr int16_t kRecX = kMargin;
-  constexpr int16_t kRecY = 16;
-  gfx->fillRect(kRecX, kRecY, 90, 12, RGB565_BLACK);
-  if (gbRecActive) {
-    // Pas de glyphe rond (police GFX par defaut non verifiee pour ca) --
-    // "REC" seul en rouge suffit a etre visible/comprehensible.
-    gfx->setTextSize(1);
-    gfx->setTextColor(RGB565_RED);
-    gfx->setCursor(kRecX, kRecY);
-    gfx->print("REC");
-  }
-}
-
-void drawRetroPage() {
-  if (gbIsLoaded()) {
-    // Le rendu du jeu lui-meme vient de gbBlitLine(), appelee par
-    // gbRunFrame() depuis loop() -- ici on affiche juste le cadre/titre
-    // une fois, le jeu se dessine par-dessus a chaque frame.
-    gfx->fillScreen(RGB565_BLACK);
-    gfx->setTextSize(1);
-    gfx->setTextColor(kDim);
-    gfx->setCursor(kMargin, 4);
-    gfx->print(gbRomTitle());
-    // Rappel discret : C quitte la partie (voir le commentaire pres de
-    // "il faut un truc pour sortir de l'emulateur", 2026-09-17).
-    gfx->setCursor(static_cast<int16_t>(kScreenSize - kMargin - 48), 4);
-    gfx->print("C:MENU");
-    drawGbRecIndicator();
-    return;
-  }
-
-  if (gbRomCount > 0) {
-    drawSubHeader("JEUX - choisis une ROM", kPalette[2]);
-    if (gbRomScroll > 0 && gbRomScroll >= gbRomCount) {
-      gbRomScroll = 0;  // securite si la liste a change depuis (rescan)
-    }
-    // Efface toute la zone de liste avant de redessiner -- la derniere
-    // page peut avoir moins de lignes que kRomVisibleRows, sinon
-    // d'anciennes lignes resteraient affichees en dessous.
-    gfx->fillRect(kMargin, kRomRowTop, kScreenSize - 2 * kMargin, kRomListH, RGB565_BLACK);
-    const uint8_t lastVisible = static_cast<uint8_t>(min<int>(gbRomScroll + kRomVisibleRows, gbRomCount));
-    for (uint8_t i = gbRomScroll; i < lastVisible; ++i) {
-      drawRomRow(i);
-    }
-    drawRomPageRow();
-    return;
-  }
-
-  drawSubHeader("JEUX", kPalette[2]);
-  const char *lines[] = {
-      "Aucune ROM trouvee dans /games.",
-      "",
-      "Moteur : Walnut-CGB (GB/GBC, licence MIT).",
-      "GBA ecarte : ~20fps mesures sur ESP32-S3,",
-      "pas fluide avec les coeurs existants.",
-      "",
-      "Pour jouer : carte SD formatee FAT32,",
-      "dossier /games/, un ou plusieurs fichiers",
-      ".gb ou .gbc dedans (ROM homebrew/domaine",
-      "public -- pas de ROM commerciale fournie).",
-      "",
-      "Son du jeu route vers le DAC du Teensy.",
-      "",
-      "Retouche cette page pour reessayer",
-      "de scanner la carte SD.",
-  };
-  gfx->setTextSize(1);
-  gfx->setTextColor(RGB565_WHITE);
-  for (uint8_t i = 0; i < sizeof(lines) / sizeof(lines[0]); ++i) {
-    gfx->setCursor(kMargin, static_cast<int16_t>(90 + i * 20));
-    gfx->print(lines[i]);
-  }
-}
-
-// ---------------------------------------------------------------------
-// Page A PROPOS
-// ---------------------------------------------------------------------
-void drawAboutPage() {
-  drawSubHeader("A PROPOS", kPalette[4]);
-  const char *lines[] = {
-      "AZ-2 groovebox",
-      "Ecran: VIEWE UEDX48480040E-WB (GC9503V)",
-      "Tactile: FT6336U",
-      "Audio: Teensy 4.1, 5 moteurs, 8 pistes, FX maitre",
-      "Controle: croix + 4 boutons + 3 encodeurs rotatifs",
-      "",
-      "Manette Game Boy (page JEUX) :",
-      "  Croix = D-pad, A/B = A/B",
-      "  Encodeur 1 (bouton) = SELECT",
-      "  Encodeur 2 (bouton) = START",
-      "  C = quitter la partie (D libre)",
-      "",
-      "Build: screen_esp, 2026-09-17",
-  };
-  gfx->setTextSize(1);
-  gfx->setTextColor(RGB565_WHITE);
-  for (uint8_t i = 0; i < sizeof(lines) / sizeof(lines[0]); ++i) {
-    gfx->setCursor(kMargin, static_cast<int16_t>(90 + i * 22));
-    gfx->print(lines[i]);
-  }
-}
-
-// ---------------------------------------------------------------------
-// Page CONFIGURATION -- reglage de l'ecran de veille "Matrix" (demande le
-// 2026-09-15). 0 = desactive. Reglage en RAM uniquement pour l'instant
-// (pas de sauvegarde flash/NVS -- revient a la valeur par defaut au
-// redemarrage, a ajouter plus tard si besoin).
-// ---------------------------------------------------------------------
-// Remis a 60 (1 minute, demande explicitement) -- le vrai probleme
-// n'etait pas la duree mais un bug qui relancait la veille juste apres
-// l'avoir quittee (voir le commentaire pres de "nowForIdle" dans loop()).
-// Reste reglable en direct depuis cette page.
-uint16_t screensaverTimeoutSec = 60;
-constexpr uint16_t kScreensaverStepSec = 10;
-constexpr uint16_t kScreensaverMaxSec = 600;
-
-constexpr int16_t kCfgRowY = 140;
-constexpr int16_t kCfgRowH = 50;
-constexpr int16_t kCfgBtnW = 60;
-constexpr int16_t kScaleRowY = kCfgRowY + kCfgRowH + 40;
-constexpr int16_t kSwingRowY = kScaleRowY + kCfgRowH + 40;
-
-// Swing/shuffle (SWING:, priorite #3 de la liste indispensable) -- 0-127,
-// pas de granularite fine cote Teensy (4 ticks/pas max, voir
-// handleSwingCommand() et le commentaire de swingAmount la-bas) donc pas
-// a pas de 32 ici (127/4) pour que chaque appui +/- change reellement
-// quelque chose d'audible plutot que des crans invisibles.
-uint8_t swingValue = 0;
-constexpr uint8_t kSwingStep = 32;
-
-// Gammes (demande 2026-09-15, "on ajoute les gammes accord") --
-// verrouillage a la saisie : quand on transpose une note (croix HAUT/
-// BAS sur un pas, grille ou vue detail du sequenceur), on saute
-// directement a la prochaine note DANS LA GAMME au lieu d'un simple
-// demi-ton. CHROMATIQUE (toutes les notes, index 0) = comportement
-// d'origine, donc rien ne change tant qu'on n'a pas touche ce reglage.
-// Racine fixee a C pour cette premiere version (pas de transposition de
-// tonalite editable) -- juste le TYPE de gamme.
-const uint8_t kScaleChromatic[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
-const uint8_t kScaleMajor[] = {0, 2, 4, 5, 7, 9, 11};
-const uint8_t kScaleMinor[] = {0, 2, 3, 5, 7, 8, 10};
-const uint8_t kScaleMajorPenta[] = {0, 2, 4, 7, 9};
-const uint8_t kScaleMinorPenta[] = {0, 3, 5, 7, 10};
-const uint8_t *const kScales[] = {kScaleChromatic, kScaleMajor, kScaleMinor, kScaleMajorPenta, kScaleMinorPenta};
-const uint8_t kScaleLens[] = {12, 7, 7, 5, 5};
-const char *const kScaleNames[] = {"CHROMATIQUE (C)", "MAJEUR (C)", "MINEUR (C)", "PENTA MAJ (C)", "PENTA MIN (C)"};
-constexpr uint8_t kScaleCount = sizeof(kScaleNames) / sizeof(kScaleNames[0]);
-uint8_t currentScaleIndex = 0;
-
-bool noteInScale(uint8_t note) {
-  const uint8_t pc = static_cast<uint8_t>(note % 12);
-  const uint8_t *scale = kScales[currentScaleIndex];
-  for (uint8_t i = 0; i < kScaleLens[currentScaleIndex]; ++i) {
-    if (scale[i] == pc) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// Avance/recule (dir = +1/-1) jusqu'a la prochaine note DANS LA GAMME,
-// au maximum un tour chromatique complet (12 demi-tons) -- si rien
-// trouve avant d'atteindre une borne (0/127), garde la note de depart.
-uint8_t nextNoteInScale(uint8_t note, int8_t dir) {
-  int n = static_cast<int>(note);
-  for (uint8_t i = 0; i < 12; ++i) {
-    n += dir;
-    if (n < 0 || n > 127) {
-      break;
-    }
-    if (noteInScale(static_cast<uint8_t>(n))) {
-      return static_cast<uint8_t>(n);
-    }
-  }
-  return note;
-}
-
-void drawConfigPage() {
-  drawSubHeader("CONFIGURATION", kPalette[3]);
-
-  const int16_t minusX = kMargin;
-  const int16_t plusX = static_cast<int16_t>(kScreenSize - kMargin - kCfgBtnW);
-
-  gfx->fillRect(kMargin, kCfgRowY, kScreenSize - 2 * kMargin, kCfgRowH, RGB565_BLACK);
-  gfx->drawRect(minusX, kCfgRowY, kCfgBtnW, kCfgRowH, kFaint);
-  gfx->drawRect(plusX, kCfgRowY, kCfgBtnW, kCfgRowH, kFaint);
-  gfx->setTextSize(3);
-  gfx->setTextColor(RGB565_WHITE);
-  gfx->setCursor(static_cast<int16_t>(minusX + 20), static_cast<int16_t>(kCfgRowY + 10));
-  gfx->print('-');
-  gfx->setCursor(static_cast<int16_t>(plusX + 20), static_cast<int16_t>(kCfgRowY + 10));
-  gfx->print('+');
-
-  char buf[24];
-  if (screensaverTimeoutSec == 0) {
-    snprintf(buf, sizeof(buf), "DESACTIVE");
-  } else {
-    snprintf(buf, sizeof(buf), "%u s", screensaverTimeoutSec);
-  }
-  gfx->setTextSize(2);
-  gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - 50), static_cast<int16_t>(kCfgRowY + 15));
-  gfx->print(buf);
-
-  gfx->setTextSize(1);
-  gfx->setTextColor(kDim);
-  gfx->setCursor(kMargin, static_cast<int16_t>(kCfgRowY - 20));
-  gfx->print("ECRAN DE VEILLE (MATRIX) APRES");
-
-  // Gamme (voir noteInScale()/nextNoteInScale() -- demande 2026-09-15,
-  // "on ajoute les gammes accord"). CHROMATIQUE (index 0) = comportement
-  // d'origine (aucune restriction), donc rien ne change tant qu'on n'y
-  // touche pas.
-  gfx->fillRect(kMargin, kScaleRowY, kScreenSize - 2 * kMargin, kCfgRowH, RGB565_BLACK);
-  gfx->drawRect(minusX, kScaleRowY, kCfgBtnW, kCfgRowH, kFaint);
-  gfx->drawRect(plusX, kScaleRowY, kCfgBtnW, kCfgRowH, kFaint);
-  gfx->setTextSize(3);
-  gfx->setTextColor(RGB565_WHITE);
-  gfx->setCursor(static_cast<int16_t>(minusX + 20), static_cast<int16_t>(kScaleRowY + 10));
-  gfx->print('-');
-  gfx->setCursor(static_cast<int16_t>(plusX + 20), static_cast<int16_t>(kScaleRowY + 10));
-  gfx->print('+');
-  gfx->setTextSize(2);
-  gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - 70), static_cast<int16_t>(kScaleRowY + 15));
-  gfx->print(kScaleNames[currentScaleIndex]);
-  gfx->setTextSize(1);
-  gfx->setTextColor(kDim);
-  gfx->setCursor(kMargin, static_cast<int16_t>(kScaleRowY - 20));
-  gfx->print("GAMME (croix/pas du sequenceur en tonalite de C)");
-
-  // Swing (voir swingValue plus haut) -- 0 = pas de swing (comportement
-  // d'origine).
-  gfx->fillRect(kMargin, kSwingRowY, kScreenSize - 2 * kMargin, kCfgRowH, RGB565_BLACK);
-  gfx->drawRect(minusX, kSwingRowY, kCfgBtnW, kCfgRowH, kFaint);
-  gfx->drawRect(plusX, kSwingRowY, kCfgBtnW, kCfgRowH, kFaint);
-  gfx->setTextSize(3);
-  gfx->setTextColor(RGB565_WHITE);
-  gfx->setCursor(static_cast<int16_t>(minusX + 20), static_cast<int16_t>(kSwingRowY + 10));
-  gfx->print('-');
-  gfx->setCursor(static_cast<int16_t>(plusX + 20), static_cast<int16_t>(kSwingRowY + 10));
-  gfx->print('+');
-  snprintf(buf, sizeof(buf), "%3d", swingValue);
-  gfx->setTextSize(2);
-  gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - 30), static_cast<int16_t>(kSwingRowY + 15));
-  gfx->print(buf);
-  gfx->setTextSize(1);
-  gfx->setTextColor(kDim);
-  gfx->setCursor(kMargin, static_cast<int16_t>(kSwingRowY - 20));
-  gfx->print("SWING (0 = aucun)");
-}
-
-bool hitTestCfgMinus(int16_t x, int16_t y) {
-  return inBox(x, y, kMargin, kCfgRowY, kCfgBtnW, kCfgRowH);
-}
-bool hitTestCfgPlus(int16_t x, int16_t y) {
-  return inBox(x, y, static_cast<int16_t>(kScreenSize - kMargin - kCfgBtnW), kCfgRowY, kCfgBtnW, kCfgRowH);
-}
-
-bool hitTestScaleMinus(int16_t x, int16_t y) {
-  return inBox(x, y, kMargin, kScaleRowY, kCfgBtnW, kCfgRowH);
-}
-bool hitTestScalePlus(int16_t x, int16_t y) {
-  return inBox(x, y, static_cast<int16_t>(kScreenSize - kMargin - kCfgBtnW), kScaleRowY, kCfgBtnW, kCfgRowH);
-}
-
-bool hitTestSwingMinus(int16_t x, int16_t y) {
-  return inBox(x, y, kMargin, kSwingRowY, kCfgBtnW, kCfgRowH);
-}
-bool hitTestSwingPlus(int16_t x, int16_t y) {
-  return inBox(x, y, static_cast<int16_t>(kScreenSize - kMargin - kCfgBtnW), kSwingRowY, kCfgBtnW, kCfgRowH);
-}
-
-// ---------------------------------------------------------------------
-// Page PROJET -- sauvegarde/chargement du morceau ENTIER (patterns,
-// song, tempo/division, gamme, moteur+patch+filtre+ADSR par piste),
-// pas juste un patch (voir savePatchSlot()/loadPatchSlot() plus haut,
-// qui ne couvrent qu'UNE piste). Demande 2026-09-16 ("qu'on puisse
-// creer facilement un projet, le sauvegarder"), priorite #2 de la liste
-// d'ameliorations indispensables (AZ2_BENCHMARK_CONCURRENCE.md) --
-// implementee le 2026-09-17. Fichier texte simple sur la SD de l'ESP32
-// (meme carte que les ROM/patches), format ligne par ligne, lisible a
-// l'oeil -- "fichiers ouverts" comme le reste du projet. Toutes les
-// donnees existent DEJA cote ESP32 (miroir local de l'etat du
-// sequenceur) -- sauvegarder = juste les ecrire ; charger = les
-// relire ET renvoyer les commandes normales au Teensy (meme principe
-// que loadPatchSlot(), a plus grande echelle).
-// ---------------------------------------------------------------------
-constexpr uint8_t kProjectSlotCount = 4;
-uint8_t projectSlot = 0;
-constexpr int16_t kProjectSlotY = 120;
-constexpr int16_t kProjectSlotH = 40;
-constexpr int16_t kProjectBtnW = (kScreenSize - 2 * kMargin) / 3;
-
-void drawProjectPage() {
-  drawSubHeader("PROJET", kPalette[3]);
-
-  const int16_t saveX = static_cast<int16_t>(kMargin + kProjectBtnW);
-  const int16_t loadX = static_cast<int16_t>(kMargin + 2 * kProjectBtnW);
-  gfx->fillRect(kMargin, kProjectSlotY, kScreenSize - 2 * kMargin, kProjectSlotH, RGB565_BLACK);
-  gfx->drawRect(kMargin, kProjectSlotY, kProjectBtnW, kProjectSlotH, kFaint);
-  gfx->drawRect(saveX, kProjectSlotY, kProjectBtnW, kProjectSlotH, kFaint);
-  gfx->drawRect(loadX, kProjectSlotY, kProjectBtnW, kProjectSlotH, kFaint);
-
-  gfx->setTextSize(2);
-  gfx->setTextColor(RGB565_WHITE);
-  char buf[12];
-  snprintf(buf, sizeof(buf), "SLOT %d", projectSlot);
-  gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(kProjectSlotY + 10));
-  gfx->print(buf);
-  gfx->setTextColor(kPalette[1 % kPaletteCount]);
-  gfx->setCursor(static_cast<int16_t>(saveX + 16), static_cast<int16_t>(kProjectSlotY + 10));
-  gfx->print("SAVE");
-  gfx->setTextColor(kPalette[2 % kPaletteCount]);
-  gfx->setCursor(static_cast<int16_t>(loadX + 16), static_cast<int16_t>(kProjectSlotY + 10));
-  gfx->print("LOAD");
-
-  gfx->setTextSize(1);
-  gfx->setTextColor(kDim);
-  const char *lines[] = {
-      "Sauvegarde TOUT le morceau : patterns,",
-      "chainage song, tempo/division, gamme,",
-      "moteur/patch/filtre/ADSR de chaque piste.",
-      "",
-      "4 emplacements -- /projects/N.proj sur",
-      "la carte SD de l'ecran.",
-  };
-  for (uint8_t i = 0; i < sizeof(lines) / sizeof(lines[0]); ++i) {
-    gfx->setCursor(kMargin, static_cast<int16_t>(kProjectSlotY + kProjectSlotH + 20 + i * 18));
-    gfx->print(lines[i]);
-  }
-}
-
-bool hitTestProjectSlotNum(int16_t x, int16_t y) {
-  return inBox(x, y, kMargin, kProjectSlotY, kProjectBtnW, kProjectSlotH);
-}
-bool hitTestProjectSlotSave(int16_t x, int16_t y) {
-  return inBox(x, y, static_cast<int16_t>(kMargin + kProjectBtnW), kProjectSlotY, kProjectBtnW, kProjectSlotH);
-}
-bool hitTestProjectSlotLoad(int16_t x, int16_t y) {
-  return inBox(x, y, static_cast<int16_t>(kMargin + 2 * kProjectBtnW), kProjectSlotY, kProjectBtnW, kProjectSlotH);
-}
-
-void saveProject(uint8_t slot) {
-  SD.mkdir("/projects");
-  char path[24];
-  snprintf(path, sizeof(path), "/projects/%d.proj", slot);
-
-  // Ecriture atomique (voir atomicSaveFile() plus haut, meme defaut P1
-  // signale par l'audit du 2026-09-19 que savePatchSlot()) -- un
-  // fichier projet est bien plus gros/long a ecrire qu'un patch, donc
-  // bien plus expose a une coupure en cours de route.
-  const bool ok = atomicSaveFile(path, [&](File &f) {
-    f.printf("BPM:%d\n", static_cast<int>(seqBpm + 0.5f));
-    f.printf("DIV:%d\n", seqStepsPerBeat);
-    f.printf("SCALE:%d\n", currentScaleIndex);
-    f.printf("SWING:%d\n", swingValue);
-    f.printf("SONGMODE:%d\n", songMode ? 1 : 0);
-    f.printf("SONGLEN:%d\n", songLen);
-    for (uint8_t i = 0; i < songLen; ++i) {
-      f.printf("SONGSET:%d:%d\n", i, songPatterns[i]);
-    }
-    for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
-      // Mute inclus (13e champ) mais PAS solo -- solo est un outil de
-      // monitoring live, pas une decision de composition (convention
-      // habituelle DAW/mixeurs : le solo ne survit pas a une
-      // sauvegarde).
-      f.printf("TRACK:%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", t, trackEngine[t], trackPatch[t], trackCutoff[t],
-               trackReso[t], trackAttack[t], trackDecay[t], trackSustain[t], trackRelease[t], trackAlgo[t],
-               trackFeedback[t], trackVolume[t], trackMuted[t] ? 1 : 0);
-    }
-    for (uint8_t p = 0; p < kPatternCount; ++p) {
-      for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
-        for (uint8_t s = 0; s < kSeqStepCount; ++s) {
-          // 10 champs depuis l'ajout de PROB/COND (2026-09-17, 9e/10e
-          // champs) -- voir loadProject() pour la lecture
-          // retro-compatible des fichiers a 8 champs (avant cet ajout).
-          f.printf("STEP:%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", p, t, s, seqStepOn[p][t][s] ? 1 : 0, seqStepNote[p][t][s],
-                   seqStepPatch[p][t][s], seqStepFx[p][t][s], seqStepFxVal[p][t][s], seqStepProb[p][t][s],
-                   seqStepCondition[p][t][s]);
-        }
-      }
-    }
-  });
-  if (!ok) {
-    Serial.print("PROJECT_SAVE_ERROR:");
-    Serial.println(path);
-    return;
-  }
-  Serial.print("PROJECT_SAVED:");
-  Serial.println(path);
-}
-
-// Coupe une ligne "cle:reste" -- renvoie "reste" (String vide si pas de
-// ':'). Petit utilitaire local, le reste du fichier utilise deja ce
-// motif partout (indexOf(':') + substring()) mais ligne par ligne ici
-// simplifie la lecture du fichier projet.
-String afterColon(const String &line) {
-  const int i = line.indexOf(':');
-  return (i < 0) ? String("") : line.substring(i + 1);
-}
-
-void loadProject(uint8_t slot) {
-  char path[24];
-  snprintf(path, sizeof(path), "/projects/%d.proj", slot);
-  File f = SD.open(path);
-  if (!f) {
-    Serial.print("PROJECT_LOAD_EMPTY:");
-    Serial.println(path);
-    return;
-  }
-
-  char msg[32];
-  // PAS static -- doit repartir de -1 a CHAQUE appel de loadProject(),
-  // sinon un second chargement dont le premier pattern coinciderait
+  } else i…8056 tokens truncated…mier pattern coinciderait
   // avec le dernier pattern du fichier precedent sauterait a tort le
   // PATTERN: initial (bug trouve a la relecture avant de flasher).
   int8_t lastPattern = -1;
@@ -4586,10 +3832,11 @@ constexpr int16_t kGbScaledW = 160 * 3;
 constexpr int16_t kGbScaledH = 144 * 3;
 constexpr int16_t kGbScreenTop = (kScreenSize - kGbScaledH) / 2;
 
-// Un SEUL draw16bitRGBBitmap() par ligne source (480x3 d'un coup) au
-// lieu de 3 -- demande le 2026-09-15 ("on a des sauts d'images, on peut
-// stabiliser"), moins d'appels = moins de surcharge par appel vers le
-// bus RGB parallele.
+// Le rendu est regroupe par bandes de 8 lignes GB : 160x8 pixels deviennent
+// un bloc 480x24. Cela ramene une image de 144 a 18 appels au pilote RGB,
+// sans recreer le grand framebuffer PSRAM 480x432 qui avait scintille sur
+// le vrai materiel. Le tampon de bande (~23 Kio) reste stable pendant
+// l'appel et n'exige aucune synchronisation de deux grands framebuffers.
 // [2026-09-18] Tentative de rendu "1 bloc PSRAM entier envoye a la fin
 // de l'image" essayee par une autre session IA le meme jour -- ANNULEE
 // : premier retour utilisateur sur le vrai materiel = "l'ecran
@@ -4602,20 +3849,30 @@ constexpr int16_t kGbScreenTop = (kScreenSize - kGbScaledH) / 2;
 // ("certaines animations ne s'affichent pas correctement, ex.
 // Prehistorik Man") -- accepte comme compromis connu, pas un bug AZ-2.
 void gbBlitLine(int line, const uint16_t *row) {
-  static uint16_t scaledBlock[kGbScaledW * 3];
+  constexpr int16_t kGbSourceRowsPerBand = 8;
+  constexpr int16_t kGbScaledRowsPerBand = kGbSourceRowsPerBand * 3;
+  static uint16_t scaledBand[kGbScaledW * kGbScaledRowsPerBand];
+  const int16_t sourceRowInBand = static_cast<int16_t>(line % kGbSourceRowsPerBand);
+  uint16_t *scaledRow = scaledBand + sourceRowInBand * 3 * kGbScaledW;
+
   for (int x = 0; x < 160; ++x) {
     const uint16_t c = row[x];
     const int16_t base = static_cast<int16_t>(x * 3);
-    scaledBlock[base] = c;
-    scaledBlock[base + 1] = c;
-    scaledBlock[base + 2] = c;
+    scaledRow[base] = c;
+    scaledRow[base + 1] = c;
+    scaledRow[base + 2] = c;
   }
   // Les 2 autres rangees de sortie sont identiques a la premiere.
-  memcpy(scaledBlock + kGbScaledW, scaledBlock, kGbScaledW * sizeof(uint16_t));
-  memcpy(scaledBlock + kGbScaledW * 2, scaledBlock, kGbScaledW * sizeof(uint16_t));
+  memcpy(scaledRow + kGbScaledW, scaledRow, kGbScaledW * sizeof(uint16_t));
+  memcpy(scaledRow + kGbScaledW * 2, scaledRow, kGbScaledW * sizeof(uint16_t));
 
-  const int16_t y = static_cast<int16_t>(kGbScreenTop + line * 3);
-  gfx->draw16bitRGBBitmap(0, y, scaledBlock, kGbScaledW, 3);
+  const bool bandComplete = sourceRowInBand == (kGbSourceRowsPerBand - 1) || line == 143;
+  if (bandComplete) {
+    const int16_t sourceBandStart = static_cast<int16_t>(line - sourceRowInBand);
+    const int16_t sourceRows = static_cast<int16_t>(sourceRowInBand + 1);
+    const int16_t y = static_cast<int16_t>(kGbScreenTop + sourceBandStart * 3);
+    gfx->draw16bitRGBBitmap(0, y, scaledBand, kGbScaledW, sourceRows * 3);
+  }
 }
 
 void setup() {
@@ -5113,22 +4370,19 @@ void loop() {
     }
   }
 
-  // Emulateur Game Boy (page JEUX, voir gb_emulator.h) : cadence CIBLE
-  // ~59,7 images/s (periode Game Boy reelle) tant qu'une ROM est chargee
-  // et que cette page est affichee. Le "if >= 17" est un LIMITEUR, pas
-  // un ordonnanceur -- il ne fait que plafonner la cadence, il ne
-  // rattrape jamais un retard. Si l'ESP32-S3 met plus de 17ms pour
-  // finir un tour de loop() (rendu + emulation + reseau), la cadence
-  // REELLE tombe sous 59,7 im/s -- le jeu ET sa musique (meme horloge
-  // interne) tournent alors au ralenti. Compteur ajoute le 2026-09-17
-  // (retour utilisateur : "c'est cote vitesse qu'on est pas bon" sur
-  // les jeux GBC) pour MESURER la cadence reelle au lieu de deviner --
-  // imprime "GB:FPS:<n>" une fois par seconde pendant une partie.
-  // Frequence GB reelle : ~59,7275 Hz, soit 16 742 us. L'ancien
-  // intervalle entier de 17 ms plafonnait deja la machine a 58,8 FPS.
+  // Emulateur Game Boy : une frame dure exactement 70224 cycles a
+  // 4 194 304 Hz, soit 16 742,706298 us. Garder seulement 16 742 us
+  // cree une petite derive permanente ; l'accumulateur de reste ci-dessous
+  // alterne 16 742/16 743 us et conserve la cadence native sur la duree.
   constexpr uint32_t kGbFramePeriodUs = 16742;
+  constexpr uint32_t kGbFrameRemainder = 2962432;
+  constexpr uint32_t kGbClockHz = 4194304;
   static uint32_t nextGbFrameUs = 0;
+  static uint32_t gbFrameFraction = 0;
   static uint32_t gbFrameCount = 0;
+  static uint32_t gbFrameTimeTotalUs = 0;
+  static uint32_t gbFrameTimeMaxUs = 0;
+  static uint32_t gbMissedFrames = 0;
   static uint32_t gbFpsWindowStartMs = 0;
   if (currentScreen == Screen::Retro && gbIsLoaded() && !screensaverActive) {
     const uint32_t nowUs = micros();
@@ -5136,24 +4390,61 @@ void loop() {
       nextGbFrameUs = nowUs;
     }
     if (static_cast<int32_t>(nowUs - nextGbFrameUs) >= 0) {
+      const uint32_t frameStartUs = micros();
       gbRunFrame();
+      const uint32_t frameDurationUs = micros() - frameStartUs;
       ++gbFrameCount;
+      gbFrameTimeTotalUs += frameDurationUs;
+      if (frameDurationUs > gbFrameTimeMaxUs) {
+        gbFrameTimeMaxUs = frameDurationUs;
+      }
+
       nextGbFrameUs += kGbFramePeriodUs;
-      // Ne pas lancer une rafale pour rattraper un gros retard : UI et
-      // commandes doivent rester reactives.
-      if (static_cast<int32_t>(nowUs - nextGbFrameUs) > static_cast<int32_t>(kGbFramePeriodUs * 2)) {
-        nextGbFrameUs = nowUs + kGbFramePeriodUs;
+      gbFrameFraction += kGbFrameRemainder;
+      if (gbFrameFraction >= kGbClockHz) {
+        ++nextGbFrameUs;
+        gbFrameFraction -= kGbClockHz;
+      }
+
+      // Un retard superieur a deux frames n'est pas cache : on le compte,
+      // puis on resynchronise pour conserver les commandes/UI reactives.
+      // La cible de qualification impose que ce compteur reste a zero.
+      const uint32_t afterFrameUs = micros();
+      const int32_t lateUs = static_cast<int32_t>(afterFrameUs - nextGbFrameUs);
+      if (lateUs > static_cast<int32_t>(kGbFramePeriodUs * 2)) {
+        gbMissedFrames += static_cast<uint32_t>(lateUs) / 16743U;
+        nextGbFrameUs = afterFrameUs + kGbFramePeriodUs;
+        gbFrameFraction = kGbFrameRemainder;
       }
     }
-    if (now - gbFpsWindowStartMs >= 1000) {
-      Serial.print("GB:FPS:");
-      Serial.println(gbFrameCount);
+    const uint32_t fpsElapsedMs = now - gbFpsWindowStartMs;
+    if (fpsElapsedMs >= 1000) {
+      const uint32_t fpsX100 = (fpsElapsedMs > 0)
+                                   ? static_cast<uint32_t>((static_cast<uint64_t>(gbFrameCount) * 100000ULL) /
+                                                           fpsElapsedMs)
+                                   : 0;
+      const uint32_t frameAvgUs = (gbFrameCount > 0) ? gbFrameTimeTotalUs / gbFrameCount : 0;
+      Serial.print("GB:PERF:fps_x100=");
+      Serial.print(fpsX100);
+      Serial.print(":frame_us_avg=");
+      Serial.print(frameAvgUs);
+      Serial.print(":frame_us_max=");
+      Serial.print(gbFrameTimeMaxUs);
+      Serial.print(":missed=");
+      Serial.println(gbMissedFrames);
       gbFrameCount = 0;
+      gbFrameTimeTotalUs = 0;
+      gbFrameTimeMaxUs = 0;
+      gbMissedFrames = 0;
       gbFpsWindowStartMs = now;
     }
   } else {
     nextGbFrameUs = 0;
+    gbFrameFraction = 0;
     gbFrameCount = 0;
+    gbFrameTimeTotalUs = 0;
+    gbFrameTimeMaxUs = 0;
+    gbMissedFrames = 0;
     gbFpsWindowStartMs = now;
   }
 
