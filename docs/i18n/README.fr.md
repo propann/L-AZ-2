@@ -59,3 +59,11 @@ Qualifier les sauvegardes/RTC avec coupures de courant, mesurer FPS/audio sur le
 ## Contribution et licences
 
 Les signalements utiles précisent le SHA, la carte, les étapes de reproduction, les logs et une ROM de test libre. Ne pas publier de ROM commerciales, de sauvegardes personnelles ni de secrets. Voir [CONTRIBUTING.md](../../CONTRIBUTING.md), [LICENSE](../../LICENSE) et [licences tierces](../AZ2_LICENCES.md).
+
+## Écran de veille — styles et commandes
+
+Dans **CONFIGURATION**, choisissez entre **Matrix** (caractères classiques), **Pluie de notes** (notes issues des pas du pattern courant), **8 pistes** (une colonne par piste du tracker) et **Dashboard** (BPM, pattern, pas, état PLAY/STOP, moteurs et notes des huit pistes). Les notes et événements proviennent du miroir de tracker déjà tenu sur l'ESP32, sans ajouter de trafic UART pour l'animation.
+
+**Croix :** HAUT/BAS choisissent la ligne de réglage ; GAUCHE/DROITE modifient le style, le délai, la gamme ou le swing. **A :** valide le choix en passant à la valeur suivante. **Tactile :** touchez les flèches de la même ligne pour effectuer exactement la même action. Un bouton ou une touche réveille l'écran. Le style et le délai sont conservés dans la mémoire NVS de l'ESP32 ; un délai de zéro désactive la veille.
+
+La veille ne suspend pas le tracker ni l'audio. Son rendu doit encore être vérifié sur l'écran réel pour la fluidité, la lisibilité et l'absence d'interférence avec le jeu GB.
