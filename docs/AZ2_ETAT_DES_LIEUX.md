@@ -1,5 +1,78 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-19 -- page MIXER (nouvelle) + encodeurs 1/2 CONTEXTUELS +
+pistes affichees 1-8 + bouton SAUVER dans le tracker -- teste sur le
+vrai materiel]**
+
+Suite de plusieurs retours enchaines le meme soir :
+
+- **"le mixeur doit gerer le volume de toutes les voix"** : nouvelle
+  page MIXER (`Screen::Mixer`, ajoutee au menu categorie Musique) -- 8
+  barres verticales façon table de mixage, une par piste, hauteur
+  proportionnelle a `trackVolume[]`. GAUCHE/DROITE choisit la piste,
+  HAUT/BAS regle DIRECTEMENT son volume (pas besoin de maintenir A --
+  metaphore fader). B = mute, D = solo (indicateur M/S sous la barre
+  selectionnee). Reutilise entierement l'etat deja partage
+  (`trackVolume[]`/`trackMuted[]`/`trackSoloed[]`), aucun nouveau
+  protocole cote Teensy.
+- **"on va [aux encodeurs 1/2] attribuer une couleur et les inclure a
+  chaque fois dans l'application ... on les utilise pas assez"** :
+  jusqu'ici l'encodeur 1 pilotait TOUJOURS le reverb wet global et
+  l'encodeur 2 le delay wet global, cote Teensy, sans aucune
+  conscience de l'ecran affiche. Bascule : l'encodeur 0 (VOLUME) reste
+  CABLE DIRECT (role fixe, "le volume il bouge pas"), les encodeurs
+  1/2 n'appliquent plus rien eux-memes cote Teensy -- ils envoient
+  juste leur `POT:` brut (0-127, position ABSOLUE accumulee, pas un
+  delta), et c'est desormais l'ESP32 qui decide quoi en faire selon
+  `currentScreen` (et l'etat local de la page, ex. `selectedPatchRow`)
+  puis renvoie la commande correspondante (VOL:/FILT:/FX:/...).
+  Indicateur visuel ajoute (`drawEncoderHint()`) : 2 couleurs FIXES
+  (orange = encodeur 1, cyan = encodeur 2) affichees en haut a droite
+  de l'en-tete avec un libelle qui change selon la page/le parametre
+  au focus -- "--" grise quand l'encodeur n'a rien a faire sur l'ecran
+  courant. Cable pour l'instant sur 2 pages : MIXER (encodeur 1 =
+  piste, encodeur 2 = volume) et PATCH (encodeur 1 = valeur GAUCHE de
+  la ligne visuelle selectionnee, encodeur 2 = valeur DROITE -- acces
+  direct aux 2 reglages d'une meme ligne sans avoir a les
+  selectionner un par un a la croix). Pas de "soft takeover" en v1
+  (reaffecter un encodeur a un nouveau parametre peut faire "sauter"
+  sa valeur au premier mouvement) -- simplicite assumee, comme pour
+  les effets par piste plus haut.
+- **Bug reel trouve+corrige en testant** : le mute de la page MIXER
+  etait d'abord sur le bouton A -- exactement le bouton "confirmer" du
+  menu qui vient de faire `goTo(Screen::Mixer)` DANS LE MEME appui
+  (`currentScreen` change avant que le bloc mute/solo ne s'execute,
+  plus bas dans la meme fonction) : entrer sur la page mettait
+  aussitot la piste 0 en mute par accident. Deplace sur B (libre sur
+  cette page). A noter pour la suite : cette classe de bug (un
+  gestionnaire ecran-specifique qui reagit a tort a l'evenement qui
+  vient de faire `goTo()` VERS cet ecran) peut exister ailleurs, pas
+  audite systematiquement.
+- **"les pistes c'est mieux de les numeroter de 1 a 8 ... plus
+  musicien, la c'est trop informatique"** : tous les affichages de
+  numero de piste (page PATCH/MOTEURS/SEQUENCEUR/MIXER, indication
+  AUDIO "pose sur piste X") montrent desormais piste+1 -- UNIQUEMENT a
+  l'affichage, le protocole/les tableaux internes restent 0-7 comme
+  avant (aucun risque de casser un fichier projet/patch existant).
+- **"dans le tracker il manque le bouton sauvegarder"** : 6e bouton du
+  panneau lateral du tracker, "SAUVER" -- sauvegarde tout le morceau
+  (`saveProject()`, meme fonction que la page PROJET) dans
+  l'emplacement PROJET actuellement choisi, sans quitter le tracker.
+  Pas teste (tactile uniquement, pas simulable comme la croix/les
+  boutons -- meme fonction eprouvee que le bouton SAVE de la page
+  PROJET, donc faible risque).
+- **Nouvelle commande de test `SIMPOT:<0-2>:<0-127>`** (Teensy, meme
+  esprit que SIMNAV:/SIMBTN:) -- injecte un `POT:` directement sur
+  Serial1, seul moyen d'automatiser un test d'encodeur (aucun
+  encodeur physique pilotable depuis un script).
+
+Compile propre (`screen_esp`, `master_teensy`, `native`), 9 tests
+natifs au vert. Valide sur le vrai materiel via SIMNAV:/SIMBTN:/
+SIMPOT: : navigation MIXER, mute/solo (bug A/B trouve et corrige en
+testant), encodeur 1 -> `POT:1:100` -> piste choisie, encodeur 2 ->
+`POT:2:50` -> `VOL:6:50` envoye correctement pour la piste choisie
+par l'encodeur 1 juste avant.
+
 **[2026-09-19 -- effets DEDIES par piste (bitcrusher + delay courte) --
 reverb/delay COMPLETEMENT independantes par piste abandonne (teste : ne
 rentre pas en RAM), 12/16 pistes abandonne aussi (garde 8) -- teste sur

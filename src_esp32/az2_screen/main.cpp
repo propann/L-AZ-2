@@ -196,7 +196,7 @@ bool inBox(int16_t x, int16_t y, int16_t bx, int16_t by, int16_t bw, int16_t bh)
 // ---------------------------------------------------------------------
 // Etat partage entre les pages / le lien Teensy
 // ---------------------------------------------------------------------
-enum class Screen : uint8_t { Menu, Controls, Audio, Sequencer, Engines, Retro, Config, Links, About, Patch, Song, Project };
+enum class Screen : uint8_t { Menu, Controls, Audio, Sequencer, Engines, Retro, Config, Links, About, Patch, Song, Project, Mixer };
 Screen currentScreen = Screen::Menu;
 // "Retour" (2026-09-19, "il faut pas que ca revienne aux menu general
 // il faut que ca revienne d'un etage seulement") -- UN SEUL niveau
@@ -274,6 +274,38 @@ bool hitBack(int16_t x, int16_t y) {
   return inBox(x, y, 0, 0, 90, 50);
 }
 
+// Indication visuelle de ce que controlent les 2 encodeurs
+// "reglables" (index 1 et 2 -- l'encodeur 0/VOLUME garde un role FIXE,
+// voir le commentaire d'updateEncoders() cote Teensy) sur l'ecran
+// actuellement affiche -- demande 2026-09-19 ("on va leur attribuer
+// une couleur et les inclure a chaque fois dans l'application ... on
+// les utilise pas assez"). Couleur FIXE par encodeur (les 2 memes
+// couleurs partout ou ce petit indicateur apparait) : l'utilisateur
+// apprend "orange = encodeur 1, cyan = encodeur 2" une seule fois,
+// seul le LIBELLE change selon la page/le parametre au focus.
+// `label == nullptr` -> "--" en gris : cet encodeur n'a pas de role
+// sur cet ecran (position stable, pas d'element qui disparait).
+constexpr uint16_t kEnc1Color = RGB565(255, 140, 20);  // orange
+constexpr uint16_t kEnc2Color = RGB565(60, 220, 255);  // cyan
+void drawEncoderHint(uint8_t slot, const char *label) {
+  const uint16_t color = (slot == 0) ? kEnc1Color : kEnc2Color;
+  constexpr int16_t sw = 9;
+  constexpr int16_t y = 14;
+  const int16_t x = static_cast<int16_t>(kScreenSize - kMargin - (slot == 0 ? 168 : 78));
+  gfx->fillRect(x, y, sw, sw, RGB565_BLACK);  // efface le libelle precedent (largeur variable)
+  gfx->fillRect(static_cast<int16_t>(x - 2), static_cast<int16_t>(y - 2),
+                static_cast<int16_t>((slot == 0 ? 168 : 78) - 4), static_cast<int16_t>(sw + 4), RGB565_BLACK);
+  gfx->fillRect(x, y, sw, sw, color);
+  gfx->setTextSize(1);
+  gfx->setTextColor(label ? RGB565_WHITE : kFaint);
+  gfx->setCursor(static_cast<int16_t>(x + sw + 4), static_cast<int16_t>(y + 1));
+  gfx->print(label ? label : "--");
+}
+void drawEncoderHints(const char *label1, const char *label2) {
+  drawEncoderHint(0, label1);
+  drawEncoderHint(1, label2);
+}
+
 // ---------------------------------------------------------------------
 // Page Menu -- reorganisee en 4 cadres (MUSIQUE/JEUX/CONFIG/DOC) le
 // 2026-09-15 ("on est trop charge, on fait 4 cadre reglage avec tout ce
@@ -308,6 +340,7 @@ constexpr MenuItem kMenuItems[] = {
     {"SEQUENCEUR", "programmer les 16 pas", Screen::Sequencer, MenuCat::Musique},
     {"MOTEURS", "moteur + patch par piste", Screen::Engines, MenuCat::Musique},
     {"PATCH", "filtre + ADSR + forme d'onde", Screen::Patch, MenuCat::Musique},
+    {"MIXER", "volume de toutes les pistes", Screen::Mixer, MenuCat::Musique},
     {"SONG", "chainer les patterns", Screen::Song, MenuCat::Musique},
     {"PROJET", "sauvegarder / charger tout le morceau", Screen::Project, MenuCat::Musique},
     {"AUDIO", "jouer le Teensy depuis l'ecran", Screen::Audio, MenuCat::Musique},
@@ -635,7 +668,8 @@ extern int8_t selectedSeqStep;
 void drawAudioPage() {
   char title[48];
   if (padEditsStep) {
-    snprintf(title, sizeof(title), "AUDIO - pose sur piste %d pas %d (D)", selectedSeqTrack, selectedSeqStep);
+    // piste +1 (2026-09-19, "plus musicien") -- affichage seulement.
+    snprintf(title, sizeof(title), "AUDIO - pose sur piste %d pas %d (D)", selectedSeqTrack + 1, selectedSeqStep);
   } else {
     snprintf(title, sizeof(title), "AUDIO - touche pour jouer (D=poser sur pas)");
   }
@@ -953,7 +987,7 @@ void drawTrkTrackRow() {
   gfx->setTextSize(2);
   gfx->setTextColor(kPalette[selectedSeqTrack % kPaletteCount]);
   char buf[16];
-  snprintf(buf, sizeof(buf), "< PISTE %d >", selectedSeqTrack);
+  snprintf(buf, sizeof(buf), "< PISTE %d >", selectedSeqTrack + 1);  // +1 : affichage "plus musicien"
   gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - 55), kTrkTrackRowY);
   gfx->print(buf);
 }
@@ -1074,7 +1108,7 @@ constexpr int16_t kTrkSideH = kSeqStepCount * (kDetailRowH + kDetailRowGap);
 // la page correspondante pour la piste du tracker actuellement
 // affichee (sauf METRONOME, une simple bascule, et EFFET qui reste
 // dans le tracker mais amene le focus croix sur la colonne FX).
-constexpr uint8_t kTrkSideBtnCount = 5;
+constexpr uint8_t kTrkSideBtnCount = 6;
 constexpr int16_t kTrkSideBtnGap = 4;
 constexpr int16_t kTrkSideBtnH = (kTrkSideH - (kTrkSideBtnCount - 1) * kTrkSideBtnGap) / kTrkSideBtnCount;
 
@@ -1113,6 +1147,14 @@ void drawTrkSidePanel() {
   drawTrkSideBtn(2, kPalette[2], false, "EFFET");
   drawTrkSideBtn(3, kPalette[5], false, "CLAVIER");
   drawTrkSideBtn(4, metronomeOn ? kPalette[3] : kFaint, metronomeOn, "METRO");
+  // 2026-09-19, "dans le tracker il manque le bouton sauvegarder" --
+  // sauvegarde tout le morceau (voir saveProject()) dans l'emplacement
+  // PROJET actuellement choisi (projectSlot, meme emplacement que la
+  // page PROJET -- pas un 2e systeme de slots), sans quitter le
+  // tracker. Rempli en vert un court instant apres l'appui (voir le
+  // hitTest correspondant plus bas) -- seul retour visuel disponible,
+  // la sauvegarde elle-meme reste quasi instantanee.
+  drawTrkSideBtn(5, RGB565(60, 200, 90), false, "SAUVER");
 }
 
 void drawSeqDetailPage() {
@@ -1253,7 +1295,7 @@ void drawEngTrackRow() {
   gfx->setTextSize(2);
   gfx->setTextColor(kPalette[selectedEngineTrack % kPaletteCount]);
   char buf[16];
-  snprintf(buf, sizeof(buf), "< PISTE %d >", selectedEngineTrack);
+  snprintf(buf, sizeof(buf), "< PISTE %d >", selectedEngineTrack + 1);  // +1 : affichage "plus musicien"
   gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - 55), kEngTrackRowY);
   gfx->print(buf);
 }
@@ -1754,7 +1796,7 @@ void drawPatchTrackRow() {
   gfx->setTextSize(2);
   gfx->setTextColor(kPalette[patchTrack % kPaletteCount]);
   char buf[16];
-  snprintf(buf, sizeof(buf), "< PISTE %d >", patchTrack);
+  snprintf(buf, sizeof(buf), "< PISTE %d >", patchTrack + 1);  // +1 : affichage "plus musicien"
   gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - 55), kPatchTrackRowY);
   gfx->print(buf);
 }
@@ -2270,8 +2312,59 @@ void redrawPatchLogicalRow(uint8_t track, uint8_t row) {
   }
 }
 
+// Ligne LOGIQUE controlee par l'encodeur `slot` (0=encodeur1, 1=
+// encodeur2) etant donne la selection croix actuelle -- les 2
+// encodeurs "reglables" agissent sur les 2 valeurs de la ligne
+// VISUELLE actuellement selectionnee (voir patchVisualRow()), meme
+// quand une seule des deux est "selectionnee" par la croix (voir
+// selectedPatchRow) : acces tactile direct aux 2 valeurs d'un coup,
+// complement naturel du reglage croix (2026-09-19, "les 2 [encodeurs]
+// peuvent servir aux reglages de parametres ... on les utilise pas
+// assez"). -1 si cet encodeur n'a rien a controler sur la ligne
+// actuelle (ex: encodeur 2 sur SLOT, ou sur une ligne dont la colonne
+// droite n'existe pas).
+int8_t patchEncoderLogicalRow(uint8_t t, uint8_t slot) {
+  const uint8_t volRow = patchVolRow(t);
+  const uint8_t slotRow = patchSlotRow(t);
+  const int16_t visualRow = patchVisualRow(t, static_cast<uint8_t>(selectedPatchRow));
+  if (visualRow == patchVisualRow(t, slotRow)) {
+    return (slot == 0) ? static_cast<int8_t>(slotRow) : -1;
+  }
+  const int8_t left = static_cast<int8_t>(visualRow * 2);
+  const int8_t right = static_cast<int8_t>(visualRow * 2 + 1);
+  if (slot == 0) {
+    return left;
+  }
+  return (right <= static_cast<int8_t>(volRow)) ? right : -1;
+}
+
+const char *patchEncoderLabel(uint8_t t, uint8_t slot) {
+  const int8_t row = patchEncoderLogicalRow(t, slot);
+  if (row < 0) {
+    return nullptr;
+  }
+  const uint8_t volRow = patchVolRow(t);
+  const uint8_t slotRow = patchSlotRow(t);
+  if (static_cast<uint8_t>(row) == volRow) {
+    return "VOLUME";
+  }
+  if (static_cast<uint8_t>(row) == slotRow) {
+    return "SLOT";
+  }
+  if (row < 6) {
+    return patchRowLabel(t, static_cast<uint8_t>(row));
+  }
+  return patchExtraLabel(t, static_cast<uint8_t>(row - 6));
+}
+
+void updatePatchEncoderHints() {
+  const uint8_t t = static_cast<uint8_t>(patchTrack);
+  drawEncoderHints(patchEncoderLabel(t, 0), patchEncoderLabel(t, 1));
+}
+
 void drawPatchPage() {
   drawSubHeader("PATCH", kPalette[4]);
+  updatePatchEncoderHints();
   drawPatchTrackRow();
   // Cadre du tracer dessine UNE fois ici -- drawPatchScope() (appelee a
   // chaque paquet SCOPE recu) ne touche plus que l'interieur, voir son
@@ -2351,6 +2444,103 @@ void patchApplyDelta(uint8_t t, int delta) {
     drawPatchExtraRow(static_cast<uint8_t>(selectedPatchRow));
     sendPatchExtra(t, extraIdx);
   }
+}
+
+// ---------------------------------------------------------------------
+// Page MIXER -- volume de TOUTES les pistes en un coup d'oeil (demande
+// 2026-09-19, "le mixeur doit gerer le volume de toutes les voix" --
+// jusqu'ici seule la ligne VOLUME de la page PATCH permettait de regler
+// UNE piste a la fois, il fallait changer de piste pour comparer/regler
+// les autres). 8 barres verticales façon table de mixage. Croix :
+// GAUCHE/DROITE choisit la piste, HAUT/BAS regle directement son volume
+// (pas besoin de maintenir A -- metaphore fader, geste le plus frequent
+// sur cette page). BTN:A = mute, BTN:D = solo (memes conventions que la
+// page MOTEURS pour SOLO). Encodeurs 1/2 CONTEXTUELS (2026-09-19, "on
+// va [leur] attribuer une couleur et les inclure a chaque fois dans
+// l'application ... on les utilise pas assez") : encodeur 1 = choisit
+// la piste, encodeur 2 = son volume -- voir drawEncoderHints() et le
+// dispatch POT: plus bas.
+// ---------------------------------------------------------------------
+int8_t selectedMixerTrack = 0;
+constexpr int16_t kMixerBarTop = 90;
+constexpr int16_t kMixerBarBottom = 370;
+constexpr int16_t kMixerBarH = kMixerBarBottom - kMixerBarTop;
+constexpr int16_t kMixerColW = (kScreenSize - 2 * kMargin) / kSeqTrackCount;
+constexpr int16_t kMixerBarW = kMixerColW - 14;
+
+void drawMixerTrack(uint8_t t) {
+  const int16_t x = static_cast<int16_t>(kMargin + t * kMixerColW + (kMixerColW - kMixerBarW) / 2);
+  const bool selected = (selectedMixerTrack == static_cast<int8_t>(t));
+  const uint16_t accent = kPalette[t % kPaletteCount];
+
+  // Efface toute la colonne (barre + libelles au-dessus/en dessous) --
+  // simple et robuste, pas de redessin partiel "au bon endroit" (meme
+  // choix que drawPatchWindow()).
+  gfx->fillRect(static_cast<int16_t>(kMargin + t * kMixerColW), static_cast<int16_t>(kMixerBarTop - 16),
+                kMixerColW, static_cast<int16_t>(kMixerBarH + 40), RGB565_BLACK);
+
+  const int16_t fillH = static_cast<int16_t>((static_cast<int32_t>(trackVolume[t]) * kMixerBarH) / 127);
+  const int16_t fillY = static_cast<int16_t>(kMixerBarBottom - fillH);
+  const uint16_t barColor = trackMuted[t] ? kFaint : accent;
+  gfx->drawRect(x, kMixerBarTop, kMixerBarW, kMixerBarH, kFaint);
+  if (fillH > 0) {
+    gfx->fillRect(x, fillY, kMixerBarW, fillH, barColor);
+  }
+  if (selected) {
+    // Contour blanc epais (3px, meme convention que la page MOTEURS
+    // depuis "on fait un truc en surbrillance plus visible").
+    gfx->drawRect(static_cast<int16_t>(x - 3), static_cast<int16_t>(kMixerBarTop - 3),
+                  static_cast<int16_t>(kMixerBarW + 6), static_cast<int16_t>(kMixerBarH + 6), RGB565_WHITE);
+    gfx->drawRect(static_cast<int16_t>(x - 4), static_cast<int16_t>(kMixerBarTop - 4),
+                  static_cast<int16_t>(kMixerBarW + 8), static_cast<int16_t>(kMixerBarH + 8), RGB565_WHITE);
+  }
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(accent);
+  char buf[4];
+  // t+1 (2026-09-19, "les pistes c'est mieux de les numeroter de 1 a 8
+  // ... c'est plus musicien" -- affichage seulement, t reste 0-7 en
+  // interne/dans le protocole, voir trackVolume[]/VOL:).
+  snprintf(buf, sizeof(buf), "%d", t + 1);
+  gfx->setCursor(static_cast<int16_t>(x + kMixerBarW / 2 - 3), static_cast<int16_t>(kMixerBarTop - 14));
+  gfx->print(buf);
+
+  gfx->setTextColor(RGB565_WHITE);
+  char volBuf[5];
+  snprintf(volBuf, sizeof(volBuf), "%d", trackVolume[t]);
+  gfx->setCursor(static_cast<int16_t>(x + kMixerBarW / 2 - (trackVolume[t] >= 100 ? 9 : 6)),
+                 static_cast<int16_t>(kMixerBarBottom + 6));
+  gfx->print(volBuf);
+
+  if (trackMuted[t] || trackSoloed[t]) {
+    gfx->setTextColor(trackMuted[t] ? RGB565(200, 60, 60) : RGB565(60, 220, 90));
+    gfx->setCursor(static_cast<int16_t>(x + kMixerBarW / 2 - 3), static_cast<int16_t>(kMixerBarBottom + 18));
+    gfx->print(trackMuted[t] ? "M" : "S");
+  }
+}
+
+void drawMixerPage() {
+  drawSubHeader("MIXER", kPalette[5 % kPaletteCount]);
+  drawEncoderHints("PISTE", "VOLUME");
+  for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
+    drawMixerTrack(t);
+  }
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(kMargin, static_cast<int16_t>(kMixerBarBottom + 32));
+  gfx->print("B: mute   D: solo");
+}
+
+bool hitTestMixerTrack(int16_t x, int16_t y, uint8_t &track) {
+  if (y < kMixerBarTop - 16 || y > kMixerBarBottom + 30) {
+    return false;
+  }
+  const int col = (x - kMargin) / kMixerColW;
+  if (col < 0 || col >= static_cast<int>(kSeqTrackCount)) {
+    return false;
+  }
+  track = static_cast<uint8_t>(col);
+  return true;
 }
 
 // ---------------------------------------------------------------------
@@ -3259,6 +3449,7 @@ void drawScreen(Screen s) {
     case Screen::Patch: drawPatchPage(); return;
     case Screen::Song: drawSongPage(); return;
     case Screen::Project: drawProjectPage(); return;
+    case Screen::Mixer: drawMixerPage(); return;
   }
 }
 
@@ -3724,6 +3915,36 @@ void handleTeensyLine(const String &line) {
               patchApplyDelta(t, (index == 3) ? 1 : -1);
             }
           }
+          // Les encodeurs 1/2 suivent la ligne VISUELLE selectionnee
+          // (voir patchEncoderLogicalRow()) -- met a jour leur libelle a
+          // chaque mouvement croix, que la selection ait change de
+          // ligne ou juste de piste/valeur (peu couteux, un redessin de
+          // texte).
+          if (!screensaverActive) {
+            updatePatchEncoderHints();
+          }
+        }
+        // Page MIXER (2026-09-19, "le mixeur doit gerer le volume de
+        // toutes les voix") : GAUCHE/DROITE choisit la piste, HAUT/BAS
+        // regle DIRECTEMENT son volume (pas besoin de maintenir A --
+        // metaphore fader, le geste le plus frequent sur cette page,
+        // voir aussi l'encodeur 2 pour la meme action -- dispatch
+        // POT: plus bas).
+        if (pressed && currentScreen == Screen::Mixer) {
+          if (index == 2 || index == 3) {
+            selectedMixerTrack = static_cast<int8_t>(
+                (selectedMixerTrack + (index == 3 ? 1 : kSeqTrackCount - 1)) % kSeqTrackCount);
+            drawMixerPage();
+          } else if (index == 0 || index == 1) {
+            const uint8_t t = static_cast<uint8_t>(selectedMixerTrack);
+            const int delta = (index == 0) ? 1 : -1;
+            uint8_t &vol = trackVolume[t];
+            vol = static_cast<uint8_t>(constrain(static_cast<int>(vol) + delta, 0, 127));
+            char msg[16];
+            snprintf(msg, sizeof(msg), "VOL:%d:%d", t, vol);
+            sendToTeensy(msg);
+            drawMixerTrack(t);
+          }
         }
       }
     }
@@ -3892,6 +4113,32 @@ void handleTeensyLine(const String &line) {
         sendToTeensy(msg);
         drawEngRow(t);
       }
+      // Page MIXER (2026-09-19, "le mixeur doit gerer le volume de
+      // toutes les voix") : B = mute, D = solo sur la piste
+      // actuellement selectionnee (GAUCHE/DROITE ou encodeur 1, voir le
+      // dispatch POT: plus bas) -- memes conventions que MUTE:/SOLO:
+      // partout ailleurs (Engines page notamment pour SOLO), avec cette
+      // fois un vrai indicateur visuel (M/S sous la barre, voir
+      // drawMixerTrack()). PAS le bouton A : bug reel trouve en testant
+      // -- A est le bouton "confirmer" du menu, qui vient de faire
+      // goTo(Screen::Mixer) DANS CE MEME appui (currentScreen a deja
+      // change avant que ce bloc ne s'execute plus bas dans la meme
+      // fonction) -- entrer sur la page mettait donc aussitot la piste 0
+      // en mute par accident. B est libre sur cette page (seulement pris
+      // par la page PATCH, voir plus bas).
+      if (pressed && currentScreen == Screen::Mixer && (letter == 'B' || letter == 'D')) {
+        const uint8_t t = static_cast<uint8_t>(selectedMixerTrack);
+        char msg[12];
+        if (letter == 'B') {
+          trackMuted[t] = !trackMuted[t];
+          snprintf(msg, sizeof(msg), "MUTE:%d:%d", t, trackMuted[t] ? 1 : 0);
+        } else {
+          trackSoloed[t] = !trackSoloed[t];
+          snprintf(msg, sizeof(msg), "SOLO:%d:%d", t, trackSoloed[t] ? 1 : 0);
+        }
+        sendToTeensy(msg);
+        drawMixerTrack(t);
+      }
     }
   } else if (line.startsWith("POT:")) {
     const int firstColon = line.indexOf(':');
@@ -3906,6 +4153,78 @@ void handleTeensyLine(const String &line) {
         }
         if (!screensaverActive) {
           drawPotToast(index);
+        }
+      }
+      // Encodeurs 1/2 CONTEXTUELS (2026-09-19, "on va leur attribuer une
+      // couleur et les inclure a chaque fois dans l'application ... on
+      // les utilise pas assez") -- l'encodeur 0/VOLUME garde son role
+      // fixe cote Teensy (voir updateEncoders()), celui-ci ne fait rien
+      // de plus ici. `slot` 0=encodeur1, 1=encodeur2 (voir
+      // drawEncoderHints()). Valeur ABSOLUE 0-127 (position accumulee
+      // cote Teensy, pas un delta) -- reaffecter un encodeur a un
+      // nouveau parametre peut donc faire "sauter" sa valeur au premier
+      // mouvement (pas de "soft takeover" en v1, simplicite demandee ce
+      // soir pour les effets par piste, meme esprit ici).
+      if (index == 1 || index == 2) {
+        const uint8_t slot = static_cast<uint8_t>(index - 1);
+        if (currentScreen == Screen::Mixer) {
+          if (slot == 0) {
+            const int track = (static_cast<int>(value) * kSeqTrackCount) / 128;
+            selectedMixerTrack = static_cast<int8_t>(constrain(track, 0, kSeqTrackCount - 1));
+            if (!screensaverActive) {
+              drawMixerPage();
+            }
+          } else {
+            const uint8_t t = static_cast<uint8_t>(selectedMixerTrack);
+            trackVolume[t] = value;
+            char msg[16];
+            snprintf(msg, sizeof(msg), "VOL:%d:%d", t, value);
+            sendToTeensy(msg);
+            if (!screensaverActive) {
+              drawMixerTrack(t);
+            }
+          }
+        } else if (currentScreen == Screen::Patch) {
+          const uint8_t t = static_cast<uint8_t>(patchTrack);
+          const int8_t row = patchEncoderLogicalRow(t, slot);
+          if (row >= 0) {
+            const uint8_t volRow = patchVolRow(t);
+            const uint8_t slotRow = patchSlotRow(t);
+            if (static_cast<uint8_t>(row) == volRow) {
+              trackVolume[t] = value;
+              sendPatchVol();
+              if (!screensaverActive) {
+                drawVolRow();
+              }
+            } else if (static_cast<uint8_t>(row) == slotRow) {
+              patchSlot = static_cast<uint8_t>((static_cast<uint32_t>(value) * kPatchSlotCount) / 128);
+              if (!screensaverActive) {
+                drawPatchSlotRow();
+              }
+            } else if (row < 6 && patchRowActive(t, static_cast<uint8_t>(row))) {
+              const uint8_t maxVal = patchRowMax(t, static_cast<uint8_t>(row));
+              uint8_t &param = patchParamRef(t, static_cast<uint8_t>(row));
+              param = static_cast<uint8_t>((static_cast<uint32_t>(value) * maxVal) / 127);
+              if (row < 2) {
+                sendPatchFilt();
+              } else if (trackEngine[t] == az2::kEngineDexed) {
+                sendPatchDxp(static_cast<uint8_t>(row - 2));
+              } else {
+                sendPatchEnv();
+              }
+              if (!screensaverActive) {
+                drawPatchRow(static_cast<uint8_t>(row));
+              }
+            } else if (row >= 6) {
+              const uint8_t extraIdx = static_cast<uint8_t>(row - 6);
+              const uint8_t maxVal = patchExtraMax(t, extraIdx);
+              patchExtraVal[t][extraIdx] = static_cast<uint8_t>((static_cast<uint32_t>(value) * maxVal) / 127);
+              sendPatchExtra(t, extraIdx);
+              if (!screensaverActive) {
+                drawPatchExtraRow(static_cast<uint8_t>(row));
+              }
+            }
+          }
         }
       }
     }
@@ -4799,6 +5118,16 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       char msg[12];
       snprintf(msg, sizeof(msg), "METRO:%d", metronomeOn ? 0 : 1);
       sendToTeensy(msg);
+    } else if (hitTestTrkSideBtn(5, x, y)) {
+      // SAUVER (2026-09-19, "dans le tracker il manque le bouton
+      // sauvegarder") -- meme emplacement PROJET que la page dediee
+      // (projectSlot), sauve tout le morceau sans quitter le tracker.
+      // Flash bref en vert plein comme seul retour visuel (voir
+      // drawTrkSideBtn(), pas de toast dedie pour l'instant -- la page
+      // PROJET elle-meme n'en a pas non plus, coherent).
+      drawTrkSideBtn(5, RGB565(60, 200, 90), true, "SAUVER");
+      saveProject(projectSlot);
+      drawTrkSideBtn(5, RGB565(60, 200, 90), false, "SAUVER");
     } else if (hitTestTrkPlay(x, y)) {
       sendToTeensy(seqPlaying ? az2::kStop : az2::kPlay);
     } else if (hitTestTrkBpm(x, y) >= 0) {
@@ -4914,6 +5243,7 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
         }
         redrawPatchLogicalRow(t, static_cast<uint8_t>(prevRow));
         redrawPatchLogicalRow(t, static_cast<uint8_t>(selectedPatchRow));
+        updatePatchEncoderHints();
       } else if (hitTestPatchSlotNum(x, y)) {
         patchSlot = static_cast<uint8_t>((patchSlot + 1) % kPatchSlotCount);
         drawPatchSlotRow();
@@ -4922,6 +5252,15 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       } else if (hitTestPatchSlotLoad(x, y)) {
         loadPatchSlot(patchSlot);
       }
+    }
+  } else if (currentScreen == Screen::Mixer) {
+    // Tap = SELECTIONNE seulement (meme convention que partout ce soir)
+    // -- l'edition du volume se fait ensuite a la croix (HAUT/BAS) ou a
+    // l'encodeur 2.
+    uint8_t track;
+    if (hitTestMixerTrack(x, y, track)) {
+      selectedMixerTrack = static_cast<int8_t>(track);
+      drawMixerPage();
     }
   } else if (currentScreen == Screen::Song) {
     if (hitTestSongMode(x, y)) {

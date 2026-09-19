@@ -2230,13 +2230,22 @@ void updateEncoders() {
     az2::printPot(Serial, i, encValue[i]);
     az2::printPot(Serial1, i, encValue[i]);
 
-    const float unit = static_cast<float>(encValue[i]) / 127.0f;
-    switch (i) {
-      case 0: masterVolume = unit; break;
-      case 1: reverbWet = unit; break;
-      case 2: delayWet = unit; break;
+    // Encodeur 0 (volume) reste CABLE DIRECT (2026-09-19, "le volume il
+    // bouge pas" -- role fixe, jamais reinterprete) : reagit meme si
+    // l'ESP32 est bloque/redemarre. Encodeurs 1/2 NE font plus rien ici
+    // directement depuis ce meme soir ("les 2 autres peuvent servir aux
+    // reglages de parametres ... on les utilise pas assez") -- leur
+    // POT: brut est toujours envoye ci-dessus, mais c'est desormais
+    // l'ESP32 qui DECIDE quoi en faire selon l'ecran affiche (piste du
+    // mixeur, parametre de patch selectionne, etc.) et renvoie la
+    // commande correspondante (VOL:/FILT:/FX:/CRUSH:/DELAY:...) --
+    // FX:reverb:/FX:delay: restent utilisables directement si l'ESP32
+    // choisit de les reaffecter au bus maitre sur certains ecrans (voir
+    // handleFxCommand()).
+    if (i == 0) {
+      masterVolume = static_cast<float>(encValue[i]) / 127.0f;
+      applyMasterMix();
     }
-    applyMasterMix();
   }
 }
 
@@ -2600,6 +2609,25 @@ void handleCommand(const String &line) {
     const char letter = line.charAt(idx1 + 1);
     const bool pressed = line.substring(idx2 + 1).toInt() != 0;
     az2::printBtn(Serial1, letter, pressed);
+    return;
+  }
+
+  // SIMPOT:<0-2>:<0-127> -- meme principe que SIMNAV:/SIMBTN: ci-dessus
+  // (2026-09-19, encodeurs 1/2 desormais contextuels cote ESP32) : injecte
+  // directement un POT: sur Serial1, sans passer par updateEncoders() ni
+  // le vrai cablage -- seul moyen de tester en automatise la reaction de
+  // l'ESP32 a un mouvement d'encodeur (aucun encodeur physique
+  // pilotable depuis un script).
+  if (line.startsWith("SIMPOT:")) {
+    const int idx1 = line.indexOf(':');
+    const int idx2 = line.indexOf(':', idx1 + 1);
+    if (idx1 < 0 || idx2 < 0) {
+      sendCommandError("SIMPOT", "MALFORMED");
+      return;
+    }
+    const uint8_t index = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+    const uint8_t value = static_cast<uint8_t>(constrain(line.substring(idx2 + 1).toInt(), 0, 127));
+    az2::printPot(Serial1, index, value);
     return;
   }
 }
