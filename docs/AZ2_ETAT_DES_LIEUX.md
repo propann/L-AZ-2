@@ -58,6 +58,15 @@ maintenant qu'on sait qu'il a plusieurs mux sous la main.
   RPI-RP2) malgre une veille de 40 minutes en tache de fond. Rien de ce
   chantier n'est verifie en reel.
 
+**Plan de cablage FIGE le 2026-09-19.** Le module LED est arrete :
+"Module de pilotage de matrice LED PWM 16x9 2946 IS31FL3731, interface
+I2C, compatible STEMMA QT / Qwiic" (Shenzhen Module Studio, AliExpress),
+a commander en DEUX exemplaires tant que la geometrie n'est pas tranchee.
+Reference et caracteristiques figees en section 9.1 de la feuille de
+cablage. Le chantier s'arrete la : rien n'est soude, le Pico n'est pas
+branche, le module n'est pas commande.
+
+Point d'entree de la branche : [AZ3_ETAT_DU_CHANTIER.md](AZ3_ETAT_DU_CHANTIER.md).
 Cablage : [AZ3_CABLAGE_PANNEAU.md](AZ3_CABLAGE_PANNEAU.md).
 Firmware : [AZ3_PANNEAU_PICO.md](AZ3_PANNEAU_PICO.md).
 

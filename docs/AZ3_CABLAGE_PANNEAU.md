@@ -2,7 +2,18 @@
 
 **Version :** V2, 19 septembre 2026
 **Branche :** `az3` · **Firmware :** `src_pico/`, environnement `ctrl_pico`
-**Statut :** plan complet, **rien de vérifié sur le vrai matériel**.
+
+> ### 🔒 PLAN FIGÉ le 2026-09-19
+>
+> Le brochage ci-dessous est arrêté. Rien n'est soudé, le Pico n'est pas
+> encore branché, le module LED n'est pas encore livré — **c'est le plan à
+> suivre le fer à souder en main**, pas une proposition ouverte.
+>
+> Toute modification ultérieure doit passer par `src_pico/az3_panel_config.h`
+> **et** par ce document, en même temps. Le firmware compile déjà contre ce
+> brochage.
+>
+> **Rien n'est vérifié sur le vrai matériel.** Voir §12.
 
 Référence unique pour câbler la façade de l'AZ-3. Remplace
 [AZ2_CABLAGE_PICO.md](AZ2_CABLAGE_PICO.md) (plan abandonné) et
@@ -311,17 +322,46 @@ Ce que le Teensy fait des messages reçus :
 
 ## 9. Liste de composants
 
-| Qté | Composant | Note |
+| Qté | Composant | État |
 |---:|---|---|
-| 1 | Raspberry Pi Pico (RP2040) | déjà là |
-| 1 | Matrice SparkFun 4×4 RGB | déjà là |
-| 2 | CD74HC4067 | **déjà soudés** — boutons + lignes |
-| 1 ou 2 | Module **IS31FL3731 « 2946 »** | driver nu, voir §5.1 |
-| 6 | Encodeur EC11 avec bouton | |
+| 1 | Raspberry Pi Pico (RP2040) | **à câbler** — jamais branché à ce jour |
+| 1 | Matrice SparkFun 4×4 RGB | en stock |
+| 2 | CD74HC4067 | en stock (plusieurs dispo) — boutons + lignes |
+| **2** | **Module IS31FL3731 « 2946 »** | **à commander**, voir ci-dessous |
+| 6 | Encodeur EC11 avec bouton | à vérifier en stock |
 | 4 | Bouton poussoir | PLAY / STOP / REC / SHIFT |
 | 4 | Résistance 10 kΩ | pull-ups des lignes de matrice (§4.2) |
 
 Aucune résistance pour les LED : le driver régule le courant lui-même.
+
+### 9.1 Module LED retenu — référence figée
+
+> **« Module de pilotage de matrice LED PWM 16x9 2946 IS31FL3731, interface
+> I2C, compatible STEMMA QT / Qwiic »**
+> — vendeur *Shenzhen Module Studio Co., Ltd*, AliExpress.
+
+Caractéristiques annoncées par la fiche produit, et ce qu'elles impliquent ici :
+
+| Annoncé | Conséquence pour l'AZ-3 |
+|---|---|
+| IS31FL3731, matrice PWM 16×9, jusqu'à 144 LED, 8 bits par canal | 48 LED nécessaires — large marge |
+| **Aucune résistance externe de limitation de courant requise** | c'est **la** chose que le CD74HC4067 ne savait pas faire |
+| Régulation globale du courant, annulation de diaphonie, sans scintillement | les trois couleurs auront enfin la même luminosité |
+| **2,7 – 5,5 V** | alimentation directe en 3,3 V, **aucun adaptateur de niveau** |
+| Adresse esclave configurable, plusieurs modules sur le même bus | deux modules = toujours 2 broches |
+| Connecteur JST SH 4 broches (STEMMA QT / Qwiic) | chaîner le 2ᵉ module = un câble, zéro soudure |
+| « rétroéclairage de claviers » cité comme usage type | c'est exactement notre cas |
+
+**Pourquoi deux et pas un** : voir §5.1. Tant que la datasheet n'a pas dit de
+quel côté sont les anodes, deux est la seule quantité qui ne peut pas être
+fausse — et dans le cas favorable le second sert de rechange.
+
+**À vérifier à la réception**, en une minute : que les broches `C1-C16` et
+`A1-A9` du driver soient bien **sorties sur connecteur**. Le connecteur Qwiic
+ne porte que l'I2C ; il faut aussi pouvoir atteindre le côté LED pour y
+brancher les 12 anodes et les 4 colonnes du pad. La mention « 2946 » (la
+référence du breakout Adafruit du même nom, qui est le driver nu) le laisse
+attendre, mais ça reste une inférence, pas une garantie du vendeur.
 
 ---
 

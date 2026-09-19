@@ -1,13 +1,19 @@
 # AZ-2 / AZ-3
 
-> **Branche `az3` — developpement en cours.** L'AZ-3 passe a **3 cerveaux**
-> en deportant TOUTES les commandes du Teensy vers un Pico dedie, et
-> ajoute un rack physique de moteurs audio. Voir
-> [docs/AZ3_CABLAGE_PANNEAU.md](docs/AZ3_CABLAGE_PANNEAU.md) (cablage de la
-> facade), [docs/AZ3_PANNEAU_PICO.md](docs/AZ3_PANNEAU_PICO.md) (firmware) et
-> [docs/AZ2_BUS_RACK_MOTEURS.md](docs/AZ2_BUS_RACK_MOTEURS.md) (rack).
-> **Rien n'est encore verifie sur le vrai materiel.** La description
-> ci-dessous reste celle de l'AZ-2 (branche `main`), qui fonctionne.
+> ## Branche `az3` -- developpement en cours
+>
+> L'AZ-3 passe a **3 cerveaux** en deportant TOUTES les commandes du Teensy
+> vers un Pico dedie, et ajoute un rack physique de moteurs audio.
+>
+> **Point d'entree : [docs/AZ3_ETAT_DU_CHANTIER.md](docs/AZ3_ETAT_DU_CHANTIER.md)**
+> -- ou on en est, et par ou reprendre.
+>
+> Plan de cablage **fige** le 2026-09-19 :
+> [docs/AZ3_CABLAGE_PANNEAU.md](docs/AZ3_CABLAGE_PANNEAU.md).
+>
+> **Rien n'est soude, rien n'est verifie sur le vrai materiel.** La
+> description ci-dessous reste celle de l'AZ-2 (branche `main`), qui, elle,
+> fonctionne.
 
 AZ-2 est une groovebox hardware modulaire a 2 cerveaux, orientee
 Game Boy/GBC : un **Teensy 4.1** pour tout le moteur audio temps reel
@@ -87,7 +93,9 @@ Detail complet : [docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md](docs/AZ2_ARCHITECTUR
 - [Portage MicroDexed-touch](docs/AZ2_PORTAGE_MICRODEXED_TOUCH.md)
 - [Feuille de route du moteur audio](docs/AZ2_FEUILLE_DE_ROUTE_MOTEUR.md)
 - [Architecture multi-moteurs et sampler](docs/AZ2_ARCHITECTURE_MULTI_MOTEURS.md)
-- [AZ-3 — câblage du panneau de contrôle](docs/AZ3_CABLAGE_PANNEAU.md)
+- [AZ-3 — état du chantier](docs/AZ3_ETAT_DU_CHANTIER.md) : point d'entrée
+  de la branche `az3`
+- [AZ-3 — câblage du panneau de contrôle](docs/AZ3_CABLAGE_PANNEAU.md) (figé)
 - [AZ-3 — firmware du panneau Pico](docs/AZ3_PANNEAU_PICO.md)
 - [Étude AZ-3 — rack de moteurs interchangeables](docs/AZ2_BUS_RACK_MOTEURS.md)
 - [Étude AZ-3 — flash des modules moteurs](docs/AZ2_FLASH_MODULES.md)
