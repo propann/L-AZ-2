@@ -3362,6 +3362,11 @@ void goTo(Screen s) {
 String teensyLine;
 
 void handleTeensyLine(const String &line) {
+  if (line == az2::kGbAudioV2Ready) {
+    gbSetAudioV2Ready(true);
+  } else if (line == "GBV2:DISABLED") {
+    gbSetAudioV2Ready(false);
+  }
   Serial.print("TEENSY:");
   Serial.println(line);
   teensyLinked = true;
@@ -4718,7 +4723,11 @@ void setup() {
   // large sans cout memoire notable (PSRAM/RAM disponibles ici).
   Serial1.setRxBufferSize(2048);
   Serial1.begin(az2::kControlBaud, SERIAL_8N1, kTeensyRxPin, kTeensyTxPin);
+  gbSetAudioV2Ready(false);
   sendToTeensy(az2::kHelloControl);
+  if (az2::kGbAudioV2PilotEnabled) {
+    sendToTeensy(az2::kGbAudioV2Query);
+  }
 
   Wire.begin(kTouchSdaPin, kTouchSclPin);
   Wire.setClock(400000);  // I2C fast mode: tactile plus reactif
