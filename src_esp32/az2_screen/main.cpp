@@ -3535,7 +3535,9 @@ char matrixRandomChar() {
 // Les caracteres et les notes viennent du miroir EXISTANT du tracker,
 // jamais d'une chaine decorative inventee ni d'un scan SD en animation.
 char trackerRainChar(uint8_t column, int16_t row) {
-  const uint8_t track = static_cast<uint8_t>(column % kSeqTrackCount);
+  const uint8_t track = static_cast<uint8_t>(
+      screensaverStyle == SaverStyle::EightTracks ? (column / 5) % kSeqTrackCount :
+      column % kSeqTrackCount);
   const uint8_t step = static_cast<uint8_t>(
       (static_cast<int>(seqCurrentStep) + static_cast<int>(row) + kSeqStepCount * 4) % kSeqStepCount);
   if (!seqStepOn[currentPattern][track][step]) return '-';
@@ -3614,9 +3616,10 @@ void screensaverStep() {
 
     const int16_t tailRow = static_cast<int16_t>(matrixDropRow[c] - kMatrixTrailLen);
     if (tailRow >= 0 && tailRow < kMatrixRows) {
-      gfx->setTextColor(RGB565_BLACK);
-      gfx->setCursor(x, static_cast<int16_t>(tailRow * kMatrixCharH));
-      gfx->print(' ');
+      // Un espace en mode texte transparent n'efface pas l'ancien glyphe :
+      // nettoyer physiquement la cellule du bout de la trainee.
+      gfx->fillRect(x, static_cast<int16_t>(tailRow * kMatrixCharH),
+                    kMatrixCharW, kMatrixCharH, RGB565_BLACK);
     }
 
     const int16_t trailRow = static_cast<int16_t>(matrixDropRow[c] - 1);
