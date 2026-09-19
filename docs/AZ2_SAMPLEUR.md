@@ -14,8 +14,7 @@ KARPLUS/ANALOG. Lecture PCM 16 bits mono avec suivi de note
 instrument de percussion) via `AudioPlaySampler`
 (`src_teensy/az2_audio/az2_sampler.h`).
 
-2 patches de depart, **embarques en FLASH** (pas encore charges depuis
-la carte SD -- voir plus bas) :
+2 patches de départ restent **embarqués en FLASH** ; un troisième patch dynamique `GB Capture` est désormais chargé depuis la carte SD vers la PSRAM (voir mise à jour 2026-09-19 plus bas) :
 
 | Index | Nom | Source | Duree | Note racine |
 | --- | --- | --- | --- | --- |
@@ -41,7 +40,8 @@ haut, et le readme MicroDexed-touch : "Sample Management from
 SD-CARD and PSRAM, samples can be loaded from SD-CARD to PSRAM during
 runtime") est de charger les samples depuis la carte SD du Teensy (
 slot physique dedie, voir `AZ2_CABLAGE_MASTER.md`) vers la PSRAM au
-demarrage ou a la demande. **Pas fait ce soir** : ca demande de
+demarrage ou a la demande. **La première implémentation SD → PSRAM est désormais présente pour le slot `GB Capture`**. Le texte historique ci-dessous décrit l'état initial avant cette intégration :
+
 deposer physiquement des fichiers sur la carte SD reelle inseree dans
 le Teensy, une etape materielle que je ne peux pas faire a distance --
 seul l'utilisateur peut copier des fichiers sur cette carte depuis un
@@ -93,3 +93,33 @@ SAMPLER, se comporte comme KARPLUS/ANALOG de ce point de vue). A
 enrichir si le besoin s'en fait sentir (voir la structure `EXP:`/`BXP:`
 pour le patron a suivre : `SXP:<piste>:<index>:<valeur>` serait le nom
 naturel).
+
+
+## Mise à jour 2026-09-19 — GB Capture dynamique
+
+Le moteur SAMPLER expose désormais **3 patches** :
+
+| Index | Nom | Source | Stockage | Sample rate |
+| --- | --- | --- | --- | --- |
+| 0 | Kick | embarqué | Flash | 44,1 kHz |
+| 1 | Snare | embarqué | Flash | 44,1 kHz |
+| 2 | GB Capture | dernier WAV Game Boy valide | PSRAM Teensy | lu depuis le WAV |
+
+Le chemin complet est maintenant intégré dans le code :
+
+1. Le son Game Boy peut être enregistré en WAV mono 16 bits sur la SD du Teensy.
+2. À l'arrêt d'un enregistrement réussi, le WAV est relu et validé.
+3. Son PCM est chargé dans une zone PSRAM dédiée.
+4. Le patch partagé `SAMPLER / GB Capture` pointe vers ce buffer.
+5. Les pistes déjà positionnées sur ce patch sont rafraîchies.
+6. Au redémarrage, le dernier `/samples/SAMPLE_*.wav` disponible est recherché et rechargé automatiquement.
+
+La zone dynamique est dimensionnée pour **30 secondes à 14 kHz mono 16 bits**, soit environ **840 Ko**. Si la PSRAM n'est pas détectée, le WAV reste enregistré sur SD mais n'est pas annoncé comme patch jouable.
+
+`AudioPlaySampler` prend maintenant le sample rate source en paramètre. Une capture 14 kHz rejouée à sa note racine conserve donc sa vitesse/hauteur attendue au lieu d'être interprétée à tort comme du 44,1 kHz.
+
+### Limites restantes
+
+Cette intégration fournit un slot dynamique unique, « dernier GB Capture ». Elle ne remplace pas encore un gestionnaire de banque complet : navigation de dizaines/centaines de WAV, renommage, suppression, découpage, trim/normalisation et affectation de plusieurs captures restent des évolutions.
+
+Le code doit encore être qualifié sur le Teensy réel avec PSRAM et carte SD avant d'être considéré comme une fonction matérielle validée.
