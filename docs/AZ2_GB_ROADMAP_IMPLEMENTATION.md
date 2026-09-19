@@ -2,6 +2,42 @@
 
 Date : 2026-09-19. Branche de travail : main. Cible : ESP32-S3 (GB/GBC, écran, SD) + Teensy 4.1 (audio et DAC). Pas de module supplémentaire dans AZ-2. L'AZ-3 et son rack d'ESP ne font pas partie de cette livraison.
 
+## Décision produit — MVP CONSOLE + CAPTURE (19 septembre 2026)
+
+**Priorité actuelle : jouer à une ROM GB/GBC à sa cadence native, entendre le son sur le DAC et capturer ce son en WAV pendant la partie.** Le tracker et l'émulateur n'ont pas besoin d'être synchronisés pour atteindre cet objectif. L'approche « racks logiciels » est conservée comme **optimisation ciblée**, pas comme condition préalable ni comme refonte de toute la machine.
+
+### Parcours utilisateur minimal
+
+1. Depuis **JEUX**, choisir une ROM sur la SD de l'ESP32-S3 et démarrer la partie.
+2. Jouer avec la croix, A/B et les commandes START/SELECT ; le son GB arrive au Teensy puis au PCM5102A.
+3. Appuyer sur le **bouton poussoir de l'encodeur 0** pour démarrer la capture ; afficher REC seulement après l'accusé `REC:STARTED` du Teensy. Appuyer de nouveau pour arrêter ; le garde-fou existant arrête aussi la prise à **30 secondes**.
+4. Le Teensy ferme et vérifie le fichier `/samples/SAMPLE_###.wav` sur **sa propre SD** (WAV PCM mono 16 bits, 14 kHz). Il signale le chemin, la durée en échantillons et si le patch dynamique `SAMPLER / GB Capture` a bien été chargé en PSRAM.
+5. Continuer à jouer, relancer une prise ou quitter proprement. **D** sauvegarde la cartouche ; **C** quitte sous réserve d'une sauvegarde réussie. La capture ne doit jamais écraser un WAV existant.
+
+Le bouton REC doit rester accessible pendant le jeu et **ne doit pas remplacer A/B, START/SELECT, C ou D**. L'entrée tactile peut proposer REC/STOP également, mais ne doit pas recouvrir l'image ou intercepter les commandes du jeu sans test sur écran réel.
+
+### Ce qui est déjà dans le code, mais reste à qualifier sur matériel
+
+- [x] Chargement ROM, image, contrôles, audio GB V1 mono PCM8/14 kHz ESP32 → Teensy → DAC.
+- [x] `REC:START`/`REC:STOP`, indicateur confirmé par le Teensy, capture WAV de 30 s maximum, noms sans écrasement et signalement des erreurs.
+- [x] Lecture du dernier WAV valide dans un **seul** slot GB Capture en PSRAM ; c'est utile après la prise, **pas requis pour jouer et enregistrer**.
+- [ ] Tester sur le vrai prototype le cycle complet jeu → REC → jeu sans arrêt → STOP → lecture du WAV sur ordinateur, et comparer la sortie DAC au fichier.
+- [ ] Mesurer la cadence GB pendant enregistrement, la durée réelle du WAV, les underruns et pertes UART, les pics de charge CPU, les accès SD et la réactivité des boutons.
+- [ ] Vérifier les erreurs SD absente/pleine, arrêt automatique à 30 s, réenregistrement et sauvegardes cartouche pendant/après capture.
+- [ ] Ne déclarer les jeux compatibles qu'après tests reproductibles par ROM ; **LSDJ n'est pas une condition de sortie du MVP**.
+
+### Optimisation ciblée, uniquement si les mesures le justifient
+
+Pendant une partie, suspendre les rendus d'interface non visibles (scope, animations, écran de veille) et réduire les tâches non indispensables **sans interrompre** l'horloge GB, les commandes, la réception audio, le DAC ni l'enregistrement. Le Teensy possède déjà une connexion dynamique des moteurs sélectionnés ; ne pas refondre son graphe ou créer un nouveau rack système sans profil CPU/mémoire montrant un bénéfice. Garder le profil V1 fiable comme référence ; V2 stéréo et sortie DAC stéréo sont hors MVP.
+
+### Idées ultérieures — volontairement différées
+
+- Étudier finement **LSDJ** (fonctionnement, sauvegardes, timing et éventuelle synchronisation) après stabilisation jeu + capture. Ne pas conditionner la capture à la synchronisation tracker/GB.
+- Mode HYBRID jeu + tracker, déclenchement de samples depuis un pattern, enregistrement multipiste et édition de banque.
+- Racks logiciels configurables à grande échelle, priorités de charge automatiques, interface d'édition complète du sample et qualité audio supérieure.
+
+Ces idées ne doivent pas retarder les tests et corrections du parcours minimal ci-dessus.
+
 ## État et critère d'achèvement
 
 Ce document distingue **code intégré**, **à implémenter**, et **à valider sur matériel**. Ne pas annoncer une ROM « compatible » parce qu'elle démarre ou qu'un firmware compile. Le mode Console doit fonctionner à la vitesse matérielle Game Boy indépendamment du BPM du tracker.
