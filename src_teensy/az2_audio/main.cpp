@@ -2707,7 +2707,7 @@ String nextSampleName() {
       return String(path);
     }
   }
-  return String("/samples/SAMPLE_999.wav");  // improbable (999 samples), ecrase plutot que planter
+  return String();  // banque pleine : ne jamais ecraser un enregistrement existant
 }
 
 void gbRecStop();  // definie juste apres -- gbRecPush() l'appelle si le garde-fou est atteint
@@ -2730,16 +2730,19 @@ void gbRecStart() {
     return;
   }
   const String path = nextSampleName();
-  // SD.remove() avant open() -- meme convention que savePatchSlot()/
-  // saveProject(). No-op si le fichier n'existe pas encore (cas normal,
-  // nextSampleName() a trouve un nom libre) ; INDISPENSABLE dans le cas
-  // improbable ou les 999 noms sont pris (nextSampleName() renvoie alors
-  // SAMPLE_999.wav en le sachant deja pris) -- BUG REEL potentiel note
-  // lors de l'audit du 2026-09-17, corrige ici : FILE_WRITE sur un
-  // fichier EXISTANT ouvre en AJOUT (pas en ecrasement) sur SdFat, donc
-  // sans ce remove() la nouvelle capture se serait ajoutee APRES
-  // l'ancien contenu au lieu de le remplacer -- wav corrompu/demesure.
-  SD.remove(path.c_str());
+  if (path.length() == 0) {
+    Serial.println("REC:ERROR:SAMPLE_BANK_FULL");
+    Serial1.println("REC:ERROR:SAMPLE_BANK_FULL");
+    return;
+  }
+  // FILE_WRITE peut ouvrir en ajout ; ne jamais supprimer ni reutiliser
+  // un sample deja present (meme en cas de modification SD entre scan
+  // et ouverture).
+  if (SD.exists(path.c_str())) {
+    Serial.println("REC:ERROR:SAMPLE_NAME_COLLISION");
+    Serial1.println("REC:ERROR:SAMPLE_NAME_COLLISION");
+    return;
+  }
   gbRecFile = SD.open(path.c_str(), FILE_WRITE);
   if (!gbRecFile) {
     Serial.print("REC:ERROR:");
@@ -2749,7 +2752,12 @@ void gbRecStart() {
     return;
   }
   uint8_t placeholder[44] = {};
-  gbRecFile.write(placeholder, sizeof(placeholder));
+  if (gbRecFile.write(placeholder, sizeof(placeholder)) != sizeof(placeholder)) {
+    Serial.println("REC:ERROR:WAV_HEADER_WRITE");
+    Serial1.println("REC:ERROR:WAV_HEADER_WRITE");
+    gbRecFile.close();
+    return;
+  }
   gbRecSampleCount = 0;
   gbRecBufLen = 0;
   gbRecording = true;
