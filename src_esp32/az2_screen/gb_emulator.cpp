@@ -411,6 +411,11 @@ namespace {
 // AZ2_Protocol.h, kGbAudioPacketMagic) pour tenir dans le budget serie.
 int16_t gbAudioStereoBuf[AUDIO_SAMPLES_TOTAL];
 uint8_t gbAudioMonoBuf[AUDIO_SAMPLES];
+bool gbAudioV2Ready = false;
+uint16_t gbAudioV2Sequence = 0;
+az2::GbAudioV2Frame gbAudioV2Tx;
+uint8_t gbAudioV2Wire[az2::kGbAudioV2HeaderBytes +
+                      az2::kGbAudioV2MaxPayload + az2::kGbAudioV2CrcBytes];
 
 // Le firmware ecran et le firmware audio compilent avec le MEME contrat
 // AZ2_Protocol.h. Empêcher un changement de fréquence uniquement dans
@@ -435,6 +440,21 @@ void sendGbAudioPacket() {
     gbAudioMonoBuf[i] = static_cast<uint8_t>((mono >> 8) + 128);
   }
 
+  if (az2::kGbAudioV2PilotEnabled && gbAudioV2Ready) {
+    gbAudioV2Tx.sequence = gbAudioV2Sequence++;
+    gbAudioV2Tx.sampleRate = az2::kGbAudioSampleRate;
+    gbAudioV2Tx.format = az2::kGbAudioV2FormatPcmU8;
+    gbAudioV2Tx.flags = 0;  // first pilot: existing mono 14 kHz path
+    gbAudioV2Tx.payloadLen = AUDIO_SAMPLES;
+    memcpy(gbAudioV2Tx.payload, gbAudioMonoBuf, AUDIO_SAMPLES);
+    const size_t packetBytes = az2::encodeGbAudioV2(
+        gbAudioV2Wire, sizeof(gbAudioV2Wire), gbAudioV2Tx);
+    if (packetBytes != 0) {
+      Serial1.write(gbAudioV2Wire, packetBytes);
+      return;
+    }
+    Serial.println("GB:V2_ENCODE_ERROR:FALLBACK_V1");
+  }
   Serial1.write(az2::kGbAudioPacketMagic);
   Serial1.write(static_cast<uint8_t>(AUDIO_SAMPLES));
   Serial1.write(gbAudioMonoBuf, AUDIO_SAMPLES);
@@ -478,6 +498,12 @@ bool gbUnload() {
 bool gbSaveNow() {
   if (!romLoaded) return true;
   return gbSaveCartRam();
+}
+
+void gbSetAudioV2Ready(bool ready) {
+  gbAudioV2Ready = az2::kGbAudioV2PilotEnabled && ready;
+  gbAudioV2Sequence = 0;
+  Serial.println(gbAudioV2Ready ? "GB:AUDIO_V2_READY" : "GB:AUDIO_V1_ACTIVE");
 }
 
 int compareRomNamesCaseInsensitive(const char *a, const char *b) {
