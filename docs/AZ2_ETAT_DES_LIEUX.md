@@ -1,5 +1,50 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-19 -- page MOTEURS reorganisee (liste moteurs + liste
+patches + mini-reglages), navigation croix entierement validee sur le
+vrai materiel]**
+
+Demande : "il faut l'organiser differemment une liste de moteur a
+gauche et a chaque moteur selectionne ca met les patch a droite et en
+dessous la mini fenetre de reglage du patch si on clic dessus on
+arrive a la page de reglage de patch". L'ancienne page (8 lignes, une
+par PISTE, moteur/patch cote a cote a l'interieur de chaque ligne) est
+remplacee par :
+
+- Selecteur de piste en haut (meme motif "< PISTE N >" que PATCH/
+  SEQUENCEUR).
+- Liste des 6 MOTEURS a gauche (jamais de defilement, 6 tient dans la
+  fenetre).
+- Liste des PATCHES du moteur assigne a la piste a droite -- defilante
+  (jusqu'a 255 pour DEXED), meme principe de fenetre/scroll que la
+  page PATCH d'hier soir.
+- Bandeau "mini reglages" en bas (2-3 valeurs cles selon le moteur,
+  ex. ALGO/FEEDBACK pour Dexed, CUTOFF/RESO sinon) -- tactile, ouvre
+  la page PATCH complete.
+- Choisir une ligne (croix ou tactile) = assigner IMMEDIATEMENT (pas
+  d'etape de confirmation), meme convention "manipulation directe" que
+  le reste de l'appli.
+- Croix : GAUCHE/DROITE seuls changent de PISTE (meme convention que
+  PATCH) ; A+GAUCHE/DROITE bascule le focus entre les 2 listes (meme
+  motif que A+GAUCHE/DROITE = SAVE/LOAD sur la page PATCH) ; HAUT/BAS
+  deplace-et-choisit dans la liste au focus, avec suivi de defilement
+  automatique cote PATCH.
+
+**Valide sur le vrai materiel via SIMNAV:/SIMBTN:** (navigation croix
+uniquement, verifiable par ce moyen contrairement au tactile) :
+cycle des 6 moteurs avec retour en boucle correct (DEXED -> SAMPLER ->
+ANALOG en 2x HAUT), bascule de focus, puis 9x HAUT sur la liste PATCH
+DEXED (255 entrees) avec retour en boucle correct (0 -> 254 -> 253 ->
+... -> 246) ET defilement suivi sans erreur -- chaque patch confirme
+par de vrais echos DXP: differents (les 255 patches chargent bien des
+donnees distinctes, pas juste des noms).
+
+**Limite honnete (comme pour le reste des boutons tactiles cette
+semaine)** : les zones tactiles (tap direct sur une ligne moteur/
+patch, fleches de piste, bandeau mini-reglages) sont compilees et
+flashees mais PAS verifiables par mon outil de test -- a confirmer
+par l'utilisateur a l'ecran.
+
 **[2026-09-19 -- bug reel trouve : le tracker effacait le panneau
 lateral a chaque edition, + panneau lateral refait avec 5 gros boutons
 (MOTEUR/PATCH/EFFET/CLAVIER/METRONOME) + metronome audio, teste en

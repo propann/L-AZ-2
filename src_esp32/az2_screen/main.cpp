@@ -1181,109 +1181,198 @@ uint8_t trackPatch[kSeqTrackCount] = {0, 0, 0, 0, 0, 0, 0, 0};
 bool trackMuted[kSeqTrackCount] = {};
 bool trackSoloed[kSeqTrackCount] = {};
 
-// Navigation croix sur la page MOTEURS -- demande 2026-09-16 ("dans la
-// fenetre des moteurs j'ai pas le controle joystick pour choisir et
-// regler les moteurs"). HAUT/BAS deplacent la piste selectionnee,
-// GAUCHE/DROITE changent la valeur de la colonne actuellement au focus
-// (moteur ou patch), BTN:A bascule le focus entre les deux colonnes --
-// meme esprit que seqDetailCol sur le sequenceur (GAUCHE/DROITE = quelle
-// colonne, HAUT/BAS = valeur), adapte ici car HAUT/BAS sert a choisir la
-// piste (8 lignes, pas de "curseur de pas" a deplacer separement).
+// Page MOTEURS repensee le 2026-09-19 (retour utilisateur sur materiel
+// reel : "il faut l'organiser differemment une liste de moteur a
+// gauche et a chaque moteur selectionne ca met les patch a droite et
+// en dessous la mini fenetre de reglage du patch si on clic dessus on
+// arrive a la page de reglage de patch"). Piste choisie en haut (meme
+// motif "< PISTE N >" que PATCH/SEQUENCEUR), puis 2 colonnes : la
+// liste des 6 MOTEURS a gauche, la liste des patches du moteur
+// ASSIGNE a cette piste a droite (defile si plus de kEngListVisibleRows
+// -- jusqu'a 255 pour DEXED), puis un bandeau "mini reglages" en bas,
+// tactile, qui ouvre la page PATCH complete.
+//
+// Choisir une ligne (croix ou tactile) = assigner IMMEDIATEMENT (pas
+// d'etape de confirmation separee -- meme convention "manipulation
+// directe" que le reste de l'appli) : la liste MOTEUR n'a donc pas
+// besoin d'un curseur distinct de trackEngine[piste], ni la liste
+// PATCH d'un curseur distinct de trackPatch[piste] -- juste
+// engPatchScroll pour savoir quelle partie de la liste (potentiellement
+// longue) est actuellement visible.
 int8_t selectedEngineTrack = 0;
+// false = focus croix sur la liste MOTEUR (gauche), true = liste PATCH
+// (droite) -- GAUCHE/DROITE bascule (spatial, plus intuitif qu'avant
+// avec de vraies colonnes cote a cote), HAUT/BAS deplace/choisit dans
+// la colonne au focus.
 bool engineColPatch = false;
+uint16_t engPatchScroll = 0;
 
-constexpr int16_t kEngRowTop = 90;
-// Retreci (etait 70/10) pour que 8 pistes tiennent -- voir le meme fix
-// que kSeqCellH/kSeqGapY plus haut (kSeqTrackCount 4 -> 8, 2026-09-15).
-constexpr int16_t kEngRowH = 40;
-constexpr int16_t kEngRowGap = 4;
-constexpr int16_t kEngLeft = kMargin;
-constexpr int16_t kEngWidth = kScreenSize - 2 * kMargin;
-constexpr int16_t kEngSplitX = kEngLeft + kEngWidth / 2;
+constexpr int16_t kEngTrackRowY = 66;
+constexpr int16_t kEngTrackRowH = 22;
+constexpr int16_t kEngListTop = kEngTrackRowY + kEngTrackRowH + 10;
+constexpr int16_t kEngListLeftW = (kScreenSize - 2 * kMargin) * 4 / 10;
+constexpr int16_t kEngGap = 6;
+constexpr int16_t kEngListRightX = kMargin + kEngListLeftW + kEngGap;
+constexpr int16_t kEngListRightW = kScreenSize - 2 * kMargin - kEngListLeftW - kEngGap;
+constexpr int16_t kEngListRowH = 42;
+// 6 -- tombe pile sur le nombre de moteurs (liste gauche jamais
+// scrollee), la liste PATCH (droite) partage la meme fenetre/hauteur
+// et defile au-dela (voir engPatchScroll), meme principe que
+// patchScroll sur la page PATCH.
+constexpr uint8_t kEngListVisibleRows = az2::kEngineCount;
+constexpr int16_t kEngListH = kEngListVisibleRows * kEngListRowH;
+constexpr int16_t kEngMiniY = kEngListTop + kEngListH + 10;
+constexpr int16_t kEngMiniH = 66;
 
-void engRowRect(uint8_t track, int16_t &y) {
-  y = static_cast<int16_t>(kEngRowTop + track * (kEngRowH + kEngRowGap));
+void drawEngTrackRow() {
+  gfx->fillRect(kMargin, kEngTrackRowY, static_cast<int16_t>(kScreenSize - 2 * kMargin), kEngTrackRowH,
+                RGB565_BLACK);
+  gfx->setTextSize(2);
+  gfx->setTextColor(kPalette[selectedEngineTrack % kPaletteCount]);
+  char buf[16];
+  snprintf(buf, sizeof(buf), "< PISTE %d >", selectedEngineTrack);
+  gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - 55), kEngTrackRowY);
+  gfx->print(buf);
+}
+bool hitTestEngTrackPrev(int16_t x, int16_t y) {
+  return inBox(x, y, kMargin, kEngTrackRowY, static_cast<int16_t>(kScreenSize / 2 - kMargin), kEngTrackRowH);
+}
+bool hitTestEngTrackNext(int16_t x, int16_t y) {
+  return inBox(x, y, static_cast<int16_t>(kScreenSize / 2), kEngTrackRowY,
+               static_cast<int16_t>(kScreenSize / 2 - kMargin), kEngTrackRowH);
 }
 
-void drawEngRow(uint8_t track) {
-  int16_t y;
-  engRowRect(track, y);
-  const uint16_t accent = kPalette[track % kPaletteCount];
-  const bool selected = (track == selectedEngineTrack);
+void drawEngListRow(uint8_t engineIdx) {
+  const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
+  const int16_t y = static_cast<int16_t>(kEngListTop + engineIdx * kEngListRowH);
+  const bool isCurrent = (engineIdx == trackEngine[t]);
+  const bool focused = isCurrent && !engineColPatch;
+  const uint16_t accent = kPalette[t % kPaletteCount];
+  const int16_t h = static_cast<int16_t>(kEngListRowH - 2);
 
-  gfx->fillRect(kEngLeft, y, kEngWidth, kEngRowH - kEngRowGap, RGB565_BLACK);
-  gfx->drawRect(kEngLeft, y, kEngWidth, kEngRowH - kEngRowGap, accent);
-  if (selected) {
-    // Piste selectionnee (croix) : contour double pour rester visible
-    // meme quand la couleur d'accent est deja vive.
-    gfx->drawRect(static_cast<int16_t>(kEngLeft + 1), static_cast<int16_t>(y + 1), kEngWidth - 2,
-                  kEngRowH - kEngRowGap - 2, RGB565_WHITE);
+  gfx->fillRect(kMargin, y, kEngListLeftW, h, isCurrent ? accent : RGB565_BLACK);
+  gfx->drawRect(kMargin, y, kEngListLeftW, h, isCurrent ? accent : kFaint);
+  if (focused) {
+    gfx->drawRect(static_cast<int16_t>(kMargin + 1), static_cast<int16_t>(y + 1), static_cast<int16_t>(kEngListLeftW - 2),
+                  static_cast<int16_t>(h - 2), RGB565_WHITE);
   }
-  gfx->drawFastVLine(kEngSplitX, y, kEngRowH - kEngRowGap, kFaint);
+  gfx->setTextSize(2);
+  gfx->setTextColor(isCurrent ? RGB565_BLACK : RGB565_WHITE);
+  gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(y + h / 2 - 8));
+  gfx->print(az2::engineName(engineIdx));
+}
 
-  char title[12];
-  snprintf(title, sizeof(title), "P%d", track);
+// slot = position dans la fenetre visible (0..kEngListVisibleRows-1),
+// PAS l'index de patch lui-meme (voir engPatchScroll).
+void drawEngPatchRow(uint8_t slot) {
+  const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
+  const uint16_t patchIdx = static_cast<uint16_t>(engPatchScroll + slot);
+  const int16_t y = static_cast<int16_t>(kEngListTop + slot * kEngListRowH);
+  const int16_t h = static_cast<int16_t>(kEngListRowH - 2);
+  const uint16_t count = az2::enginePatchCount(trackEngine[t]);
+
+  if (patchIdx >= count) {
+    gfx->fillRect(kEngListRightX, y, kEngListRightW, h, RGB565_BLACK);
+    return;
+  }
+  const bool isCurrent = (patchIdx == trackPatch[t]);
+  const bool focused = isCurrent && engineColPatch;
+  const uint16_t accent = kPalette[t % kPaletteCount];
+
+  gfx->fillRect(kEngListRightX, y, kEngListRightW, h, isCurrent ? accent : RGB565_BLACK);
+  gfx->drawRect(kEngListRightX, y, kEngListRightW, h, isCurrent ? accent : kFaint);
+  if (focused) {
+    gfx->drawRect(static_cast<int16_t>(kEngListRightX + 1), static_cast<int16_t>(y + 1),
+                  static_cast<int16_t>(kEngListRightW - 2), static_cast<int16_t>(h - 2), RGB565_WHITE);
+  }
+  gfx->setTextSize(1);
+  gfx->setTextColor(isCurrent ? RGB565_BLACK : RGB565_WHITE);
+  char buf[24];
+  snprintf(buf, sizeof(buf), "%3d %s", patchIdx, az2::enginePatchName(trackEngine[t], static_cast<uint8_t>(patchIdx)));
+  gfx->setCursor(static_cast<int16_t>(kEngListRightX + 6), static_cast<int16_t>(y + h / 2 - 4));
+  gfx->print(buf);
+}
+
+void drawEngLists() {
+  for (uint8_t i = 0; i < az2::kEngineCount; ++i) {
+    drawEngListRow(i);
+  }
+  for (uint8_t s = 0; s < kEngListVisibleRows; ++s) {
+    drawEngPatchRow(s);
+  }
+}
+
+// Bandeau "mini reglages" en bas -- resume le patch actif (2 lignes
+// cles selon le moteur, meme logique que patchRowLabel()/
+// patchParamRef() de la page PATCH), tactile : ouvre cette meme page
+// PATCH complete pour aller plus loin (voir hitTestEngMini()).
+void drawEngMiniPatch() {
+  const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
+  const uint16_t accent = kPalette[t % kPaletteCount];
+  const int16_t w = static_cast<int16_t>(kScreenSize - 2 * kMargin);
+
+  gfx->fillRect(kMargin, kEngMiniY, w, kEngMiniH, RGB565_BLACK);
+  gfx->drawRect(kMargin, kEngMiniY, w, kEngMiniH, accent);
+
   gfx->setTextSize(1);
   gfx->setTextColor(kDim);
-  gfx->setCursor(static_cast<int16_t>(kEngLeft + 6), static_cast<int16_t>(y + 2));
-  gfx->print(title);
-  // Mute/solo (priorite #1 de la liste indispensable) -- BTN:C/D
-  // bascule pour la piste selectionnee par la croix (voir plus bas).
-  if (trackMuted[track]) {
-    gfx->setTextColor(RGB565_RED);
-    gfx->setCursor(static_cast<int16_t>(kEngLeft + 26), static_cast<int16_t>(y + 2));
-    gfx->print('M');
-  }
-  if (trackSoloed[track]) {
-    gfx->setTextColor(RGB565_YELLOW);
-    gfx->setCursor(static_cast<int16_t>(kEngLeft + 38), static_cast<int16_t>(y + 2));
-    gfx->print('S');
-  }
+  gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(kEngMiniY + 4));
+  gfx->print("REGLAGES DU PATCH -- toucher pour tout regler >");
 
   gfx->setTextSize(2);
   gfx->setTextColor(RGB565_WHITE);
-  gfx->setCursor(static_cast<int16_t>(kEngLeft + 6), static_cast<int16_t>(y + 16));
-  gfx->print(az2::engineName(trackEngine[track]));
-  // Colonne au focus (croix GAUCHE/DROITE + BTN:A pour basculer) :
-  // soulignee, uniquement sur la piste selectionnee.
-  if (selected && !engineColPatch) {
-    gfx->drawFastHLine(static_cast<int16_t>(kEngLeft + 6), static_cast<int16_t>(y + 32),
-                        static_cast<int16_t>(kEngSplitX - kEngLeft - 12), RGB565_WHITE);
+  char buf[28];
+  if (trackEngine[t] == az2::kEngineDexed) {
+    snprintf(buf, sizeof(buf), "ALGO %d  FDBK %d", trackAlgo[t] + 1, trackFeedback[t]);
+  } else {
+    snprintf(buf, sizeof(buf), "CUTOFF %d  RESO %d", trackCutoff[t], trackReso[t]);
   }
+  gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(kEngMiniY + 20));
+  gfx->print(buf);
 
   gfx->setTextSize(1);
-  gfx->setTextColor(kDim);
-  gfx->setCursor(static_cast<int16_t>(kEngSplitX + 6), static_cast<int16_t>(y + 2));
-  gfx->print("PATCH");
-  gfx->setTextSize(2);
   gfx->setTextColor(accent);
-  gfx->setCursor(static_cast<int16_t>(kEngSplitX + 6), static_cast<int16_t>(y + 16));
-  gfx->print(az2::enginePatchName(trackEngine[track], trackPatch[track]));
-  if (selected && engineColPatch) {
-    gfx->drawFastHLine(static_cast<int16_t>(kEngSplitX + 6), static_cast<int16_t>(y + 32),
-                        static_cast<int16_t>(kEngLeft + kEngWidth - kEngSplitX - 12), RGB565_WHITE);
-  }
+  gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(kEngMiniY + 46));
+  gfx->print(az2::enginePatchName(trackEngine[t], trackPatch[t]));
+}
+
+bool hitTestEngMini(int16_t x, int16_t y) {
+  return inBox(x, y, kMargin, kEngMiniY, static_cast<int16_t>(kScreenSize - 2 * kMargin), kEngMiniH);
 }
 
 void drawEnginesPage() {
   drawSubHeader("MOTEURS", kPalette[2]);
-  for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
-    drawEngRow(t);
-  }
+  drawEngTrackRow();
+  drawEngLists();
+  drawEngMiniPatch();
 }
 
-// Renvoie -1 (aucun), sinon la piste touchee ; isPatchSide indique quelle
-// moitie de la ligne (moteur = gauche, patch = droite).
-int8_t hitTestEngRow(int16_t x, int16_t y, bool &isPatchSide) {
-  for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
-    int16_t rowY;
-    engRowRect(t, rowY);
-    if (inBox(x, y, kEngLeft, rowY, kEngWidth, kEngRowH - kEngRowGap)) {
-      isPatchSide = (x >= kEngSplitX);
-      return static_cast<int8_t>(t);
-    }
+// Renvoie l'index de moteur (0-5) touche dans la liste GAUCHE, -1 si
+// hors zone.
+int8_t hitTestEngListRow(int16_t x, int16_t y) {
+  if (x < kMargin || x >= kMargin + kEngListLeftW || y < kEngListTop || y >= kEngListTop + kEngListH) {
+    return -1;
   }
-  return -1;
+  return static_cast<int8_t>((y - kEngListTop) / kEngListRowH);
+}
+
+// Renvoie le SLOT (0..kEngListVisibleRows-1, PAS l'index de patch --
+// voir engPatchScroll) touche dans la liste DROITE, -1 si hors zone.
+int8_t hitTestEngPatchRow(int16_t x, int16_t y) {
+  if (x < kEngListRightX || x >= kEngListRightX + kEngListRightW || y < kEngListTop || y >= kEngListTop + kEngListH) {
+    return -1;
+  }
+  return static_cast<int8_t>((y - kEngListTop) / kEngListRowH);
+}
+
+// Redessin complet -- utilise par les echos ENGINE:/PATCH:/MUTE:/SOLO:
+// (voir plus bas) qui redessinaient auparavant UNE ligne (drawEngRow(),
+// ancien format 8 pistes) -- desormais un seul track affiche a la
+// fois, un redessin complet est aussi simple et sans risque d'oubli.
+void drawEngRow(uint8_t track) {
+  if (track == selectedEngineTrack && currentScreen == Screen::Engines) {
+    drawEnginesPage();
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -2929,6 +3018,16 @@ void goTo(Screen s) {
     gbUnload();
   }
 
+  // Page MOTEURS (2026-09-19) : aligne le defilement de la liste PATCH
+  // sur le patch REELLEMENT charge de la piste affichee -- sinon un
+  // defilement laisse par une visite precedente (piste/moteur
+  // differents) pourrait ne plus rien montrer de pertinent en entrant.
+  if (s == Screen::Engines) {
+    const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
+    const uint8_t patch = trackPatch[t];
+    engPatchScroll = (patch < kEngListVisibleRows) ? 0 : static_cast<uint16_t>(patch - kEngListVisibleRows + 1);
+  }
+
   // Revenir sur le menu depuis un autre ecran retombe toujours sur la
   // grille des 4 categories, jamais au milieu d'une sous-liste --
   // simple, pas d'etat perime a gerer (voir la page Menu plus haut).
@@ -3065,26 +3164,41 @@ void handleTeensyLine(const String &line) {
             drawMenu();
           }
         }
-        // Page MOTEURS : voir le commentaire de selectedEngineTrack plus
-        // haut. HAUT/BAS changent la piste, GAUCHE/DROITE la valeur de la
-        // colonne au focus (moteur ou patch).
+        // Page MOTEURS repensee (2026-09-19, voir le commentaire de
+        // selectedEngineTrack plus haut) -- meme convention que la page
+        // PATCH : GAUCHE/DROITE SEULS changent la piste, A maintenu +
+        // GAUCHE/DROITE bascule le focus entre la liste MOTEUR et la
+        // liste PATCH (comme A+GAUCHE/DROITE = SAVE/LOAD sur la ligne
+        // SLOT de la page PATCH), HAUT/BAS deplace ET CHOISIT
+        // IMMEDIATEMENT dans la liste au focus (pas d'etape de
+        // confirmation separee, meme esprit que le reste de l'appli).
         if (pressed && currentScreen == Screen::Engines) {
-          if (index == 0 || index == 1) {
-            const int8_t previous = selectedEngineTrack;
-            selectedEngineTrack = static_cast<int8_t>((selectedEngineTrack + (index == 1 ? 1 : kSeqTrackCount - 1)) %
-                                                        kSeqTrackCount);
-            drawEngRow(static_cast<uint8_t>(previous));
-            drawEngRow(static_cast<uint8_t>(selectedEngineTrack));
+          const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
+          if (btnState[0] && (index == 2 || index == 3)) {
+            engineColPatch = !engineColPatch;
+            drawEnginesPage();
           } else if (index == 2 || index == 3) {
-            const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
-            const int dir = (index == 3) ? 1 : -1;
+            selectedEngineTrack = static_cast<int8_t>((selectedEngineTrack + (index == 3 ? 1 : kSeqTrackCount - 1)) %
+                                                        kSeqTrackCount);
+            engPatchScroll = 0;
+            drawEnginesPage();
+          } else if (index == 0 || index == 1) {
+            const int dir = (index == 0) ? -1 : 1;
             char msg[16];
             if (!engineColPatch) {
               const uint8_t nextEngine = static_cast<uint8_t>((trackEngine[t] + dir + az2::kEngineCount) % az2::kEngineCount);
               snprintf(msg, sizeof(msg), "ENGINE:%d:%d", t, nextEngine);
             } else {
-              const uint16_t count = az2::enginePatchCount(trackEngine[t]);  // uint16_t depuis DEXED=256 patches (2026-09-18)
-              const uint8_t nextPatch = static_cast<uint8_t>((trackPatch[t] + dir + count) % count);
+              const uint16_t count = az2::enginePatchCount(trackEngine[t]);
+              const uint16_t nextPatch = static_cast<uint16_t>((trackPatch[t] + dir + count) % count);
+              // Fait suivre le defilement si la nouvelle selection sort
+              // de la fenetre visible -- meme principe que patchScroll
+              // sur la page PATCH.
+              if (nextPatch < engPatchScroll) {
+                engPatchScroll = nextPatch;
+              } else if (nextPatch >= engPatchScroll + kEngListVisibleRows) {
+                engPatchScroll = static_cast<uint16_t>(nextPatch - kEngListVisibleRows + 1);
+              }
               snprintf(msg, sizeof(msg), "PATCH:%d:%d", t, nextPatch);
             }
             sendToTeensy(msg);
@@ -3373,12 +3487,9 @@ void handleTeensyLine(const String &line) {
           }
         }
       }
-      // Page MOTEURS : A bascule le focus croix entre la colonne MOTEUR
-      // et la colonne PATCH (voir engineColPatch plus haut).
-      if (pressed && letter == 'A' && currentScreen == Screen::Engines) {
-        engineColPatch = !engineColPatch;
-        drawEngRow(static_cast<uint8_t>(selectedEngineTrack));
-      }
+      // Page MOTEURS : le focus (A+GAUCHE/DROITE) est gere directement
+      // dans le bloc NAV: ci-dessus desormais (2026-09-19) -- A seul
+      // n'a plus de role ici.
       // Dans une sous-liste du menu : B revient a la grille de
       // categories (pas besoin de ressortir de Screen::Menu).
       if (pressed && letter == 'B' && currentScreen == Screen::Menu && menuCategory >= 0) {
@@ -3684,6 +3795,12 @@ void handleTeensyLine(const String &line) {
       if (track < kSeqTrackCount && engine < az2::kEngineCount) {
         trackEngine[track] = engine;
         if (currentScreen == Screen::Engines) {
+          // Nouveau moteur = nombre de patches different -- repart du
+          // haut de la liste PATCH plutot que de garder un defilement
+          // qui ne correspondrait plus a rien (voir drawEngPatchRow()).
+          if (track == selectedEngineTrack) {
+            engPatchScroll = 0;
+          }
           drawEngRow(track);
         } else if (currentScreen == Screen::Patch && track == patchTrack && !screensaverActive) {
           // Les lignes 2-5 changent de sens selon le moteur (ADSR vs
@@ -3710,6 +3827,14 @@ void handleTeensyLine(const String &line) {
       if (track < kSeqTrackCount) {
         trackPatch[track] = patch;
         if (currentScreen == Screen::Engines) {
+          // Fait suivre le defilement de la liste PATCH si besoin --
+          // meme si ce changement vient d'ailleurs que cette page (ex:
+          // colonne INST du tracker), la liste doit rester coherente
+          // avec ce qui est reellement charge des qu'on y revient.
+          if (track == selectedEngineTrack &&
+              (patch < engPatchScroll || patch >= engPatchScroll + kEngListVisibleRows)) {
+            engPatchScroll = (patch < kEngListVisibleRows) ? 0 : static_cast<uint16_t>(patch - kEngListVisibleRows + 1);
+          }
           drawEngRow(track);
         } else if (currentScreen == Screen::Sequencer && track == selectedSeqTrack && !screensaverActive) {
           drawTrkSidePanel();
@@ -4371,33 +4496,42 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       }
     }
   } else if (currentScreen == Screen::Engines) {
-    bool isPatchSide = false;
-    const int8_t track = hitTestEngRow(x, y, isPatchSide);
-    if (track >= 0) {
-      // Un toucher deplace aussi le curseur croix sur la ligne/colonne
-      // touchee -- sinon tactile et croix restent desynchronises (on
-      // pouvait toucher la piste 5 puis un appui croix modifiait encore
-      // la piste 0). Meme reflexe que le tracker (tap = select + edit).
-      const int8_t previousTrack = selectedEngineTrack;
-      const bool previousCol = engineColPatch;
-      selectedEngineTrack = track;
-      engineColPatch = isPatchSide;
-      if (previousTrack != track) {
-        drawEngRow(static_cast<uint8_t>(previousTrack));
-      } else if (previousCol != engineColPatch) {
-        drawEngRow(static_cast<uint8_t>(track));
+    // Page repensee le 2026-09-19 -- liste MOTEUR a gauche, liste PATCH
+    // (defilante) a droite, bandeau mini-reglages en bas (voir
+    // drawEnginesPage() et son commentaire pour le detail complet).
+    const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
+    if (hitTestEngTrackPrev(x, y) || hitTestEngTrackNext(x, y)) {
+      selectedEngineTrack = static_cast<int8_t>(
+          (selectedEngineTrack + (hitTestEngTrackNext(x, y) ? 1 : kSeqTrackCount - 1)) % kSeqTrackCount);
+      engPatchScroll = 0;
+      drawEnginesPage();
+    } else if (hitTestEngMini(x, y)) {
+      // Bandeau mini-reglages -- ouvre la page PATCH complete pour
+      // cette piste (demande explicite : "si on clic dessus on arrive
+      // a la page de reglage de patch").
+      patchTrack = selectedEngineTrack;
+      scopeHasData = false;
+      goTo(Screen::Patch);
+    } else {
+      const int8_t engineHit = hitTestEngListRow(x, y);
+      const int8_t patchSlotHit = hitTestEngPatchRow(x, y);
+      if (engineHit >= 0) {
+        // Toucher deplace aussi le focus croix sur la liste touchee --
+        // meme reflexe que partout ailleurs dans l'appli (tap = select
+        // + edit, tactile et croix restent synchronises).
+        engineColPatch = false;
+        char msg[16];
+        snprintf(msg, sizeof(msg), "ENGINE:%d:%d", t, engineHit);
+        sendToTeensy(msg);
+      } else if (patchSlotHit >= 0) {
+        const uint16_t patchIdx = static_cast<uint16_t>(engPatchScroll + patchSlotHit);
+        if (patchIdx < az2::enginePatchCount(trackEngine[t])) {
+          engineColPatch = true;
+          char msg[16];
+          snprintf(msg, sizeof(msg), "PATCH:%d:%d", t, patchIdx);
+          sendToTeensy(msg);
+        }
       }
-
-      char msg[16];
-      if (!isPatchSide) {
-        const uint8_t nextEngine = static_cast<uint8_t>((trackEngine[track] + 1) % az2::kEngineCount);
-        snprintf(msg, sizeof(msg), "ENGINE:%d:%d", track, nextEngine);
-      } else {
-        const uint16_t count = az2::enginePatchCount(trackEngine[track]);  // uint16_t depuis DEXED=256 patches (2026-09-18)
-        const uint8_t nextPatch = static_cast<uint8_t>((trackPatch[track] + 1) % count);
-        snprintf(msg, sizeof(msg), "PATCH:%d:%d", track, nextPatch);
-      }
-      sendToTeensy(msg);
     }
   } else if (currentScreen == Screen::Patch) {
     if (hitTestPatchTrackPrev(x, y) || hitTestPatchTrackNext(x, y)) {
