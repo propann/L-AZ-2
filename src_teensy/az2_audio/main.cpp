@@ -318,14 +318,42 @@ void applyGroupGainNow(uint8_t track) {
 // DOIVENT rester synchronises a la main.
 #include "az2_dexed_bank_data.h"
 
-// Formes Braids choisies (voir settings.h: MacroOscillatorShape) --
-// GARDER LE MEME ORDRE que az2::kBraidsPatchNames.
-const int16_t kBraidsShapeValues[8] = {0, 2, 9, 16, 21, 25, 28, 14};
+// Les 43 formes UTILISABLES de Synth_Braids (voir settings.h:
+// MacroOscillatorShape -- WAVETABLES/QUESTION_MARK/YOUR_ALGO restent
+// commentes dans la lib elle-meme, exclus) -- 2026-09-18, "recuperer
+// un max de patch pour tout les moteur", remplace les 8 choisies a la
+// main le 2026-09-15. References par leur VRAI NOM d'enum (pas une
+// valeur numerique devinee/comptee a la main -- l'enum a des trous
+// dus aux formes commentees, compter aurait ete fragile) : disponibles
+// ici sans include supplementaire, synth_braids.h (deja inclus plus
+// haut) fait "using namespace braids;" a portee fichier. GARDER LE
+// MEME ORDRE que az2::kBraidsPatchNames (AZ2_Protocol.h).
+const int16_t kBraidsShapeValues[43] = {
+    MACRO_OSC_SHAPE_CSAW, MACRO_OSC_SHAPE_MORPH, MACRO_OSC_SHAPE_SAW_SQUARE, MACRO_OSC_SHAPE_SINE_TRIANGLE, MACRO_OSC_SHAPE_BUZZ,
+    MACRO_OSC_SHAPE_SQUARE_SUB, MACRO_OSC_SHAPE_SAW_SUB, MACRO_OSC_SHAPE_SQUARE_SYNC, MACRO_OSC_SHAPE_SAW_SYNC, MACRO_OSC_SHAPE_TRIPLE_SAW,
+    MACRO_OSC_SHAPE_TRIPLE_SQUARE, MACRO_OSC_SHAPE_TRIPLE_TRIANGLE, MACRO_OSC_SHAPE_TRIPLE_SINE, MACRO_OSC_SHAPE_TRIPLE_RING_MOD, MACRO_OSC_SHAPE_SAW_SWARM,
+    MACRO_OSC_SHAPE_SAW_COMB, MACRO_OSC_SHAPE_TOY,
+    MACRO_OSC_SHAPE_DIGITAL_FILTER_LP, MACRO_OSC_SHAPE_DIGITAL_FILTER_PK, MACRO_OSC_SHAPE_DIGITAL_FILTER_BP, MACRO_OSC_SHAPE_DIGITAL_FILTER_HP, MACRO_OSC_SHAPE_VOSIM,
+    MACRO_OSC_SHAPE_VOWEL, MACRO_OSC_SHAPE_VOWEL_FOF,
+    MACRO_OSC_SHAPE_HARMONICS,
+    MACRO_OSC_SHAPE_FM, MACRO_OSC_SHAPE_FEEDBACK_FM, MACRO_OSC_SHAPE_CHAOTIC_FEEDBACK_FM,
+    MACRO_OSC_SHAPE_PLUCKED, MACRO_OSC_SHAPE_BOWED, MACRO_OSC_SHAPE_BLOWN, MACRO_OSC_SHAPE_FLUTED, MACRO_OSC_SHAPE_STRUCK_BELL, MACRO_OSC_SHAPE_STRUCK_DRUM,
+    MACRO_OSC_SHAPE_KICK, MACRO_OSC_SHAPE_CYMBAL, MACRO_OSC_SHAPE_SNARE,
+    MACRO_OSC_SHAPE_FILTERED_NOISE, MACRO_OSC_SHAPE_TWIN_PEAKS_NOISE, MACRO_OSC_SHAPE_CLOCKED_NOISE, MACRO_OSC_SHAPE_GRANULAR_CLOUD, MACRO_OSC_SHAPE_PARTICLE_NOISE,
+    MACRO_OSC_SHAPE_DIGITAL_MODULATION,
+};
 
 // Formes AudioSynthWaveform choisies pour le moteur ANALOG (voir
 // synth_waveform.h: WAVEFORM_*) -- GARDER LE MEME ORDRE que
 // az2::kAnalogPatchNames (AZ2_Protocol.h).
-const short kAnalogWaveformValues[4] = {WAVEFORM_SINE, WAVEFORM_SAWTOOTH, WAVEFORM_SQUARE, WAVEFORM_TRIANGLE};
+// 11 depuis le 2026-09-18 ("recuperer un max de patch pour tout les
+// moteur") -- voir kAnalogPatchNames (AZ2_Protocol.h) pour le detail,
+// GARDER LE MEME ORDRE.
+const short kAnalogWaveformValues[11] = {
+    WAVEFORM_SINE, WAVEFORM_SAWTOOTH, WAVEFORM_SQUARE, WAVEFORM_TRIANGLE, WAVEFORM_PULSE,
+    WAVEFORM_SAWTOOTH_REVERSE, WAVEFORM_SAMPLE_HOLD, WAVEFORM_TRIANGLE_VARIABLE,
+    WAVEFORM_BANDLIMIT_SAWTOOTH, WAVEFORM_BANDLIMIT_SQUARE, WAVEFORM_BANDLIMIT_PULSE,
+};
 
 // Charge le patch courant (trackPatch[track]) dans le moteur actuellement
 // actif de la piste (trackEngine[track]). Partagee avec liveVoice (voir

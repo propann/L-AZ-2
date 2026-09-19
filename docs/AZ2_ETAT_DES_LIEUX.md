@@ -1,5 +1,37 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-19 -- BRAIDS 8->43 formes, ANALOG 4->11 formes d'onde,
+testes sur le vrai materiel]**
+
+Suite de "recuperer un max de patch pour tout les moteur", apres
+DEXED (entree du dessous) :
+
+- **BRAIDS** : 43 des 43 algorithmes UTILISABLES de Synth_Braids (pas
+  les 8 choisis a la main le 2026-09-15) -- MacroOscillatorShape
+  (settings.h) referencees par leur VRAI NOM d'enum
+  (`MACRO_OSC_SHAPE_KICK` etc.), pas une valeur numerique devinee/
+  comptee a la main (l'enum a des trous du aux formes commentees dans
+  la lib elle-meme -- WAVETABLES/QUESTION_MARK/YOUR_ALGO, jamais
+  activees). Teste sur le vrai materiel (3 formes dont KICK/HARMONICS/
+  CYMBAL, meme piste isolee).
+- **ANALOG** : 11 formes d'onde AudioSynthWaveform (pas 4) -- ajoute
+  Pulse/Dent inversee/Sample & Hold/Triangle variable, plus les
+  versions "bandlimited" (anti-repliement) de dent de scie/carre/
+  pulse. `WAVEFORM_ARBITRARY` exclu (demande une table d'onde fournie
+  a part). Teste sur le vrai materiel ("oki entendu").
+- **EPIANO verifie mais inchange** : mdaEPiano n'a en realite que 5
+  vrais presets d'usine (`mdaEPianoData.h` : les 3 slots restants sur
+  8 sont des doublons vides "(default)", pas du vrai contenu) -- rien
+  de plus a recuperer la, les 12 parametres continus (`EXP:`, entree
+  d'hier soir) restent la vraie richesse de ce moteur.
+- Flashe et verifie sur le vrai materiel (Teensy + ESP32, les 2 pour
+  que les nouveaux noms s'affichent a l'ecran).
+- **Reste** : SAMPLER (peut recuperer Piano-C1..C8/Kick_FBI/voc_1..11,
+  deja vendores dans le meme dossier que Kick/Snare) ; la demande
+  suivante de l'utilisateur ("une fenetre de reglage pour chaque
+  moteur pour les attribuer a une piste, regler les patch, effet") --
+  voir l'entree suivante si commencee.
+
 **[2026-09-18, nuit -- DEXED passe de 8 a 255 vrais patches d'usine
 DX7 (ROM1-ROM4), teste sur le vrai materiel]**
 

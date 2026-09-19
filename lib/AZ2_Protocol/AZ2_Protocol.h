@@ -341,10 +341,28 @@ constexpr const char *kEPianoPatchNames[kEPianoPatchCount] = {
     "Default", "Bright", "Mellow", "Autopan", "Tremolo",
 };
 
-constexpr uint8_t kBraidsPatchCount = 8;
+// 43 depuis le 2026-09-18 ("recuperer un max de patch pour tout les
+// moteur") -- Synth_Braids expose 43 algorithmes utilisables
+// (MacroOscillatorShape, voir settings.h : WAVETABLES/QUESTION_MARK/
+// YOUR_ALGO restent commentes dans la lib elle-meme, donc exclus ici
+// aussi), pas les 8 choisis a la main le 2026-09-15. Meme ordre que
+// l'enum d'origine -- voir kBraidsShapeValues cote Teensy (main.cpp),
+// qui reference les VRAIES constantes nommees (MACRO_OSC_SHAPE_*) au
+// lieu de deviner leur valeur numerique.
+constexpr uint8_t kBraidsPatchCount = 43;
 constexpr const char *kBraidsPatchNames[kBraidsPatchCount] = {
-    "CSAW", "Saw/Square", "Triple Saw", "Toy",
-    "Vosim", "FM", "Plucked", "Saw Swarm",
+    "CSAW", "Morph", "Saw/Square", "Sine/Triangle", "Buzz",
+    "Square Sub", "Saw Sub", "Square Sync", "Saw Sync", "Triple Saw",
+    "Triple Square", "Triple Triangle", "Triple Sine", "Triple RingMod", "Saw Swarm",
+    "Saw Comb", "Toy",
+    "Filtre LP", "Filtre Peak", "Filtre BP", "Filtre HP", "Vosim",
+    "Vowel", "Vowel FOF",
+    "Harmonics",
+    "FM", "Feedback FM", "Chaotic FM",
+    "Plucked", "Bowed", "Blown", "Fluted", "Struck Bell", "Struck Drum",
+    "Kick", "Cymbal", "Snare",
+    "Filtered Noise", "Twin Peaks Noise", "Clocked Noise", "Granular Cloud", "Particle Noise",
+    "Digital Mod",
 };
 
 // AudioSynthKarplusStrong n'expose aucun parametre de forme (juste
@@ -353,12 +371,20 @@ constexpr uint8_t kKarplusPatchCount = 1;
 constexpr const char *kKarplusPatchNames[kKarplusPatchCount] = {"Corde pincee"};
 
 // AudioSynthWaveform : la forme d'onde EST le patch (WAVEFORM_* dans
-// synth_waveform.h) -- ordre choisi pour couvrir les classiques
-// analogiques (sinus/dent de scie/carre/triangle), voir applyTrackPatch()
-// cote Teensy pour la correspondance avec les constantes WAVEFORM_*.
-constexpr uint8_t kAnalogPatchCount = 4;
+// synth_waveform.h). 11 depuis le 2026-09-18 ("recuperer un max de
+// patch pour tout les moteur"), pas les 4 classiques de depart --
+// ajoute Pulse/Dent de scie inversee/Sample & Hold/Triangle variable,
+// plus les versions "bandlimited" (anti-repliement, meilleure qualite
+// que les versions simples pour les memes formes) de dent de
+// scie/carre/pulse. WAVEFORM_ARBITRARY volontairement exclu (demande
+// une table d'onde fournie separement, pas juste un choix d'enum).
+// Voir applyTrackPatch() cote Teensy pour la correspondance avec les
+// constantes WAVEFORM_*.
+constexpr uint8_t kAnalogPatchCount = 11;
 constexpr const char *kAnalogPatchNames[kAnalogPatchCount] = {
-    "Sinus", "Dent de scie", "Carre", "Triangle",
+    "Sinus", "Dent de scie", "Carre", "Triangle", "Pulse",
+    "Dent inversee", "Sample & Hold", "Triangle var.",
+    "Dent BL", "Carre BL", "Pulse BL",
 };
 
 // SAMPLER (2026-09-18) : 2 samples de depart embarques en flash (voir
