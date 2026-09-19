@@ -64,6 +64,10 @@ bool gbUnload();
 // si rien n'a change ou si la cartouche n'a pas de RAM persistante.
 bool gbSaveNow();
 
+// Handshake V2: remains V1 unless the Teensy explicitly answers READY.
+// Pilot disabled by default in shared AZ2_Protocol.h.
+void gbSetAudioV2Ready(bool ready);
+
 // Direction/bouton Game Boy standard, correspond a NAV:/BTN: du Teensy
 // (voir handleTeensyLine() dans main.cpp) -- reutilise la croix/boutons
 // physiques deja cables, voir AZ2_CABLAGE_MASTER.md.
