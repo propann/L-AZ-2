@@ -47,9 +47,10 @@ bool gbIsLoaded();
 // loop() tant que la page JEUX est affichee.
 void gbRunFrame();
 
-// Decharge la ROM courante (appele en quittant la page JEUX) -- libere
-// la PSRAM utilisee.
-void gbUnload();
+// Tente de sauvegarder la RAM modifiee puis decharger la ROM.
+// Renvoie false si la SD refuse la sauvegarde : la ROM reste chargee
+// pour permettre un nouvel essai sans perdre la progression LSDJ.
+bool gbUnload();
 
 // Direction/bouton Game Boy standard, correspond a NAV:/BTN: du Teensy
 // (voir handleTeensyLine() dans main.cpp) -- reutilise la croix/boutons
