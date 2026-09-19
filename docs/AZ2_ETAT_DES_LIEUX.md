@@ -1,5 +1,76 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-19 -- branche `az3` : demarrage de l'AZ-3, TOUTES les commandes
+du Teensy deportees sur un Pico. Compile, RIEN teste sur le vrai
+materiel -- le Pico n'etait pas branche]**
+
+Demande utilisateur : "retirer tous les controles du Teensy et les
+deporter sur un Pico et dessus on met tout, on retire la croix et
+A/B/C/D mais on met 4 ou 8 encodeurs", avec l'architecture "l'ESP gere
+l'ecran/wifi, le Teensy fait les moteurs audio connectes au DAC et au
+rack de microcontroleurs, et le Pico fait tout ce qui est controle/LED".
+
+- **Branche `az3`** creee pour ce chantier ; `main` (AZ-2 qui marche)
+  n'est pas touchee.
+- **Pico ressuscite** : `src_pico/main.cpp` recupere de l'historique
+  (commit 73f50e7, avant sa suppression a l'audit de code mort 80a45ec),
+  environnement `ctrl_pico` restaure dans `platformio.ini`
+  (`raspberrypi@1.20.0` -- la version 1.13.0 tentee d'abord n'existe pas
+  au registre).
+- **Teensy vide de ses commandes** : les 17 broches de croix/A-B-C-D/
+  3 encodeurs (GPIO 2-6, 8, 9, 14-19, 22-25) sont liberees pour le rack
+  AZ-BUS. `Serial7` (pins 28/29) ouvert pour le lien Pico.
+- **La croix et A/B/C/D disparaissent en materiel mais PAS en
+  protocole** : le Pico synthetise `NAV:`/`BTN:` depuis ses encodeurs.
+  Consequence directe : l'UI de l'ESP32 (4680 lignes) n'a eu besoin
+  d'AUCUNE modification. C'est le choix de conception qui a economise le
+  plus de travail sur ce chantier.
+- **Deux CD74HC4067 partageant les lignes d'adresse** (un en sortie pour
+  les LED, un en entree pour les boutons d'encodeur) : 32 canaux pour 6
+  broches. C'est ce qui rend le budget GPIO tenable.
+- **Quadrature fiabilisee** -- vrai defaut trouve dans le firmware
+  d'origine : les encodeurs n'etaient lus qu'une fois par tour de
+  `loop()`, et le balayage LED en POV peut occuper ~7 ms par tour. Une
+  rotation rapide perdait des crans. Le defaut passait inapercu parce
+  que presque aucune LED ne s'allumait, donc la boucle etait rapide.
+  Corrige par un sondage appele apres CHAQUE impulsion LED (~150 us
+  d'intervalle max). L'interruption avait ete codee d'abord puis
+  ecartee : sur le coeur Arduino-mbed, attachInterrupt cree un
+  InterruptIn qui prend la main sur la broche, et un digitalRead de
+  cette broche depuis l'ISR demande une validation materielle
+  impossible ici. Le sondage reutilise le chemin deja confirme le
+  2026-09-13.
+- **Plafond materiel etabli** : un encodeur coute 2 broches de
+  quadrature. Le Pico RP2040 (26 GPIO utilisables) tient 4 encodeurs avec
+  2 de marge, 7 au maximum absolu. **8 encodeurs demandent 28 broches et
+  ne rentrent pas** -- il faudrait un RP2350B (Pico Plus 2, 48 GPIO), et
+  surtout pas un "Pico 2" standard qui est un RP2350A avec exactement les
+  memes 26 GPIO. Livre avec 4 encodeurs, la table `kEncoders` rend
+  l'extension triviale.
+- **Mux LED : la piste de 2026-09 n'a jamais ete refermee.** La panne
+  (zero LED sur 48 combinaisons) avait une cause identifiee -- broche EN
+  laissee en l'air, qui desactive le mux entier -- mais
+  AZ2_CABLAGE_PICO.md dit noir sur blanc que la correction EN -> GND
+  etait "en cours de cablage, pas encore reverifiee" au moment de
+  l'abandon. Le chemin mux LED et son mode `LEDTEST` sont donc conserves
+  tels quels plutot que remplaces : c'est un test de 5 minutes.
+- **Builds** : `master_teensy` SUCCESS (202 Ko flash, 81 Ko RAM1 libre),
+  `ctrl_pico` SUCCESS (4,1 Ko flash, `.uf2` genere donc flashable par
+  glisser-deposer en BOOTSEL).
+- **Limite honnete, importante** : le Pico n'a jamais ete detecte sur
+  cette machine (`lsusb` ne montre que Bluetooth/Logitech/webcam, aucun
+  VID 2e8a, aucun `/dev/ttyACM*`, aucun volume RPI-RP2) malgre plusieurs
+  scans. RIEN de ce chantier n'est verifie en reel : ni le mux d'entree,
+  ni la quadrature sous interruption, ni la synthese NAV:/BTN:, ni le
+  lien Serial7. Seuls le scan de matrice et les encodeurs avaient ete
+  confirmes en 2026-09-13, sur l'ancien firmware.
+- **Pas fait, assume** : le mode JEUX perd sa croix. Un encodeur emet une
+  impulsion, il ne peut pas maintenir une direction pour l'emulateur GB.
+  Il faudra mapper les 4 directions sur 4 pads de la matrice.
+
+Detail complet du brochage et procedure de test :
+[AZ3_PANNEAU_PICO.md](AZ3_PANNEAU_PICO.md).
+
 **[2026-09-19 -- bug reel trouve : le tracker effacait le panneau
 lateral a chaque edition, + panneau lateral refait avec 5 gros boutons
 (MOTEUR/PATCH/EFFET/CLAVIER/METRONOME) + metronome audio, teste en

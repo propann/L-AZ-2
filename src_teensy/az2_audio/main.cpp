@@ -17,7 +17,6 @@
 #include <Arduino.h>
 #include <Audio.h>
 #include <AZ2_Protocol.h>
-#include <Encoder.h>
 #include <SD.h>
 #include <synth_dexed.h>
 #include <synth_mda_epiano.h>
@@ -516,10 +515,18 @@ void setTrackEngine(uint8_t track, uint8_t engine) {
 // - Serial1 (pins 0/1)  : lien UART vers l'ESP32_CONTROL (menu/commandes UI).
 // Les deux sont lues et les reponses sont recopiees sur les deux, pour ne
 // pas casser le test manuel USB quand l'UART est branchee.
-// Pins 14/15 (ex-Serial3, ex-lien Pico) sont maintenant reutilisees en
-// entrees analogiques pour les potentiometres, voir updateLocalControls().
+// - Serial7 (pins 28/29) : lien UART vers le PICO_KEYPAD, panneau de
+//   controle de l'AZ-3 (matrice SparkFun, encodeurs, LED -- voir
+//   src_pico/main.cpp). Choisi parce que l'ex-Serial3 (14/15) du lien Pico
+//   d'origine avait ete reaffecte aux encodeurs locaux, et que Serial2
+//   (7/8) comme Serial5 (20/21) touchent l'I2S ou d'anciens boutons. Ces
+//   broches sont de nouveau libres depuis le retrait des commandes locales,
+//   mais on garde Serial7 : les broches liberees servent au rack AZ-BUS.
+// Les trois flux sont lus et les reponses recopiees sur Serial/Serial1,
+// pour ne pas casser le test manuel USB quand les UART sont branchees.
 String usbLine;
 String espLine;
+String picoLine;
 uint32_t lastStatusMs = 0;
 bool playing = false;
 
@@ -741,6 +748,15 @@ void announceClock() {
 // Definie ici (et non avec les autres announce*) car elle a besoin de
 // bpm/stepsPerBeat/trackEngine/trackPatch, declares plus haut dans ce
 // fichier mais apres l'ancien emplacement de cette fonction.
+// Salue le panneau de controle sur SON propre lien. Separe de
+// announceHello() : le Pico n'a que faire du dump d'etat complet (tempo,
+// division, moteur par piste) destine a l'ecran, il lui suffit de savoir
+// que le Teensy est vivant a l'autre bout.
+void announceHelloToPico() {
+  Serial.println(az2::kHelloAudio);
+  Serial7.println(az2::kHelloAudio);
+}
+
 void announceHello() {
   Serial.println(az2::kHelloAudio);
   Serial1.println(az2::kHelloAudio);
@@ -1372,11 +1388,11 @@ void handlePatchCommand(const String &line) {
 }
 
 // Etat du bus d'effets maitre -- source commune pour FX:reverb:/FX:delay:
-// (serie) ET les potards 2/3 cables directement sur le Teensy (voir
-// updateLocalControls()), pour que les deux chemins restent coherents.
-float masterVolume = 1.0f;  // potard 1
-float reverbWet = 0.0f;     // potard 2 ou FX:reverb:
-float delayWet = 0.0f;      // potard 3 ou FX:delay:
+// (serie) ET les messages POT: envoyes par le Pico (voir applyPotValue()),
+// pour que les deux chemins restent coherents.
+float masterVolume = 1.0f;  // POT:0
+float reverbWet = 0.0f;     // POT:1 ou FX:reverb:
+float delayWet = 0.0f;      // POT:2 ou FX:delay:
 
 void applyMasterMix() {
   mixMaster.gain(0, masterVolume);
@@ -1926,205 +1942,66 @@ void reportCpuUsage() {
 }
 
 // ---------------------------------------------------------------------
-// Croix + 4 boutons + 3 potentiometres, cables DIRECTEMENT sur le Teensy
-// -- remplace le Pico/la matrice SparkFun, abandonnes le 2026-09-14
-// ("ca m'a soule, on fait sans la matrice de bouton") apres un mux LED
-// impossible a faire fonctionner malgre un long diagnostic (voir
-// AZ2_CABLAGE_PICO.md). Cablage simple, pas de scan matriciel : chaque
-// switch a sa propre broche (INPUT_PULLUP, l'autre patte au GND commun),
-// voir AZ2_CABLAGE_MASTER.md pour le tableau complet. Ces memes croix+
-// boutons serviront plus tard de manette pour le mode JEUX (voir
-// AZ2_EMULATION_JEUX.md).
+// AZ-3 : PLUS AUCUNE COMMANDE SUR LE TEENSY.
+//
+// L'AZ-2 avait croix + A/B/C/D + 3 encodeurs cables DIRECTEMENT ici, sur
+// 17 broches (2-6, 8, 9, 14-19, 22-25). L'AZ-3 separe nettement les trois
+// cerveaux : l'ESP32-S3 fait l'ecran/le Wi-Fi/la SD, le Pico fait TOUTE la
+// facade (matrice SparkFun, encodeurs, LED), et le Teensy redevient un
+// moteur audio pur -- synthese, sequenceur, DAC PCM5102A et rack AZ-BUS.
+//
+// Ces 17 broches sont donc LIBRES, et c'est le but : le rack de moteurs a
+// besoin de broches (UART par slot, RESET/BOOT, SLOT_PRESENT, I2S d'entree)
+// -- voir docs/AZ2_BUS_RACK_MOTEURS.md.
+//
+// Le vocabulaire du protocole, lui, NE CHANGE PAS : le Pico emet les memes
+// NAV:/BTN:/POT:/ENC:/PAD:/MACRO: qu'emettaient les commandes locales. Le
+// Teensy les recoit sur Serial7 et les relaie a l'ESP32, dont l'UI (4680
+// lignes) continue de fonctionner sans modification. Les seuls messages sur
+// lesquels le Teensy agit lui-meme sont POT: (volume/reverb/delay, voir
+// applyPotValue) et PAD:/MACRO: (deja traites par handleCommand).
+//
+// SIMNAV:/SIMBTN: (outil de test, voir handleCommand) restent valables et
+// deviennent meme le seul moyen de simuler la facade sans Pico branche.
 // ---------------------------------------------------------------------
-constexpr int kNavUpPin = 2, kNavDownPin = 3, kNavLeftPin = 4, kNavRightPin = 5;
-constexpr int kBtnAPin = 6, kBtnBPin = 8, kBtnCPin = 9, kBtnDPin = 23;
 
-constexpr uint32_t kLocalDebounceMs = 15;
-
-struct DigitalControl {
-  const char *label;  // direction ("UP".."RIGHT") ou nom de bouton ("A".."D")
-  int pin;
-  bool isNav;  // true = croix (NAV:), false = bouton (BTN:)
-  bool state = false;
-  bool lastRaw = false;
-  uint32_t lastChangeMs = 0;
-};
-
-DigitalControl localControls[] = {
-    {"UP", kNavUpPin, true},
-    {"DOWN", kNavDownPin, true},
-    {"LEFT", kNavLeftPin, true},
-    {"RIGHT", kNavRightPin, true},
-    {"A", kBtnAPin, false},
-    {"B", kBtnBPin, false},
-    {"C", kBtnCPin, false},
-    {"D", kBtnDPin, false},
-};
-constexpr uint8_t kLocalControlCount = sizeof(localControls) / sizeof(localControls[0]);
-
-void setupEncoderButtons();  // definie plus bas avec le reste des encodeurs
-
-void setupLocalControls() {
-  for (DigitalControl &c : localControls) {
-    pinMode(c.pin, INPUT_PULLUP);
+// Applique une valeur de potentiometre 0-127 recue du Pico. Reprend
+// exactement le mapping qu'avaient les 3 encodeurs cables sur le Teensy en
+// AZ-2 (POT:0 = volume general, POT:1 = reverb, POT:2 = delay) -- cote
+// Pico, POT:0 et POT:1 sont portes par les encodeurs 3 et 4 ; POT:2 n'a pas
+// encore de molette et reste pilote par l'ecran (voir src_pico/main.cpp,
+// table kEncoders).
+void applyPotValue(uint8_t index, uint8_t value) {
+  const float unit = static_cast<float>(min(value, static_cast<uint8_t>(127))) / 127.0f;
+  switch (index) {
+    case 0: masterVolume = unit; break;
+    case 1: reverbWet = unit; break;
+    case 2: delayWet = unit; break;
+    default: return;  // index inconnu : ignorer plutot que d'ecraser un reglage
   }
-  setupEncoderButtons();
+  applyMasterMix();
 }
 
-void updateDigitalControls() {
-  const uint32_t now = millis();
-  for (DigitalControl &c : localControls) {
-    const bool raw = digitalRead(c.pin) == LOW;  // pull-up : appuye = LOW
-    if (raw != c.lastRaw) {
-      c.lastRaw = raw;
-      c.lastChangeMs = now;
-    }
-    if ((now - c.lastChangeMs) >= kLocalDebounceMs && raw != c.state) {
-      c.state = raw;
-      if (c.isNav) {
-        az2::printNav(Serial, c.label, raw);
-        az2::printNav(Serial1, c.label, raw);
-      } else {
-        az2::printBtn(Serial, c.label[0], raw);
-        az2::printBtn(Serial1, c.label[0], raw);
-      }
-    }
+// POT:<index>:<0-127> recu du Pico. Meme convention de rejet que les
+// autres commandes (voir sendCommandError) : une trame mal formee ou hors
+// bornes est signalee, pas avalee en silence.
+void handlePotCommand(const String &line) {
+  const int firstColon = line.indexOf(':');
+  const int secondColon = line.indexOf(':', firstColon + 1);
+  if (firstColon < 0 || secondColon < 0) {
+    sendCommandError("POT", "MALFORMED");
+    return;
   }
-}
 
-// Les 3 "potards" sont en realite des encodeurs rotatifs incrementaux
-// avec bouton poussoir integre (type EC11/KY-040), pas de simples
-// potentiometres lineaires -- precise le 2026-09-15 ("c'est des
-// encodeurs rotatifs avec un bouton"). Chaque encodeur = 2 broches en
-// quadrature (CLK/DT, decodees par la lib PJRC Encoder deja fournie
-// par le coeur Teensy -- interruptions materielles, disponibles sur
-// TOUTES les broches du Teensy 4.x, aucune restriction comme sur AVR)
-// + 1 broche SW (bouton, meme debounce digital que la croix/A-D
-// ci-dessus). Voir AZ2_CABLAGE_MASTER.md pour le tableau de brochage
-// complet.
-constexpr int kEncClkPins[3] = {14, 17, 22};  // A0, A3, A8
-constexpr int kEncDtPins[3] = {15, 18, 24};   // A1, A4, A10
-constexpr int kEncSwPins[3] = {16, 19, 25};   // A2, A5, A11
-
-Encoder rotaryEncoders[3] = {
-    Encoder(kEncClkPins[0], kEncDtPins[0]),
-    Encoder(kEncClkPins[1], kEncDtPins[1]),
-    Encoder(kEncClkPins[2], kEncDtPins[2]),
-};
-
-struct EncoderButton {
-  uint8_t index;
-  int pin;
-  bool state = false;
-  bool lastRaw = false;
-  uint32_t lastChangeMs = 0;
-};
-
-EncoderButton encoderButtons[3] = {
-    {0, kEncSwPins[0]},
-    {1, kEncSwPins[1]},
-    {2, kEncSwPins[2]},
-};
-
-void setupEncoderButtons() {
-  for (EncoderButton &b : encoderButtons) {
-    pinMode(b.pin, INPUT_PULLUP);
+  const long index = line.substring(firstColon + 1, secondColon).toInt();
+  const long value = line.substring(secondColon + 1).toInt();
+  if (index < 0 || index > 2 || value < 0 || value > 127) {
+    sendCommandError("POT", "OUT_OF_RANGE");
+    return;
   }
-}
 
-// Le clic n'a pas de fonction musicale assignee pour l'instant -- juste
-// transmis (ENC:<0-2>:DOWN/UP, voir AZ2_Protocol.h), meme principe que
-// BTN:C/BTN:D deja libres pour un usage futur.
-void updateEncoderButtons() {
-  const uint32_t now = millis();
-  for (EncoderButton &b : encoderButtons) {
-    const bool raw = digitalRead(b.pin) == LOW;  // pull-up : appuye = LOW
-    if (raw != b.lastRaw) {
-      b.lastRaw = raw;
-      b.lastChangeMs = now;
-    }
-    if ((now - b.lastChangeMs) >= kLocalDebounceMs && raw != b.state) {
-      b.state = raw;
-      az2::printEnc(Serial, b.index, raw);
-      az2::printEnc(Serial1, b.index, raw);
-    }
-  }
-}
-
-// La lib Encoder compte generalement 4 transitions par cran mecanique
-// sur les modules EC11/KY-040 courants -- kEncCountsPerDetent divise ce
-// brut en "crans" ; kEncStepPerDetent est l'amplitude (sur 0-127)
-// ajoutee/retiree par cran. kEncDirection inverse le sens si besoin --
-// premier test reel le 2026-09-15 ("les potentiometres doivent
-// fonctionner dans l'autre sens") : tourner a droite faisait baisser la
-// valeur avec kEncClkPins/kEncDtPins tels que cables -- corrige ici en
-// logiciel plutot que d'inverser CLK/DT au fer a souder.
-constexpr int32_t kEncCountsPerDetent = 4;
-constexpr int32_t kEncStepPerDetent = 2;
-constexpr int32_t kEncDirection = -1;
-
-// BUG REEL trouve le 2026-09-15 (encodeurs cables, premier test) : sans
-// toucher aux encodeurs, POT:0-2 derivait en continu de +/-1-2 unites
-// (rebond electrique/mecanique typique des encodeurs bon marche --
-// chaque micro-rebond sur CLK/DT est une "vraie" transition de
-// quadrature pour la lib Encoder, donc compte comme un mini-mouvement).
-// Fix : n'accepter une nouvelle position que si le brut est reste
-// STABLE au moins kEncSettleMs -- un vrai cran humain reste en place
-// bien plus longtemps que ca, un rebond electrique non.
-int32_t encLastDetents[3] = {0, 0, 0};       // derniere position ACCEPTEE
-int32_t encPendingDetents[3] = {0, 0, 0};    // derniere position BRUTE vue
-uint32_t encPendingSinceMs[3] = {0, 0, 0};   // depuis quand le brut est a cette valeur
-constexpr uint32_t kEncSettleMs = 5;
-
-uint8_t encValue[3] = {100, 0, 0};  // valeurs de depart : volume audible, effets a 0
-uint8_t potLastSent[3] = {255, 255, 255};  // 255 = jamais envoye
-uint32_t potLastSentMs[3] = {};
-// Evenements discrets (un cran = un delta net), pas de bruit ADC a
-// lisser comme avec de vrais potards -- limite courte, juste pour eviter
-// de saturer le port serie sur une rotation tres rapide.
-constexpr uint32_t kPotMinIntervalMs = 20;
-
-void updateEncoders() {
-  const uint32_t now = millis();
-  for (uint8_t i = 0; i < 3; ++i) {
-    const int32_t rawDetents = rotaryEncoders[i].read() / kEncCountsPerDetent;
-    if (rawDetents != encPendingDetents[i]) {
-      encPendingDetents[i] = rawDetents;
-      encPendingSinceMs[i] = now;
-    }
-    if (rawDetents != encLastDetents[i] && (now - encPendingSinceMs[i]) >= kEncSettleMs) {
-      const int32_t delta = (rawDetents - encLastDetents[i]) * kEncDirection;
-      encLastDetents[i] = rawDetents;
-      const int32_t next = static_cast<int32_t>(encValue[i]) + delta * kEncStepPerDetent;
-      encValue[i] = static_cast<uint8_t>(constrain(next, 0, 127));
-    }
-
-    if (encValue[i] == potLastSent[i]) {
-      continue;
-    }
-    if (now - potLastSentMs[i] < kPotMinIntervalMs) {
-      continue;
-    }
-    potLastSent[i] = encValue[i];
-    potLastSentMs[i] = now;
-
-    az2::printPot(Serial, i, encValue[i]);
-    az2::printPot(Serial1, i, encValue[i]);
-
-    const float unit = static_cast<float>(encValue[i]) / 127.0f;
-    switch (i) {
-      case 0: masterVolume = unit; break;
-      case 1: reverbWet = unit; break;
-      case 2: delayWet = unit; break;
-    }
-    applyMasterMix();
-  }
-}
-
-void updateLocalControls() {
-  updateDigitalControls();
-  updateEncoders();
-  updateEncoderButtons();
+  applyPotValue(static_cast<uint8_t>(index), static_cast<uint8_t>(value));
+  relayLine(line);
 }
 
 // ---------------------------------------------------------------------
@@ -2237,6 +2114,29 @@ void handleCommand(const String &line) {
 
   if (line.startsWith("ENC:")) {
     relayLine(line);
+    return;
+  }
+
+  // Facade AZ-3 : la croix et les boutons A/B/C/D n'existent plus en
+  // materiel, le Pico les synthetise depuis ses encodeurs (voir
+  // src_pico/main.cpp). Le Teensy n'en fait rien lui-meme -- il les fait
+  // suivre a l'ESP32, seul consommateur, exactement comme le faisaient
+  // updateDigitalControls() et SIMNAV:/SIMBTN: avant lui.
+  if (line.startsWith("NAV:") || line.startsWith("BTN:")) {
+    relayLine(line);
+    return;
+  }
+
+  // POT: est le seul message de facade sur lequel le Teensy agit lui-meme
+  // (volume/reverb/delay du bus maitre) -- il est AUSSI relaye pour que
+  // l'ecran affiche la bonne valeur.
+  if (line.startsWith("POT:")) {
+    handlePotCommand(line);
+    return;
+  }
+
+  if (line == az2::kHelloKeypad) {
+    announceHelloToPico();
     return;
   }
 
@@ -2408,16 +2308,15 @@ void handleCommand(const String &line) {
   }
 
   // SIMNAV:<UP|DOWN|LEFT|RIGHT>:<0|1> et SIMBTN:<A|B|C|D>:<0|1> --
-  // injectent un evenement croix/bouton EXACTEMENT comme
-  // updateDigitalControls() le fait pour un vrai appui physique (meme
-  // az2::printNav()/printBtn(), meme cible Serial1, seul chemin par
-  // lequel l'ESP32 recoit ces evenements -- voir kNavUpPin etc. plus
-  // haut). Outil de test ajoute le 2026-09-18 ("tu peut tester toi") --
-  // permet de piloter/valider le tracker (navigation, edition de
-  // valeur) via la liaison USB du Teensy, sans avoir les mains sur le
-  // vrai clavier physique. Ne passe PAS par le debounce ni l'etat local
-  // (localControls[]) -- une injection directe, pas un remplacement
-  // permanent du vrai cablage.
+  // injectent un evenement croix/bouton EXACTEMENT comme le fait
+  // aujourd'hui le panneau Pico (meme az2::printNav()/printBtn(), meme
+  // cible Serial1, seul chemin par lequel l'ESP32 recoit ces evenements).
+  // Outil de test ajoute le 2026-09-18 ("tu peut tester toi") -- permet de
+  // piloter/valider le tracker (navigation, edition de valeur) via la
+  // liaison USB du Teensy, sans avoir les mains sur le clavier physique.
+  // Depuis l'AZ-3 (2026-09-19), la croix et A/B/C/D n'existent plus en
+  // materiel : c'est donc aussi le seul moyen de simuler la facade quand
+  // le Pico n'est pas branche. Injection directe, sans debounce.
   if (line.startsWith("SIMNAV:")) {
     const int idx1 = line.indexOf(':');
     const int idx2 = line.indexOf(':', idx1 + 1);
@@ -2751,6 +2650,9 @@ void readStream(Stream &in, String &lineBuffer, AudioRxState *audioState) {
 void readSerialCommands() {
   readStream(Serial, usbLine, nullptr);
   readStream(Serial1, espLine, &gbAudioRx);
+  // Pas de paquets audio binaires sur le lien Pico (que du texte ligne a
+  // ligne) -- d'ou le nullptr, comme pour le flux USB.
+  readStream(Serial7, picoLine, nullptr);
 }
 
 // Verifie que la/les puce(s) PSRAM soudees sont bien detectees et
@@ -2880,6 +2782,15 @@ void setup() {
   static uint8_t serial1RxBuf[2048];
   Serial1.addMemoryForRead(serial1RxBuf, sizeof(serial1RxBuf));
   Serial1.begin(az2::kControlBaud);
+  // Lien vers le panneau de controle Pico. Meme debit que le reste
+  // (az2::kControlBaud) -- le Pico utilise la meme constante partagee, les
+  // deux bouts restent donc d'accord automatiquement. Tampon RX agrandi
+  // pour la meme raison que Serial1 : a 921600 bauds, une rafale
+  // d'evenements de facade (rotation rapide + plusieurs pads) ne doit pas
+  // deborder le petit tampon par defaut du core.
+  static uint8_t serial7RxBuf[1024];
+  Serial7.addMemoryForRead(serial7RxBuf, sizeof(serial7RxBuf));
+  Serial7.begin(az2::kControlBaud);
   // Graine pour random() (PROB:, voir advanceTick()) -- micros() au boot
   // varie assez d'un demarrage a l'autre (delais SD/audio/etc. avant ici)
   // pour eviter de rejouer EXACTEMENT le meme motif "aleatoire" a chaque
@@ -2960,16 +2871,14 @@ void setup() {
   metroEnv.sustain(0.0f);
   metroEnv.release(5.0f);
 
-  // Bus d'effets maitre : sec a fond, reverb/delay a 0 par defaut tant
-  // que les potards n'ont pas ete lus une premiere fois (voir
-  // updateLocalControls()) -- pour ne pas surprendre au premier boot
-  // avec un effet impose avant meme la premiere lecture ADC.
+  // Bus d'effets maitre : sec a fond, reverb/delay a 0 par defaut tant que
+  // le Pico n'a pas envoye son premier POT: (voir applyPotValue()) -- pour
+  // ne pas surprendre au premier boot avec un effet impose.
   reverbUnit.roomsize(0.6f);
   reverbUnit.damping(0.4f);
   delayUnit.delay(0, 350.0f);  // temps fixe en v1, cf feuille de route pour le rendre reglable
   applyMasterMix();
 
-  setupLocalControls();
   setupSampleSd();
 
   checkPsram();
@@ -2990,6 +2899,5 @@ void loop() {
   feedGbAudioQueue();
   updateScope();
   updateSequencer();
-  updateLocalControls();
   sendStatus();
 }

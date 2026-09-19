@@ -82,6 +82,10 @@ constexpr uint8_t kPadCols = 4;
 
 constexpr const char *kHelloControl = "HELLO:ESP32_CONTROL";
 constexpr const char *kHelloAudio = "HELLO:TEENSY_AUDIO";
+// Retabli pour l'AZ-3 (2026-09-19) : supprime a l'audit de code mort du
+// 2026-09-16 avec le reste du Pico, il revient avec le panneau de controle
+// dedie -- 3e cerveau, voir docs/AZ3_PANNEAU_PICO.md.
+constexpr const char *kHelloKeypad = "HELLO:PICO_KEYPAD";
 constexpr const char *kPlay = "PLAY";
 constexpr const char *kStop = "STOP";
 constexpr const char *kStatusReady = "READY";

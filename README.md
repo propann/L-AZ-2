@@ -1,4 +1,12 @@
-# AZ-2
+# AZ-2 / AZ-3
+
+> **Branche `az3` — developpement en cours.** L'AZ-3 passe a **3 cerveaux**
+> en deportant TOUTES les commandes du Teensy vers un Pico dedie, et
+> ajoute un rack physique de moteurs audio. Voir
+> [docs/AZ3_PANNEAU_PICO.md](docs/AZ3_PANNEAU_PICO.md) (facade) et
+> [docs/AZ2_BUS_RACK_MOTEURS.md](docs/AZ2_BUS_RACK_MOTEURS.md) (rack).
+> **Rien n'est encore verifie sur le vrai materiel.** La description
+> ci-dessous reste celle de l'AZ-2 (branche `main`), qui fonctionne.
 
 AZ-2 est une groovebox hardware modulaire a 2 cerveaux, orientee
 Game Boy/GBC : un **Teensy 4.1** pour tout le moteur audio temps reel
@@ -47,7 +55,15 @@ Deux cartes, deux roles nets :
 - Liaison UART 230400 bauds entre les deux, protocole texte ligne par
   ligne + paquets binaires (audio GB, oscilloscope) -- partage via
   `lib/AZ2_Protocol/`.
-- **Périmètre figé le 2026-09-18 :** le boîtier AZ-2 est plein. Aucun rack multi-ESP ni recâblage de commandes ; les cartouches AZ-BUS/AZ-CHIP/AZ-VA sont reportées à l’AZ-3.
+- **Périmètre AZ-2 figé le 2026-09-18 :** le boîtier AZ-2 est plein. Aucun
+  rack multi-ESP ni recâblage de commandes ; les cartouches AZ-BUS/AZ-CHIP/
+  AZ-VA sont reportées à l’AZ-3.
+- **AZ-3 (cette branche), 3 cerveaux :** l’ESP32-S3 garde l’écran/Wi-Fi/SD,
+  le Teensy devient un moteur audio pur (DAC + rack AZ-BUS), et un **Pico
+  RP2040** reprend toute la façade — matrice SparkFun 4×4, encodeurs, LED.
+  La croix et les boutons A/B/C/D physiques disparaissent : leurs messages
+  `NAV:`/`BTN:` sont synthétisés par les encodeurs, donc l’UI de l’écran
+  n’a pas eu à changer.
 
 Detail complet : [docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md](docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md).
 
@@ -70,6 +86,7 @@ Detail complet : [docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md](docs/AZ2_ARCHITECTUR
 - [Portage MicroDexed-touch](docs/AZ2_PORTAGE_MICRODEXED_TOUCH.md)
 - [Feuille de route du moteur audio](docs/AZ2_FEUILLE_DE_ROUTE_MOTEUR.md)
 - [Architecture multi-moteurs et sampler](docs/AZ2_ARCHITECTURE_MULTI_MOTEURS.md)
+- [AZ-3 — panneau de contrôle Pico (matrice, encodeurs, LED)](docs/AZ3_PANNEAU_PICO.md)
 - [Étude AZ-3 — rack de moteurs interchangeables](docs/AZ2_BUS_RACK_MOTEURS.md)
 - [Étude AZ-3 — flash des modules moteurs](docs/AZ2_FLASH_MODULES.md)
 - [Étude AZ-3 — module ESP32 AZ-VA1](docs/AZ2_MODULE_ESP32_AZ_VA1.md)
@@ -89,9 +106,10 @@ L-AZ-2/
 ├── src_teensy/
 │   ├── az2_audio/          # firmware Teensy actif (env master_teensy)
 │   └── microdexed-touch/   # source vendored, reference pour le portage
-└── src_esp32/
-    ├── az2_screen/         # firmware ESP32 actif (env screen_esp)
-    └── az2_control/        # bring-up historique, garde en reference (env ui_esp)
+├── src_esp32/
+│   ├── az2_screen/         # firmware ESP32 actif (env screen_esp)
+│   └── az2_control/        # bring-up historique, garde en reference (env ui_esp)
+└── src_pico/               # AZ-3 : panneau de controle complet (env ctrl_pico)
 ```
 
 ## Environnements PlatformIO
@@ -103,11 +121,15 @@ L-AZ-2/
 - `ui_esp` : ESP32-S3 devkit nu, bring-up historique garde comme
   reference/tests isoles (pas dans `default_envs`) -- sources
   `src_esp32/az2_control/`.
+- `ctrl_pico` : **AZ-3**, Pico RP2040, panneau de controle complet
+  (matrice SparkFun 4x4, encodeurs, LED via mux) -- sources `src_pico/`.
+  Hors `default_envs` tant que le materiel AZ-3 n'est pas cable.
 
 ```
 pio run -e master_teensy -e screen_esp
 pio run -e master_teensy -t upload
 pio run -e screen_esp -t upload
+pio run -e ctrl_pico -t upload      # AZ-3, panneau de controle
 ```
 
 Headers partages dans `lib/` (`AZ2_Protocol.h`).
