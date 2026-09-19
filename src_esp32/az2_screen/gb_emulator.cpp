@@ -164,6 +164,10 @@ bool atomicSaveRaw(const char *path, const uint8_t *data, size_t len) {
     return false;
   }
 
+  // Rotation de deux copies : le .sav courant reste intact jusqu'a
+  // ce que le .tmp soit entierement ecrit. Ce protocole n'est pas un
+  // journal transactionnel et ne garantit pas l'atomicite sur toutes
+  // les cartes FAT ; voir feuille de route pour la validation coupure.
   // Ne jamais ecraser le seul backup si sa suppression ou le
   // deplacement de la sauvegarde courante echoue.
   const bool hadSave = SD.exists(path);
@@ -259,13 +263,14 @@ bool gbLoadCartRamFile(const char *path) {
   return true;
 }
 
-void gbLoadCartRamIfPresent() {
+bool gbLoadCartRamIfPresent() {
   if (cartRam == nullptr || cartRamSize == 0 || saveRamPath[0] == '\0') {
-    return;
+    return true;
   }
+  const bool primaryExists = SD.exists(saveRamPath);
   if (gbLoadCartRamFile(saveRamPath)) {
     cartRamDirty = false;
-    return;
+    return true;
   }
 
   // Une sauvegarde finale absente ou tronquee peut etre recuperee depuis
@@ -274,11 +279,24 @@ void gbLoadCartRamIfPresent() {
   // ressembler a une sauvegarde valide tout en ayant perdu des morceaux.
   char backupPath[kSavePathCapacity + 5];
   const int backupLen = snprintf(backupPath, sizeof(backupPath), "%s.bak", saveRamPath);
-  if (backupLen >= 0 && static_cast<size_t>(backupLen) < sizeof(backupPath) &&
-      gbLoadCartRamFile(backupPath)) {
+  const bool backupPathValid = backupLen >= 0 &&
+      static_cast<size_t>(backupLen) < sizeof(backupPath);
+  const bool backupExists = backupPathValid && SD.exists(backupPath);
+  if (backupExists && gbLoadCartRamFile(backupPath)) {
     cartRamDirty = false;
+    // Reconstituer le .sav normal a la prochaine sauvegarde, sans
+    // ecraser immediatement la seule copie valide (.bak).
+    cartRamDirty = true;
     Serial.println("GB:SAVE_RECOVERED_FROM_BACKUP");
+    return true;
   }
+  if (primaryExists || backupExists || !backupPathValid) {
+    // Une sauvegarde existante mais invalide ne doit JAMAIS etre
+    // remplacee silencieusement par une SRAM vierge.
+    Serial.println("GB:SAVE_EXISTING_FILES_INVALID");
+    return false;
+  }
+  return true;  // nouvelle cartouche, aucune sauvegarde sur la SD
 }
 
 // lcd_draw_line du coeur : convertit les 160 pixels de la ligne en RGB565
@@ -396,9 +414,16 @@ uint8_t gbScanRoms(char names[][kGbRomNameLen]) {
       // selon la version de la lib SD -- ne garder que le nom de fichier.
       const int slash = name.lastIndexOf('/');
       const String base = (slash >= 0) ? name.substring(slash + 1) : name;
-      strncpy(names[count], base.c_str(), kGbRomNameLen - 1);
-      names[count][kGbRomNameLen - 1] = '\0';
-      ++count;
+      // Ne pas tronquer les noms : deux ROM differant seulement apres
+      // le 39e caractere devenaient indiscernables et pouvaient charger
+      // la mauvaise cartouche (ou partager accidentellement un .sav).
+      if (base.length() >= kGbRomNameLen) {
+        Serial.print("GB:ROM_NAME_TOO_LONG:");
+        Serial.println(base);
+      } else {
+        strncpy(names[count], base.c_str(), kGbRomNameLen);
+        ++count;
+      }
     }
     entry.close();
   }
@@ -501,7 +526,10 @@ bool gbLoadRom(const char *filename) {
         return false;
       }
       strcpy(dot, ".sav");
-      gbLoadCartRamIfPresent();
+      if (!gbLoadCartRamIfPresent()) {
+        gbUnload();
+        return false;
+      }
     } else {
       Serial.println("GB:CART_RAM_ALLOCATION_ERROR");
       gbUnload();
