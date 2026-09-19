@@ -59,6 +59,10 @@ GbRuntimeStats gbRuntimeStats();
 // pour permettre un nouvel essai sans perdre la progression LSDJ.
 bool gbUnload();
 
+// Sauvegarde manuelle de la SRAM de la cartouche courante. No-op reussi
+// si rien n'a change ou si la cartouche n'a pas de RAM persistante.
+bool gbSaveNow();
+
 // Direction/bouton Game Boy standard, correspond a NAV:/BTN: du Teensy
 // (voir handleTeensyLine() dans main.cpp) -- reutilise la croix/boutons
 // physiques deja cables, voir AZ2_CABLAGE_MASTER.md.
