@@ -1023,6 +1023,13 @@ constexpr int16_t kTrkSideW = kSeqRightEdge - kTrkSideX;
 constexpr int16_t kTrkSideH = kSeqStepCount * (kDetailRowH + kDetailRowGap);
 constexpr int16_t kTrkExpandH = 26;
 constexpr int16_t kTrkExpandY = kDetailTop + kTrkSideH - kTrkExpandH;
+// Bouton MOTEUR (2026-09-19, "une fenetre de reglage pour chaque
+// moteur pour les attribuer a une piste") -- juste au-dessus
+// d'AGRANDIR, meme largeur/hauteur, ouvre directement la page MOTEURS
+// (assignation moteur/patch integre par piste) sur la piste
+// actuellement affichee ici -- avant ca il fallait quitter le tracker
+// et passer par le menu pour changer le moteur d'une piste.
+constexpr int16_t kTrkEngineY = kTrkExpandY - kTrkExpandH - 4;
 
 void drawTrkSidePanel() {
   const uint8_t t = static_cast<uint8_t>(selectedSeqTrack);
@@ -1072,6 +1079,16 @@ void drawTrkSidePanel() {
   }
   gfx->print(buf);
 
+  // Bouton MOTEUR (2026-09-19) -- ouvre la page MOTEURS (choix du
+  // moteur + patch integre par piste) directement sur cette piste, voir
+  // le commentaire de kTrkEngineY plus haut.
+  gfx->drawRect(static_cast<int16_t>(kTrkSideX + 1), kTrkEngineY, static_cast<int16_t>(kTrkSideW - 2),
+                kTrkExpandH, accent);
+  gfx->setTextSize(1);
+  gfx->setTextColor(accent);
+  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 12), static_cast<int16_t>(kTrkEngineY + 8));
+  gfx->print("MOTEUR >");
+
   // Bouton AGRANDIR -- ouvre la page PATCH complete (filtre/ADSR
   // editables + oscilloscope) pour CETTE piste (demande : "un bouton
   // pour agrandir et avoir le controle total du patch").
@@ -1085,6 +1102,10 @@ void drawTrkSidePanel() {
 
 bool hitTestTrkExpand(int16_t x, int16_t y) {
   return inBox(x, y, kTrkSideX, kTrkExpandY, kTrkSideW, kTrkExpandH);
+}
+
+bool hitTestTrkEngine(int16_t x, int16_t y) {
+  return inBox(x, y, kTrkSideX, kTrkEngineY, kTrkSideW, kTrkExpandH);
 }
 
 void drawSeqDetailPage() {
@@ -4274,6 +4295,11 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       patchTrack = selectedSeqTrack;
       scopeHasData = false;
       goTo(Screen::Patch);
+    } else if (hitTestTrkEngine(x, y)) {
+      // "MOTEUR" (2026-09-19) -- ouvre la page MOTEURS directement sur
+      // cette piste, voir le commentaire de kTrkEngineY.
+      selectedEngineTrack = selectedSeqTrack;
+      goTo(Screen::Engines);
     } else if (hitTestTrkPlay(x, y)) {
       sendToTeensy(seqPlaying ? az2::kStop : az2::kPlay);
     } else if (hitTestTrkBpm(x, y) >= 0) {

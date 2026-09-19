@@ -1,5 +1,28 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-19 -- bouton MOTEUR dans le panneau lateral du tracker, PAS
+teste visuellement (tactile, hors de portee de l'outil SIMNAV/SIMBTN)]**
+
+Demande : "une fenetre de reglage pour chaque moteur pour les
+attribuer a une piste regler les patch effet". Interprete comme :
+le panneau lateral du tracker (`drawTrkSidePanel()`) affichait deja le
+patch actif + un bouton "AGRANDIR" qui ouvre la page PATCH complete
+(filtre/ADSR/DXR/EXP/BXP, tout le travail d'hier soir) pour la piste
+affichee -- il manquait le meme raccourci pour CHANGER de moteur (avant
+: fallait quitter le tracker, passer par le menu, page MOTEURS).
+Ajoute un 2e bouton "MOTEUR >" juste au-dessus, meme principe :
+ouvre `Screen::Engines` directement sur la piste du tracker
+(`selectedEngineTrack = selectedSeqTrack`). Les "effets" (SFX : ARP/
+CUT/RET) restent la ou ils etaient deja -- colonne FX du tracker
+lui-meme, pas une fenetre separee (ce sont des effets PAR PAS, pas
+par piste, une fenetre dediee n'aurait pas de sens pour eux).
+
+**Limite honnete** : ce bouton est purement tactile (comme AGRANDIR
+avant lui) -- mon outil de test habituel (SIMNAV:/SIMBTN:, croix et
+boutons physiques) ne peut RIEN verifier ici, seulement compiler et
+flasher. Reste a confirmer par l'utilisateur en tapant dessus sur le
+vrai ecran.
+
 **[2026-09-19 -- BRAIDS 8->43 formes, ANALOG 4->11 formes d'onde,
 testes sur le vrai materiel]**
 
