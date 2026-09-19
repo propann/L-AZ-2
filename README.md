@@ -54,7 +54,7 @@ Detail complet : [docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md](docs/AZ2_ARCHITECTUR
 
 ## Documentation
 
-- [Audit de code du 19 septembre 2026](docs/AZ2_AUDIT_CODE_2026-09-19.md) : verdict, risques prioritaires et plan de stabilisation.\n- [Etat des lieux](docs/AZ2_ETAT_DES_LIEUX.md) : ce qui est verifie en
+- [Audit de code du 19 septembre 2026](docs/AZ2_AUDIT_CODE_2026-09-19.md) : verdict, risques prioritaires et plan de stabilisation.\n- [Audit émulation LSDJ, Tetris et Mario](docs/AZ2_AUDIT_EMULATION_LSDJ_TETRIS_MARIO.md) : performances, fidélité audio/vidéo, sauvegardes et plan de qualification.\n- [Etat des lieux](docs/AZ2_ETAT_DES_LIEUX.md) : ce qui est verifie en
   reel vs seulement compile, mis a jour au fil de l'eau.
 - [Feuille de route](docs/AZ2_FEUILLE_DE_ROUTE.md) : ordre de
   construction, ce qui reste a faire.
