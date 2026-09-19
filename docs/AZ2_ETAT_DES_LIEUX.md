@@ -1,5 +1,55 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-19 -- effets DEDIES par piste (bitcrusher + delay courte) --
+reverb/delay COMPLETEMENT independantes par piste abandonne (teste : ne
+rentre pas en RAM), 12/16 pistes abandonne aussi (garde 8) -- teste sur
+le vrai materiel, pire cas y compris]**
+
+Demande initiale : "si sampleur actif et qu'on peut avoir une chaine
+d'effet independante sur chaque piste" + "si on est bien cote puissance
+de calcul on peut monter a 12 ou 16 piste". Verifie AVANT de coder quoi
+que ce soit (methode de ce soir : mesurer, pas supposer) :
+
+- **12/16 pistes + reverb/delay COMPLETEMENT dediees par piste : ne
+  rentre PAS en memoire.** Teste directement sur le materiel : 12x
+  `AudioEffectFreeverb` seul (chacun ~25 Ko de buffers fixes en RAM1/
+  DTCM) depasse deja la RAM1 disponible (~81 Ko libres) des le link.
+  12x `AudioEffectDelay` seul passe de justesse (81 Ko -> 14 Ko libres,
+  bien trop juste pour etre fiable). Utilisateur, une fois ces chiffres
+  presentes : "on garde 8 piste mais on blinde d'effet[s] propre[s]
+  plus simple[s] ... c'etait juste une idee" -- 12/16 pistes abandonne,
+  reste a 8 (`kTrackCount`/`kSeqTrackCount` inchanges).
+- **2 effets simples et VRAIMENT dedies par piste a la place** (pas un
+  bus partage) : bitcrusher (reduction de bits, cout memoire quasi nul)
+  et delay courte a une seule repetition (pas de feedback, "plus
+  simple"). Chaine : `trackFilter -> trackCrush -> {sec, trackDelay} ->
+  trackFx (mixeur sec/mouille par piste) -> mixeur de groupe` (remplace
+  l'ancienne connexion directe filtre -> groupe). Nouvelles commandes
+  Teensy `CRUSH:<piste>:<bits 1-16>` et `DELAY:<piste>:<ms 0-500>:
+  <mix 0-127>`. Reverb reste UNIQUEMENT sur le bus maitre partage
+  (inchangee, trop chere en RAM pour etre dediee).
+- **Bug reel trouve et corrige pendant les tests** : `AudioMemory(200)`
+  (le pool de blocs partage par TOUS les `AudioEffectDelay`,
+  proportionnellement au temps de delay configure) etait bien trop
+  juste des l'ajout du delay par piste -- UNE SEULE piste a 300ms
+  faisait deja grimper le pool a 197/200. Augmente a
+  `AudioMemory(700)` (nouvelle constante nommee `kAudioMemoryBlocks`,
+  ~175 Ko en RAM2 sur les ~454 Ko libres, large marge conservee) --
+  re-teste au PIRE cas possible (8 pistes, delay 500ms + mix 127 +
+  bitcrusher 4 bits SUR TOUTES, toutes en train de jouer en meme
+  temps) : 694/700 blocs, CPU 8.9% (pic 10.4%) -- tient, marge fine
+  mais reelle. Au passage : le tracer d'onde (SCOPE:) pointait sur
+  `trackFilter[]` (avant les nouveaux effets) -- deplace sur `trackFx[]`
+  pour montrer ce qui est reellement entendu. Petit bug cosmetique
+  corrige aussi : `MEM?` affichait un `/200` fige au lieu de la vraie
+  taille du pool (nouvelle constante `kAudioMemoryBlocks` utilisee aux
+  deux endroits).
+- **Pas encore fait** : aucune interface ecran pour CRUSH:/DELAY: (page
+  PATCH) -- pour l'instant reglable seulement en serie direct, comme
+  DXR/EXP/BXP l'etaient avant leur propre chantier UI.
+
+Compile propre (`master_teensy`, `native`), 9 tests natifs au vert.
+
 **[2026-09-19 -- page PATCH : A+GAUCHE/DROITE edite la valeur, en plus
 de A+HAUT/BAS -- teste sur le vrai materiel]**
 

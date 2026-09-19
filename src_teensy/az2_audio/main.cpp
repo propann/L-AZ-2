@@ -44,6 +44,11 @@ void checkHeapTest(uint32_t bytes);  // definie plus bas, utilisee par handleCom
 // les pistes monter a 8") -- performance mesuree reelle avant/apres ce
 // changement, voir AZ2_FEUILLE_DE_ROUTE_MOTEUR.md.
 constexpr uint8_t kTrackCount = 8;
+// Taille du pool AudioMemory() partage -- constante nommee (2026-09-19,
+// corrige un affichage fige a "/200" dans reportCpuUsage() alors que le
+// pool reel etait deja passe a 700, voir setup()) : une seule source de
+// verite pour l'appel AudioMemory() ET le diagnostic MEM?.
+constexpr uint16_t kAudioMemoryBlocks = 700;
 constexpr uint8_t kStepCount = 16;
 constexpr uint8_t kNotesPerTrack = 2;  // polyphonie legere par piste (accords)
 constexpr uint8_t kLiveNotes = 4;      // polyphonie de la voix "jeu au clavier"
@@ -179,6 +184,33 @@ int8_t scopeTrack = -1;         // -1 = desactive
 // audible tant qu'on ne touche pas FILT:, voir handleFiltCommand()).
 AudioFilterStateVariable trackFilter[kTrackCount];
 
+// Effets DEDIES par piste (2026-09-19, "on blinde d'effet[s] propre[s]
+// plus simple[s]" -- suite d'une demande initiale de reverb+delay
+// COMPLETEMENT independantes par piste, abandonnee : teste directement
+// sur le vrai materiel, 8 (et a fortiori 12) instances de
+// AudioEffectFreeverb OU AudioEffectDelay a elles seules depassent deja
+// la RAM1/DTCM disponible (~81 Ko libres ; Freeverb ~25 Ko/instance,
+// Delay ~5.4 Ko/instance mais tres juste en pile a 12). Reverb reste
+// donc UNIQUEMENT sur le bus maitre partage (reverbUnit, inchange).
+// 2 effets simples et bon marche a la place, VRAIMENT dedies a chaque
+// piste cette fois (pas un bus partage) :
+//   - BITCRUSHER (reduction de bits/frequence d'echantillonnage,
+//     cout memoire quasi nul -- juste 2 octets d'etat par instance,
+//     voir effect_bitcrusher.h) -- transparent par defaut (bits=16),
+//     ideal pour du grain lo-fi sur les percussions/samples.
+//   - DELAY courte, UNE seule repetition (pas de feedback en v1,
+//     "plus simple" demande explicitement) -- ~5.4 Ko/piste (juste
+//     une file de pointeurs vers le pool AudioMemory partage, pas un
+//     tampon dedie, voir effect_delay.h), verifie que ca rentre a 8
+//     pistes (8x43 Ko sur les ~81 Ko libres).
+// Chaine : trackFilter -> trackCrush (toujours actif) -> {sec vers
+// trackFx canal 0 ; ET vers trackDelay -> trackFx canal 1} -> trackFx
+// (mixeur sec/mouille, reglage DELAY: par piste) -> mixeur de groupe
+// (remplace l'ancienne connexion directe filtre -> groupe).
+AudioEffectBitcrusher trackCrush[kTrackCount];
+AudioEffectDelay trackDelay[kTrackCount];
+AudioMixer4 trackFx[kTrackCount];  // 0=sec (toujours a 1.0), 1=retour delay (regle par DELAY:)
+
 // Connexion FIXE enveloppe -> filtre, POUR LES 5 MOTEURS (2026-09-18,
 // voir le commentaire de trackAnalogEnv[] plus haut pour le bug que ca
 // corrige) -- trackAnalogEnv[track] est desormais le seul chemin vers
@@ -197,15 +229,46 @@ AudioConnection patchEnvToFilter[kTrackCount] = {
 // (2026-09-18, TOUS moteurs -- voir plus haut), pas directement le
 // filtre ni le mixeur de groupe.
 AudioConnection patchTrackIn[kTrackCount];
-// Connexion FIXE filtre -> groupe (channel deterministe par piste, pas
+
+// Filtre -> bitcrusher -> {sec, delay} -> mixeur sec/mouille par piste
+// (voir trackCrush[]/trackDelay[]/trackFx[] plus haut) -- 4 tableaux de
+// connexions FIXES, un par etape de la chaine (meme raisonnement que
+// patchEnvToFilter[] : pas besoin d'etre dynamique, l'ordre des effets
+// ne change jamais, seuls leurs REGLAGES changent via CRUSH:/DELAY:).
+AudioConnection patchFilterToCrush[kTrackCount] = {
+    AudioConnection(trackFilter[0], 0, trackCrush[0], 0), AudioConnection(trackFilter[1], 0, trackCrush[1], 0),
+    AudioConnection(trackFilter[2], 0, trackCrush[2], 0), AudioConnection(trackFilter[3], 0, trackCrush[3], 0),
+    AudioConnection(trackFilter[4], 0, trackCrush[4], 0), AudioConnection(trackFilter[5], 0, trackCrush[5], 0),
+    AudioConnection(trackFilter[6], 0, trackCrush[6], 0), AudioConnection(trackFilter[7], 0, trackCrush[7], 0),
+};
+AudioConnection patchCrushToFxDry[kTrackCount] = {
+    AudioConnection(trackCrush[0], 0, trackFx[0], 0), AudioConnection(trackCrush[1], 0, trackFx[1], 0),
+    AudioConnection(trackCrush[2], 0, trackFx[2], 0), AudioConnection(trackCrush[3], 0, trackFx[3], 0),
+    AudioConnection(trackCrush[4], 0, trackFx[4], 0), AudioConnection(trackCrush[5], 0, trackFx[5], 0),
+    AudioConnection(trackCrush[6], 0, trackFx[6], 0), AudioConnection(trackCrush[7], 0, trackFx[7], 0),
+};
+AudioConnection patchCrushToDelay[kTrackCount] = {
+    AudioConnection(trackCrush[0], 0, trackDelay[0], 0), AudioConnection(trackCrush[1], 0, trackDelay[1], 0),
+    AudioConnection(trackCrush[2], 0, trackDelay[2], 0), AudioConnection(trackCrush[3], 0, trackDelay[3], 0),
+    AudioConnection(trackCrush[4], 0, trackDelay[4], 0), AudioConnection(trackCrush[5], 0, trackDelay[5], 0),
+    AudioConnection(trackCrush[6], 0, trackDelay[6], 0), AudioConnection(trackCrush[7], 0, trackDelay[7], 0),
+};
+AudioConnection patchDelayToFxWet[kTrackCount] = {
+    AudioConnection(trackDelay[0], 0, trackFx[0], 1), AudioConnection(trackDelay[1], 0, trackFx[1], 1),
+    AudioConnection(trackDelay[2], 0, trackFx[2], 1), AudioConnection(trackDelay[3], 0, trackFx[3], 1),
+    AudioConnection(trackDelay[4], 0, trackFx[4], 1), AudioConnection(trackDelay[5], 0, trackFx[5], 1),
+    AudioConnection(trackDelay[6], 0, trackFx[6], 1), AudioConnection(trackDelay[7], 0, trackFx[7], 1),
+};
+// Connexion FIXE fx -> groupe (channel deterministe par piste, pas
 // besoin d'etre dynamique comme patchTrackIn[]) -- pistes 0-3 sur
 // mixTracksA canaux 0-3, pistes 4-7 sur mixTracksB canaux 0-3 (voir
-// trackGroupMixer()/trackGroupChannel()).
-AudioConnection patchFilterToGroup[kTrackCount] = {
-    AudioConnection(trackFilter[0], 0, mixTracksA, 0), AudioConnection(trackFilter[1], 0, mixTracksA, 1),
-    AudioConnection(trackFilter[2], 0, mixTracksA, 2), AudioConnection(trackFilter[3], 0, mixTracksA, 3),
-    AudioConnection(trackFilter[4], 0, mixTracksB, 0), AudioConnection(trackFilter[5], 0, mixTracksB, 1),
-    AudioConnection(trackFilter[6], 0, mixTracksB, 2), AudioConnection(trackFilter[7], 0, mixTracksB, 3),
+// trackGroupMixer()/trackGroupChannel()). Source = trackFx[] (sortie de
+// la chaine d'effets) depuis le 2026-09-19, pas trackFilter[] direct.
+AudioConnection patchFxToGroup[kTrackCount] = {
+    AudioConnection(trackFx[0], 0, mixTracksA, 0), AudioConnection(trackFx[1], 0, mixTracksA, 1),
+    AudioConnection(trackFx[2], 0, mixTracksA, 2), AudioConnection(trackFx[3], 0, mixTracksA, 3),
+    AudioConnection(trackFx[4], 0, mixTracksB, 0), AudioConnection(trackFx[5], 0, mixTracksB, 1),
+    AudioConnection(trackFx[6], 0, mixTracksB, 2), AudioConnection(trackFx[7], 0, mixTracksB, 3),
 };
 AudioConnection patchGroupA(mixTracksA, 0, mixFinal, 0);
 AudioConnection patchGroupB(mixTracksB, 0, mixFinal, 1);
@@ -1529,6 +1592,57 @@ void handleFiltCommand(const String &line) {
   relayLine(line);
 }
 
+// CRUSH:<piste 0-7>:<bits 1-16> -- effet bitcrusher DEDIE a la piste
+// (2026-09-19, voir trackCrush[] plus haut). 16 = transparent (aucune
+// reduction), plus petit = plus de grain lo-fi. Frequence
+// d'echantillonnage laissee au taux natif (pas de reduction de
+// frequence en v1, "plus simple" -- uniquement la profondeur de bits,
+// deja tres audible seule).
+void handleCrushCommand(const String &line) {
+  const int idx1 = line.indexOf(':');
+  const int idx2 = line.indexOf(':', idx1 + 1);
+  if (idx1 < 0 || idx2 < 0) {
+    sendCommandError("CRUSH", "MALFORMED");
+    return;
+  }
+  const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+  const int bits = constrain(line.substring(idx2 + 1).toInt(), 1, 16);
+  if (track >= kTrackCount) {
+    sendCommandError("CRUSH", "OUT_OF_RANGE");
+    return;
+  }
+  trackCrush[track].bits(static_cast<uint8_t>(bits));
+  relayLine(line);
+}
+
+// DELAY:<piste 0-7>:<temps ms 0-500>:<mix 0-127> -- echo DEDIE a la
+// piste (2026-09-19, voir trackDelay[]/trackFx[] plus haut). UNE seule
+// repetition (pas de feedback en v1, "plus simple" demande
+// explicitement) -- mix 0 = inaudible (100% sec), 127 = sec+echo a
+// egalite. 500ms plafond volontaire (pas les 4s max de la lib) : reste
+// un effet "court" par piste, la queue de pointeurs de l'objet
+// (~5.4 Ko) est deja fixe quel que soit le reglage, seul le nombre de
+// blocs REELLEMENT retenus dans le pool AudioMemory partage varie ici.
+void handleDelayCommand(const String &line) {
+  const int idx1 = line.indexOf(':');
+  const int idx2 = line.indexOf(':', idx1 + 1);
+  const int idx3 = line.indexOf(':', idx2 + 1);
+  if (idx1 < 0 || idx2 < 0 || idx3 < 0) {
+    sendCommandError("DELAY", "MALFORMED");
+    return;
+  }
+  const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+  const int ms = constrain(line.substring(idx2 + 1, idx3).toInt(), 0, 500);
+  const int mix = constrain(line.substring(idx3 + 1).toInt(), 0, 127);
+  if (track >= kTrackCount) {
+    sendCommandError("DELAY", "OUT_OF_RANGE");
+    return;
+  }
+  trackDelay[track].delay(0, ms < 1 ? 1.0f : static_cast<float>(ms));
+  trackFx[track].gain(1, static_cast<float>(mix) / 127.0f);
+  relayLine(line);
+}
+
 // ENV:<piste 0-7>:<attaque 0-127>:<chute 0-127>:<maintien 0-127>:
 // <relachement 0-127> -- ADSR editable, demande le 2026-09-15
 // ("modifiant les patch adsr"). S'applique a trackAnalogEnv[] : SEUL
@@ -1846,7 +1960,11 @@ void handleScopeCommand(const String &line) {
       return;
     }
     scopeTrack = static_cast<int8_t>(track);
-    patchScopeTap.connect(trackFilter[track], 0, scopeQueue, 0);
+    // trackFx[] (sortie de la chaine d'effets), pas trackFilter[]
+    // directement (2026-09-19) -- affiche ce qui est REELLEMENT
+    // entendu (filtre + bitcrusher + delay dedies), pas juste le signal
+    // avant les nouveaux effets par piste.
+    patchScopeTap.connect(trackFx[track], 0, scopeQueue, 0);
     scopeQueue.begin();
   }
   relayLine(line);
@@ -1922,7 +2040,8 @@ void reportCpuUsage() {
   Serial.print(AudioMemoryUsage());
   Serial.print(":max=");
   Serial.print(AudioMemoryUsageMax());
-  Serial.println("/200");
+  Serial.print('/');
+  Serial.println(kAudioMemoryBlocks);
 }
 
 // ---------------------------------------------------------------------
@@ -2399,6 +2518,16 @@ void handleCommand(const String &line) {
 
   if (line.startsWith("ENV:")) {
     handleEnvCommand(line);
+    return;
+  }
+
+  if (line.startsWith("CRUSH:")) {
+    handleCrushCommand(line);
+    return;
+  }
+
+  if (line.startsWith("DELAY:")) {
+    handleDelayCommand(line);
     return;
   }
 
@@ -2916,12 +3045,24 @@ void setup() {
   // mise sous tension. Pas une vraie source d'entropie, suffisant pour
   // une probabilite de declenchement (pas un usage cryptographique).
   randomSeed(micros());
-  // 200 (au lieu de 48) depuis le passage a 8 pistes + le bus d'effets
-  // maitre : AudioEffectDelay retient ses blocs dans ce pool partage,
-  // proportionnellement au temps de delay configure (350ms ~= 121 blocs a
-  // 44.1kHz/128) -- PAS dans une memoire dediee. Marge mesuree via CPU?
-  // (voir AZ2_FEUILLE_DE_ROUTE_MOTEUR.md, "performance reelle").
-  AudioMemory(200);
+  // 700 (au lieu de 200) depuis l'ajout du DELAY: dedie par piste
+  // (2026-09-19, voir trackDelay[]) : CHAQUE AudioEffectDelay retient
+  // ses blocs dans ce pool PARTAGE, proportionnellement au temps de
+  // delay configure (~103 blocs pour 300ms a 44.1kHz/128) -- PAS dans
+  // une memoire dediee a l'objet (voir effect_delay.h, sa propre
+  // memoire statique n'est qu'une file de POINTEURS vers ce pool).
+  // Mesure reelle sur le vrai materiel : UNE SEULE piste a 300ms
+  // faisait deja grimper le pool a 197/200 (200 etait beaucoup trop
+  // juste des que plusieurs pistes ont un delay actif en meme temps).
+  // kAudioMemoryBlocks blocs = 700*256o = ~175 Ko en RAM2 (sur les
+  // ~454 Ko libres mesures avant ce changement, voir
+  // AZ2_ETAT_DES_LIEUX.md, "charge CPU/memoire mesuree") -- large
+  // marge conservee pour le tas (malloc/new, GB emulator etc.). PIRE
+  // CAS reteste sur le vrai materiel apres ce changement : 8 pistes
+  // TOUTES a 500ms/mix max + bitcrusher + toutes en train de jouer en
+  // meme temps -- 694/700 blocs, CPU 8.9% (pic 10.4%), pas de
+  // depassement.
+  AudioMemory(kAudioMemoryBlocks);
 
   // Son GB (voir gbAudioQueue plus haut) : NON_STALLING -- si l'anneau
   // envoie plus vite que la queue ne se vide (ne devrait pas arriver,
@@ -2963,6 +3104,19 @@ void setup() {
     trackFilter[t].frequency(15000.0f);
     trackFilter[t].resonance(0.7f);
   }
+
+  // Effets par piste (2026-09-19, voir trackCrush[]/trackDelay[]/
+  // trackFx[]) : transparents par defaut -- bitcrusher a bits=16 (pas
+  // de reduction, voir AudioEffectBitcrusher::bits()), delay a 0ms et
+  // mixeur 100% sec tant que CRUSH:/DELAY: n'a pas ete envoye.
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    trackCrush[t].bits(16);
+    trackCrush[t].sampleRate(SAMPLE_RATE);
+    trackDelay[t].delay(0, 1.0f);  // ~0ms, jamais totalement 0 (voir AudioEffectDelay::delay())
+    trackFx[t].gain(0, 1.0f);      // sec toujours a fond
+    trackFx[t].gain(1, 0.0f);      // retour delay a 0 -- inaudible tant que DELAY: n'a pas monte le mix
+  }
+
   loadDexedPatch(liveVoice, 0);  // "FM-Rhodes" plutot qu'un init_voice vide
 
   // Branche chaque piste sur son moteur/patch par defaut (voir
