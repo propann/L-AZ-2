@@ -16,7 +16,7 @@ Ce document distingue **code intégré**, **à implémenter**, et **à valider s
 - [x] Ne plus libérer une cartouche modifiée si son enregistrement échoue : gbUnload() retourne false, le changement de page et de ROM est bloqué, message SD SAVE ERROR et nouvel essai possible par C. À qualifier matériel.
 - [ ] Remplacer la rotation à deux noms .sav/.bak par un journal de génération vérifié (taille + CRC/version), récupération du fichier le plus récent valide ; éviter la perte de l'ancien backup avant confirmation de la nouvelle version.
 - [x] Ne plus tronquer silencieusement les noms du navigateur : les noms complets jusqu'à 87 octets sont conservés, les noms trop longs sont ignorés avec diagnostic. [ ] Ajouter un navigateur des noms longs au-delà de cette limite et une pagination de collections de plus de 40 ROMs.
-- [ ] Charger et valider une nouvelle ROM sans interrompre le jeu courant en cas de lecture/allocation échouée : l'ouverture et la taille sont validées avant déchargement, mais la nouvelle allocation et la lecture restent postérieures au déchargement.
+- [x] Charger la nouvelle ROM en staging : ouverture, taille, allocation PSRAM et lecture complète sont validées avant de sauvegarder/décharger le jeu courant. L'initialisation du cœur reste postérieure au basculement et doit encore être couverte par tests de cartouches invalides.
 - [ ] Sauvegarder et restaurer le RTC MBC3 ; ne pas confondre sauvegarde SRAM et état complet de l'émulateur.
 
 - [x] Refuser de démarrer une cartouche dont les sauvegardes existantes sont invalides (au lieu de lancer une SRAM vierge). Après récupération .bak, le premier enregistrement conserve cette copie valide.
