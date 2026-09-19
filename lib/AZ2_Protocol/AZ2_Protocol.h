@@ -57,6 +57,60 @@ constexpr uint32_t kGbAudioSampleRate = 14000;
 // 2026-09-18, voir AZ2_ETAT_DES_LIEUX.md).
 constexpr uint8_t kGbAudioSamplesPerPacket = static_cast<uint8_t>(kGbAudioSampleRate / (4194304.0 / 70224.0));
 
+// ---------------------------------------------------------------------
+// Audio GB V2 — CONTRAT PREPARE, NON ACTIVE SUR LE FIL.
+// Le V1 ci-dessus reste le format utilise par les deux firmwares. Ces
+// constantes/helpers permettent de developper et tester le futur format
+// sans basculer une seule extremite par erreur.
+//
+// Frame V2 proposee :
+// [magic=0x03][version=2][flags][format][seqLE16][payloadLenLE16]
+// [sampleRateLE16][payload...][crc16LE]
+// CRC-16/CCITT-FALSE sur version..fin payload (magic et CRC exclus).
+// flags bit0 = stereo. format 1=PCM_U8, 2=PCM_S16LE.
+// ---------------------------------------------------------------------
+constexpr uint8_t kGbAudioV2Magic = 0x03;
+constexpr uint8_t kGbAudioV2Version = 2;
+constexpr uint8_t kGbAudioV2FlagStereo = 0x01;
+constexpr uint8_t kGbAudioV2FormatPcmU8 = 1;
+constexpr uint8_t kGbAudioV2FormatPcmS16Le = 2;
+constexpr uint8_t kGbAudioV2HeaderBytes = 10;
+constexpr uint8_t kGbAudioV2CrcBytes = 2;
+constexpr uint16_t kGbAudioV2MaxPayload = 2048;
+
+inline uint16_t readLe16(const uint8_t *p) {
+  return static_cast<uint16_t>(p[0]) |
+         static_cast<uint16_t>(static_cast<uint16_t>(p[1]) << 8);
+}
+
+inline void writeLe16(uint8_t *p, uint16_t value) {
+  p[0] = static_cast<uint8_t>(value & 0xFFu);
+  p[1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
+}
+
+inline uint16_t crc16CcittFalse(const uint8_t *data, size_t len) {
+  uint16_t crc = 0xFFFFu;
+  for (size_t i = 0; i < len; ++i) {
+    crc ^= static_cast<uint16_t>(data[i]) << 8;
+    for (uint8_t bit = 0; bit < 8; ++bit) {
+      crc = (crc & 0x8000u) ? static_cast<uint16_t>((crc << 1) ^ 0x1021u)
+                            : static_cast<uint16_t>(crc << 1);
+    }
+  }
+  return crc;
+}
+
+inline bool gbAudioV2HeaderSane(const uint8_t *header, size_t len) {
+  if (header == nullptr || len < kGbAudioV2HeaderBytes) return false;
+  if (header[0] != kGbAudioV2Magic || header[1] != kGbAudioV2Version) return false;
+  const uint8_t format = header[3];
+  if (format != kGbAudioV2FormatPcmU8 && format != kGbAudioV2FormatPcmS16Le) return false;
+  const uint16_t payloadLen = readLe16(header + 6);
+  const uint16_t sampleRate = readLe16(header + 8);
+  return payloadLen > 0 && payloadLen <= kGbAudioV2MaxPayload &&
+         sampleRate >= 8000 && sampleRate <= 48000;
+}
+
 // Oscilloscope, Teensy -> ESP32 cette fois (demande 2026-09-15, "une
 // fenetre ou on voit l'onde du son jouer evoluer en modifiant le
 // patch"). Meme principe de paquet binaire que le son GB (magique +
