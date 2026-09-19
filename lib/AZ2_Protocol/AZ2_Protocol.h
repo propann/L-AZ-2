@@ -221,8 +221,9 @@ struct GbAudioV2Decoder {
         crc = (crc & 0x8000u) ? static_cast<uint16_t>((crc << 1) ^ 0x1021u)
                              : static_cast<uint16_t>(crc << 1);
     }
+    const uint16_t expectedCrc = receivedCrc;
     reset();
-    if (crc != receivedCrc) {
+    if (crc != expectedCrc) {
       ++rejectedCrc;
       return false;
     }
