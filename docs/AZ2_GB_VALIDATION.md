@@ -20,6 +20,23 @@ Ce document est la fiche de test officielle du sous-système GB/GBC. Une fonctio
 
 Ne pas ajouter de ROM commerciale au dépôt. Une empreinte et le nom/version suffisent.
 
+## Priorité de la campagne actuelle : jouer + enregistrer, sans tracker/LSDJ
+
+**Parcours de validation MVP :** [décision CONSOLE + CAPTURE](AZ2_GB_ROADMAP_IMPLEMENTATION.md#décision-produit--mvp-console--capture-19-septembre-2026). Les tests LSDJ et la coexistence avec le tracker sont différés ; ils ne bloquent pas la qualification du jeu et de la capture.
+
+| Étape sur prototype réel | Résultat attendu | Statut |
+| --- | --- | --- |
+| Démarrer une ROM de test GB puis une GBC | Contrôles et image stables ; son audible au DAC | NOT RUN |
+| Jouer 5 min sans enregistrer | Cadence, latence des boutons et son de référence notés | NOT RUN |
+| Pendant une partie, appuyer sur l'encodeur 0 (REC) | Accusé `REC:STARTED`, indicateur REC ; le jeu ne s'arrête pas | NOT RUN |
+| Jouer et enregistrer 10 à 20 s, puis appuyer de nouveau | `REC:STOPPED` avec chemin sur la SD Teensy, fichier WAV lisible sur ordinateur | NOT RUN |
+| Écouter le WAV et comparer à la sortie DAC | Capture du son de la ROM sans blancs, distorsions ou décalages anormaux | NOT RUN |
+| Laisser une deuxième prise atteindre 30 s | Arrêt automatique propre, fichier valide, pas d'écrasement de la première prise | NOT RUN |
+| Reprendre le jeu, faire D (SAVE), puis C (quitter) | Sauvegarde cartouche restaurable, partie/ROM conservée en cas d'erreur SD | NOT RUN |
+| SD Teensy absente/pleine, coupure pendant capture | Erreur REC explicite ; les anciens WAV et sauvegardes restent intacts | NOT RUN |
+
+**À consigner pour chaque prise :** SHA des deux firmwares, ROM et empreinte, mode GB/GB Color, durée jouée et enregistrée, FPS/missed frames, diagnostics UART/audio, taille du WAV, statut `sampler_patch`, observations à l'écoute et éventuelles erreurs SD. Un test `PASS` exige la preuve sur carte réelle : la compilation CI ne suffit pas.
+
 ## Test 1 — Boot et liaison double firmware
 
 1. Compiler `master_teensy` et `screen_esp` depuis le même SHA.
