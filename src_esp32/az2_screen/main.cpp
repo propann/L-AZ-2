@@ -3263,6 +3263,12 @@ void drawScreen(Screen s) {
 }
 
 void goTo(Screen s) {
+  // La sortie de la page Jeux doit etre annulee si la carte SD refuse
+  // la sauvegarde : conserver le jeu en RAM et la navigation intacte.
+  if (s != Screen::Retro && gbIsLoaded() && !gbUnload()) {
+    Serial.println("GB:NAV_BLOCKED_UNSAVED_RAM");
+    return;
+  }
   // Memorise d'ou on vient (voir navPrevious plus haut) -- AVANT tout
   // le reste, pour que meme un "retour" (goTo(navPrevious)) enregistre
   // correctement l'etape precedente (permet de faire l'aller-retour
@@ -3283,8 +3289,6 @@ void goTo(Screen s) {
     gbRomCount = gbScanRoms(gbRomNames);
     gbRomScroll = 0;
     selectedRomIndex = 0;
-  } else if (s != Screen::Retro && gbIsLoaded()) {
-    gbUnload();
   }
 
   // Page MOTEURS (2026-09-19) : aligne le defilement de la liste PATCH
