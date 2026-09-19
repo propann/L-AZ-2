@@ -203,21 +203,21 @@ bool atomicSaveRaw(const char *path, const uint8_t *data, size_t len) {
 // partie (rien n'est ecrit avant gbUnload(), voir l'audit de code du
 // meme jour pour la recommandation de sauvegarde periodique, pas
 // faite ici).
-void gbSaveCartRam() {
+bool gbSaveCartRam() {
+  if (!cartRamDirty) return true;
   if (cartRam == nullptr || cartRamSize == 0 || saveRamPath[0] == '\0') {
-    return;
-  }
-  if (!cartRamDirty) {
-    return;
+    Serial.println("GB:SAVE_UNAVAILABLE");
+    return false;
   }
   if (atomicSaveRaw(saveRamPath, cartRam, cartRamSize)) {
     cartRamDirty = false;
     Serial.print("GB:SAVED:");
     Serial.println(saveRamPath);
-  } else {
-    Serial.print("GB:SAVE_WRITE_ERROR:");
-    Serial.println(saveRamPath);
+    return true;
   }
+  Serial.print("GB:SAVE_WRITE_ERROR:");
+  Serial.println(saveRamPath);
+  return false;
 }
 
 bool gbLoadCartRamFile(const char *path) {
@@ -352,9 +352,13 @@ bool gbIsLoaded() {
   return romLoaded;
 }
 
-void gbUnload() {
-  if (romLoaded) {
-    gbSaveCartRam();  // avant de liberer cartRam -- voir saveRamPath
+bool gbUnload() {
+  // Ne jamais liberer une cartouche dont les modifications n'ont pas
+  // pu etre sauvegardees. Le joueur peut reessayer apres avoir retabli
+  // la carte SD, plutot que perdre silencieusement son morceau LSDJ.
+  if (romLoaded && !gbSaveCartRam()) {
+    Serial.println("GB:UNLOAD_BLOCKED_UNSAVED_RAM");
+    return false;
   }
   if (romData != nullptr) {
     heap_caps_free(romData);
@@ -368,6 +372,7 @@ void gbUnload() {
   romTitle[0] = '\0';
   saveRamPath[0] = '\0';
   cartRamDirty = false;
+  return true;
 }
 
 uint8_t gbScanRoms(char names[][kGbRomNameLen]) {
@@ -434,7 +439,10 @@ bool gbLoadRom(const char *filename) {
   }
   // Ouvrir et valider le fichier avant de liberer la partie precedente.
   // La sauvegarde de l'ancienne cartouche est toujours effectuee ici.
-  gbUnload();
+  if (!gbUnload()) {
+    romFile.close();
+    return false;
+  }
   romSize = static_cast<uint32_t>(requestedRomSize);
   romData = static_cast<uint8_t *>(heap_caps_malloc(romSize, MALLOC_CAP_SPIRAM));
   if (romData == nullptr) {
@@ -546,7 +554,7 @@ void gbRunFrame() {
     const uint32_t now = millis();
     if (now - gbLastAutosaveMs >= kGbAutosaveIntervalMs) {
       gbLastAutosaveMs = now;
-      gbSaveCartRam();  // no-op silencieux si cartRamSize==0 (jeu sans sauvegarde), voir la fonction
+      gbSaveCartRam();  // conserve dirty=true si l'ecriture echoue, pour reessayer
     }
   }
 }
