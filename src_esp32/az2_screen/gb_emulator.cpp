@@ -149,7 +149,10 @@ bool atomicSaveRaw(const char *path, const uint8_t *data, size_t len) {
     return false;
   }
 
-  SD.remove(tmpPath);
+  if (SD.exists(tmpPath) && !SD.remove(tmpPath)) {
+    Serial.println("GB:SAVE_TMP_REMOVE_ERROR");
+    return false;
+  }
   File f = SD.open(tmpPath, FILE_WRITE);
   if (!f) {
     return false;
@@ -161,12 +164,27 @@ bool atomicSaveRaw(const char *path, const uint8_t *data, size_t len) {
     return false;
   }
 
-  if (SD.exists(path)) {
-    SD.remove(bakPath);
-    SD.rename(path, bakPath);
+  // Ne jamais ecraser le seul backup si sa suppression ou le
+  // deplacement de la sauvegarde courante echoue.
+  const bool hadSave = SD.exists(path);
+  if (hadSave) {
+    if (SD.exists(bakPath) && !SD.remove(bakPath)) {
+      Serial.println("GB:SAVE_BACKUP_REMOVE_ERROR");
+      SD.remove(tmpPath);
+      return false;
+    }
+    if (!SD.rename(path, bakPath)) {
+      Serial.println("GB:SAVE_BACKUP_RENAME_ERROR");
+      SD.remove(tmpPath);
+      return false;
+    }
   }
   if (!SD.rename(tmpPath, path)) {
-    SD.rename(bakPath, path);
+    // En cas d'echec, conserver le backup meme si la restauration
+    // echoue : gbLoadCartRamIfPresent() peut encore lire .bak.
+    if (hadSave && !SD.rename(bakPath, path)) {
+      Serial.println("GB:SAVE_RESTORE_ERROR");
+    }
     SD.remove(tmpPath);
     return false;
   }
@@ -377,10 +395,19 @@ uint8_t gbScanRoms(char names[][kGbRomNameLen]) {
 }
 
 bool gbLoadRom(const char *filename) {
-  gbUnload();
+  if (filename == nullptr || filename[0] == '\0' || strchr(filename, '/') != nullptr ||
+      strchr(filename, '\\') != nullptr || strcmp(filename, ".") == 0 ||
+      strcmp(filename, "..") == 0) {
+    Serial.println("GB:ROM_INVALID_NAME");
+    return false;
+  }
 
-  char path[64];
-  snprintf(path, sizeof(path), "/games/%s", filename);
+  char path[kSavePathCapacity];
+  const int pathLen = snprintf(path, sizeof(path), "/games/%s", filename);
+  if (pathLen < 0 || static_cast<size_t>(pathLen) >= sizeof(path)) {
+    Serial.println("GB:ROM_PATH_TOO_LONG");
+    return false;
+  }
   File romFile = SD.open(path);
   if (!romFile) {
     Serial.print("GB:ROM_OPEN_ERROR:");
@@ -388,7 +415,16 @@ bool gbLoadRom(const char *filename) {
     return false;
   }
 
-  romSize = romFile.size();
+  const size_t requestedRomSize = romFile.size();
+  if (requestedRomSize < 0x150 || requestedRomSize > 8U * 1024U * 1024U) {
+    Serial.println("GB:ROM_INVALID_SIZE");
+    romFile.close();
+    return false;
+  }
+  // Ouvrir et valider le fichier avant de liberer la partie precedente.
+  // La sauvegarde de l'ancienne cartouche est toujours effectuee ici.
+  gbUnload();
+  romSize = static_cast<uint32_t>(requestedRomSize);
   romData = static_cast<uint8_t *>(heap_caps_malloc(romSize, MALLOC_CAP_SPIRAM));
   if (romData == nullptr) {
     Serial.println("GB:ROM_TOO_BIG_FOR_PSRAM");
@@ -420,7 +456,8 @@ bool gbLoadRom(const char *filename) {
   size_t detectedSaveSize = 0;
   if (gb_get_save_size_s(&gb, &detectedSaveSize) != 0 || detectedSaveSize > UINT32_MAX) {
     Serial.println("GB:SAVE_SIZE_UNSUPPORTED");
-    detectedSaveSize = 0;
+    gbUnload();
+    return false;
   }
   cartRamSize = static_cast<uint32_t>(detectedSaveSize);
   cartRamDirty = false;
@@ -435,15 +472,21 @@ bool gbLoadRom(const char *filename) {
       const int savePathLen = snprintf(saveRamPath, sizeof(saveRamPath), "/games/%s", filename);
       if (savePathLen < 0 || static_cast<size_t>(savePathLen) >= sizeof(saveRamPath)) {
         Serial.println("GB:SAVE_PATH_TOO_LONG");
-        saveRamPath[0] = '\0';
+        gbUnload();
+        return false;
       }
       char *dot = strrchr(saveRamPath, '.');
-      if (dot != nullptr) {
-        strcpy(dot, ".sav");
+      if (dot == nullptr || static_cast<size_t>(dot - saveRamPath) + sizeof(".sav") > sizeof(saveRamPath)) {
+        Serial.println("GB:SAVE_PATH_INVALID");
+        gbUnload();
+        return false;
       }
+      strcpy(dot, ".sav");
       gbLoadCartRamIfPresent();
     } else {
-      cartRamSize = 0;  // pas de sauvegarde possible, mais on continue sans planter
+      Serial.println("GB:CART_RAM_ALLOCATION_ERROR");
+      gbUnload();
+      return false;
     }
   }
 
