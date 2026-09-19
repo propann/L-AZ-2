@@ -2536,7 +2536,20 @@ void drawRomRow(uint8_t index) {
   gfx->setTextSize(2);
   gfx->setTextColor(RGB565_WHITE);
   gfx->setCursor(static_cast<int16_t>(kMargin + 10), static_cast<int16_t>(y + 6));
-  gfx->print(gbRomNames[index]);
+  // L'identifiant SD reste complet dans gbRomNames[]. On tronque
+  // uniquement le LIBELLE visible pour ne jamais dessiner hors cadre.
+  constexpr size_t kRomLabelChars = 32;
+  char label[kRomLabelChars + 1];
+  const size_t fullLen = strlen(gbRomNames[index]);
+  if (fullLen <= kRomLabelChars) {
+    strncpy(label, gbRomNames[index], sizeof(label));
+    label[kRomLabelChars] = '\0';
+  } else {
+    memcpy(label, gbRomNames[index], kRomLabelChars - 3);
+    memcpy(label + kRomLabelChars - 3, "...", 3);
+    label[kRomLabelChars] = '\0';
+  }
+  gfx->print(label);
 }
 
 // Renvoie l'index ABSOLU (pas relatif a la page) de la ROM touchee.
@@ -5197,6 +5210,22 @@ void loop() {
       Serial.print(gbFrameTimeMaxUs);
       Serial.print(":missed=");
       Serial.println(gbMissedFrames);
+
+      // Diagnostic discret dans la bande superieure reservee au mode GB.
+      // Ne touche jamais aux 432 px de l'image du jeu (y=24..455).
+      const GbRuntimeStats runtime = gbRuntimeStats();
+      gfx->fillRect(120, 0, 270, 22, RGB565_BLACK);
+      gfx->setTextSize(1);
+      gfx->setTextColor(gbMissedFrames == 0 ? kDim : RGB565_RED);
+      gfx->setCursor(120, 5);
+      char perfLabel[48];
+      snprintf(perfLabel, sizeof(perfLabel), "%lu.%02luFPS %luus M%lu S%u",
+               static_cast<unsigned long>(fpsX100 / 100),
+               static_cast<unsigned long>(fpsX100 % 100),
+               static_cast<unsigned long>(frameAvgUs),
+               static_cast<unsigned long>(gbMissedFrames),
+               static_cast<unsigned>(runtime.autosaveFailures));
+      gfx->print(perfLabel);
       gbFrameCount = 0;
       gbFrameTimeTotalUs = 0;
       gbFrameTimeMaxUs = 0;
