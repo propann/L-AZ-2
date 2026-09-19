@@ -1,7 +1,7 @@
 # AZ-2 — Protocole audio Game Boy V2
 
-**Statut : émetteur ESP32 + récepteur Teensy implémentés pour un pilote mono PCM8/14 kHz ; désactivés par défaut.**  
-Le transport utilisé aujourd'hui reste V1 : mono PCM8 / 14 kHz, paquet `0x01 + len8 + payload`.
+**Statut : émetteur ESP32 + récepteur Teensy implémentés ; le pilote V2 transporte désormais du PCM8 stéréo 14 kHz mais reste désactivé par défaut.**  
+Le transport de production reste V1 : mono PCM8 / 14 kHz, paquet `0x01 + len8 + payload`. Quand le pilote V2 est activé et négocié, l'ESP32 envoie L/R entrelacé avec séquence et CRC. Le Teensy valide la trame puis downmixe actuellement vers son bus audio mono existant : la stéréo est donc préservée sur le lien, pas encore jusqu'au DAC.
 
 Le but du V2 est de permettre une évolution coordonnée vers une meilleure qualité audio sans casser les commandes texte ni flasher une seule carte avec un format incompatible.
 
@@ -37,12 +37,13 @@ Les constantes, l'encodeur et le décodeur à CRC sont définis dans `lib/AZ2_Pr
 
 ## Profil recommandé pour le premier essai
 
-Premier palier haute qualité envisagé **après validation du pilote mono V2** :
+Premier palier matériel à qualifier :
 
 - PCM8,
 - stéréo,
-- 32 kHz,
-- environ 64 ko/s de payload avant overhead,
+- 14 kHz avec le générateur APU actuel (~28 ko/s de payload),
+- séquence + CRC16 + fallback V1,
+- puis seulement après validation, étude d'un passage à 32 kHz (~64 ko/s de payload),
 - UART 921600 : plafond brut théorique ~92,16 ko/s en 8N1.
 
 Ce profil laisse de la marge aux commandes. Le PCM16 stéréo 44,1 kHz brut est exclu sur l'UART actuel : ~176,4 ko/s de payload, avant même le framing.
