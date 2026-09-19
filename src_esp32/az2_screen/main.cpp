@@ -3508,12 +3508,56 @@ char matrixRandomChar() {
   return static_cast<char>(random(33, 126));
 }
 
+// Les caracteres et les notes viennent du miroir EXISTANT du tracker,
+// jamais d'une chaine decorative inventee ni d'un scan SD en animation.
+char trackerRainChar(uint8_t column, int16_t row) {
+  const uint8_t track = static_cast<uint8_t>(column % kSeqTrackCount);
+  const uint8_t step = static_cast<uint8_t>(
+      (static_cast<int>(seqCurrentStep) + static_cast<int>(row) + kSeqStepCount * 4) % kSeqStepCount);
+  if (!seqStepOn[currentPattern][track][step]) return '-';
+  constexpr char kPitchLetters[12] = {'C','c','D','d','E','F','f','G','g','A','a','B'};
+  return kPitchLetters[seqStepNote[currentPattern][track][step] % 12];
+}
+
+void drawSaverDashboard() {
+  gfx->fillScreen(RGB565_BLACK);
+  gfx->setTextSize(2);
+  gfx->setTextColor(RGB565(100, 190, 120));
+  gfx->setCursor(24, 32);
+  gfx->print("AZ-2  TRACKER");
+  gfx->setTextSize(2);
+  gfx->setTextColor(RGB565_WHITE);
+  char header[48];
+  snprintf(header, sizeof(header), "PAT %02u  STEP %02u", currentPattern + 1, seqCurrentStep + 1);
+  gfx->setCursor(24, 86);
+  gfx->print(header);
+  snprintf(header, sizeof(header), "BPM %u  %s", static_cast<unsigned>(seqBpm + 0.5f),
+           seqPlaying ? "PLAY" : "STOP");
+  gfx->setCursor(24, 117);
+  gfx->print(header);
+  gfx->setTextSize(2);
+  for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
+    const uint8_t step = seqCurrentStep % kSeqStepCount;
+    const bool on = seqStepOn[currentPattern][t][step];
+    const uint8_t midi = seqStepNote[currentPattern][t][step];
+    static const char *const notes[12] = {"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};
+    char line[44];
+    snprintf(line, sizeof(line), "T%u %-3s %s", t + 1, on ? notes[midi % 12] : "---",
+             az2::engineName(trackEngine[t]));
+    gfx->setTextColor(on ? RGB565(100, 190, 120) : RGB565(65, 100, 75));
+    gfx->setCursor(24, static_cast<int16_t>(165 + t * 32));
+    gfx->print(line);
+  }
+}
+
 void screensaverEnter() {
   screensaverActive = true;
   gfx->fillScreen(RGB565_BLACK);
+  matrixLastStepMs = millis();
   for (uint8_t c = 0; c < kMatrixCols; ++c) {
     matrixDropRow[c] = static_cast<int16_t>(-random(0, kMatrixRows));
   }
+  if (screensaverStyle == SaverStyle::Dashboard) drawSaverDashboard();
 }
 
 void drawScreen(Screen s);  // definie plus bas, utilisee ici
@@ -3529,33 +3573,41 @@ void screensaverExit() {
 // tete de goutte).
 void screensaverStep() {
   const uint32_t now = millis();
-  if (now - matrixLastStepMs < 110) {
+  const uint32_t intervalMs = screensaverStyle == SaverStyle::Dashboard ? 500UL : 110UL;
+  if (now - matrixLastStepMs < intervalMs) return;
+  matrixLastStepMs = now;
+  if (screensaverStyle == SaverStyle::Dashboard) {
+    drawSaverDashboard();
     return;
   }
-  matrixLastStepMs = now;
 
   gfx->setTextSize(2);
   for (uint8_t c = 0; c < kMatrixCols; ++c) {
+    // Le mode 8 pistes garde une colonne sur cinq pour chaque piste ;
+    // les autres colonnes sont vides pour une lecture moins dense.
+    if (screensaverStyle == SaverStyle::EightTracks && c % 5 != 0) continue;
     const int16_t x = static_cast<int16_t>(c * kMatrixCharW);
 
     const int16_t tailRow = static_cast<int16_t>(matrixDropRow[c] - kMatrixTrailLen);
     if (tailRow >= 0 && tailRow < kMatrixRows) {
       gfx->setTextColor(RGB565_BLACK);
       gfx->setCursor(x, static_cast<int16_t>(tailRow * kMatrixCharH));
-      gfx->print(matrixRandomChar());
+      gfx->print(' ');
     }
 
     const int16_t trailRow = static_cast<int16_t>(matrixDropRow[c] - 1);
     if (trailRow >= 0 && trailRow < kMatrixRows) {
       gfx->setTextColor(RGB565(0, 90, 40));
       gfx->setCursor(x, static_cast<int16_t>(trailRow * kMatrixCharH));
-      gfx->print(matrixRandomChar());
+      gfx->print(screensaverStyle == SaverStyle::Matrix ? matrixRandomChar() :
+                 trackerRainChar(c, trailRow));
     }
 
     if (matrixDropRow[c] >= 0 && matrixDropRow[c] < kMatrixRows) {
       gfx->setTextColor(RGB565(110, 200, 120));
       gfx->setCursor(x, static_cast<int16_t>(matrixDropRow[c] * kMatrixCharH));
-      gfx->print(matrixRandomChar());
+      gfx->print(screensaverStyle == SaverStyle::Matrix ? matrixRandomChar() :
+                 trackerRainChar(c, matrixDropRow[c]));
     }
 
     ++matrixDropRow[c];
