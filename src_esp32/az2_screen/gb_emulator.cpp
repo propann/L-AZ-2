@@ -76,6 +76,11 @@ bool cartRamRecoveredFromBackup = false;
 // deja depasser l'intervalle, declenchant une sauvegarde inutile a la
 // toute premiere frame).
 uint32_t gbLastAutosaveMs = 0;
+GbRuntimeStats runtimeStats;
+uint32_t statsWindowStartUs = 0;
+uint32_t statsWorkAccumUs = 0;
+uint32_t statsWindowFrames = 0;
+uint32_t statsWindowMaxUs = 0;
 char romTitle[17] = {0};
 // Chemin de sauvegarde (cart RAM) pour la ROM courante, meme nom que la
 // ROM avec l'extension remplacee par .sav, a cote d'elle dans /games --
@@ -131,6 +136,45 @@ constexpr uint16_t kDmgPalette[4] = {
     RGB565(224, 248, 208), RGB565(136, 192, 112), RGB565(52, 104, 86), RGB565(8, 24, 32),
 };
 
+uint32_t crc32Buffer(const uint8_t *data, size_t len) {
+  uint32_t crc = 0xFFFFFFFFu;
+  for (size_t i = 0; i < len; ++i) {
+    crc ^= data[i];
+    for (uint8_t bit = 0; bit < 8; ++bit) {
+      crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+    }
+  }
+  return ~crc;
+}
+
+bool verifyFileMatchesBuffer(const char *path, const uint8_t *data, size_t len) {
+  File f = SD.open(path);
+  if (!f || f.size() != len) {
+    if (f) f.close();
+    return false;
+  }
+  uint32_t crc = 0xFFFFFFFFu;
+  uint8_t block[128];
+  size_t remaining = len;
+  while (remaining > 0) {
+    const size_t wanted = remaining < sizeof(block) ? remaining : sizeof(block);
+    const size_t got = f.read(block, wanted);
+    if (got != wanted) {
+      f.close();
+      return false;
+    }
+    for (size_t i = 0; i < got; ++i) {
+      crc ^= block[i];
+      for (uint8_t bit = 0; bit < 8; ++bit) {
+        crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+      }
+    }
+    remaining -= got;
+  }
+  f.close();
+  return ~crc == crc32Buffer(data, len);
+}
+
 // Ecriture ATOMIQUE d'un buffer brut (2026-09-19, defaut P1 signale
 // par l'audit de code du meme jour : "la sauvegarde Game Boy depend de
 // la sortie propre du jeu") -- SD.open(path, FILE_WRITE) ecrivait
@@ -167,6 +211,13 @@ bool atomicSaveRaw(const char *path, const uint8_t *data, size_t len) {
   const size_t written = f.write(data, len);
   f.close();
   if (written != len) {
+    SD.remove(tmpPath);
+    return false;
+  }
+  // Relire le .tmp avant de toucher au .sav existant. Une taille correcte
+  // ne suffit pas : un CRC detecte une ecriture SD corrompue silencieuse.
+  if (!verifyFileMatchesBuffer(tmpPath, data, len)) {
+    Serial.println("GB:SAVE_TMP_VERIFY_ERROR");
     SD.remove(tmpPath);
     return false;
   }
@@ -415,6 +466,11 @@ bool gbUnload() {
   saveRamPath[0] = '\0';
   cartRamDirty = false;
   cartRamRecoveredFromBackup = false;
+  runtimeStats = GbRuntimeStats{};
+  statsWindowStartUs = 0;
+  statsWorkAccumUs = 0;
+  statsWindowFrames = 0;
+  statsWindowMaxUs = 0;
   return true;
 }
 
@@ -532,6 +588,8 @@ bool gbLoadRom(const char *filename) {
   cartRamDirty = false;
   cartRamRecoveredFromBackup = false;
   gbLastAutosaveMs = millis();  // reparti a zero pour cette partie, voir gbRunFrame()
+  runtimeStats = GbRuntimeStats{};
+  statsWindowStartUs = micros();
   if (cartRamSize > 0) {
     cartRam = static_cast<uint8_t *>(heap_caps_malloc(cartRamSize, MALLOC_CAP_SPIRAM));
     if (cartRam != nullptr) {
@@ -597,18 +655,40 @@ bool gbLoadRom(const char *filename) {
 constexpr uint32_t kGbAutosaveIntervalMs = 30000;
 
 void gbRunFrame() {
-  if (romLoaded) {
-    // Walnut-CGB recommande ce chemin : deux opcodes sont recuperes par
-    // chaine de dispatch et les transferts DMA 32 bits restent actifs. Les
-    // optimisations 16 bits experimentales connues pour casser des jeux
-    // restent, elles, desactivees dans walnut_cgb.h.
-    gb_run_frame_dualfetch(&gb);
-    sendGbAudioPacket();
+  if (!romLoaded) return;
 
-    const uint32_t now = millis();
-    if (now - gbLastAutosaveMs >= kGbAutosaveIntervalMs) {
-      gbLastAutosaveMs = now;
-      gbSaveCartRam();  // conserve dirty=true si l'ecriture echoue, pour reessayer
+  const uint32_t workStartUs = micros();
+  // Walnut-CGB recommande ce chemin : deux opcodes sont recuperes par
+  // chaine de dispatch et les transferts DMA 32 bits restent actifs. Les
+  // optimisations 16 bits experimentales connues pour casser des jeux
+  // restent, elles, desactivees dans walnut_cgb.h.
+  gb_run_frame_dualfetch(&gb);
+  sendGbAudioPacket();
+  const uint32_t workUs = micros() - workStartUs;
+
+  ++runtimeStats.totalFrames;
+  ++statsWindowFrames;
+  statsWorkAccumUs += workUs;
+  if (workUs > statsWindowMaxUs) statsWindowMaxUs = workUs;
+
+  const uint32_t nowUs = micros();
+  const uint32_t windowUs = nowUs - statsWindowStartUs;
+  if (windowUs >= 1000000u && statsWindowFrames > 0) {
+    runtimeStats.fpsX10 = static_cast<uint16_t>(
+        (static_cast<uint64_t>(statsWindowFrames) * 10000000ull + windowUs / 2) / windowUs);
+    runtimeStats.avgWorkUs = statsWorkAccumUs / statsWindowFrames;
+    runtimeStats.maxWorkUs = statsWindowMaxUs;
+    statsWindowStartUs = nowUs;
+    statsWorkAccumUs = 0;
+    statsWindowFrames = 0;
+    statsWindowMaxUs = 0;
+  }
+
+  const uint32_t now = millis();
+  if (now - gbLastAutosaveMs >= kGbAutosaveIntervalMs) {
+    gbLastAutosaveMs = now;
+    if (!gbSaveCartRam()) {
+      ++runtimeStats.autosaveFailures;
     }
   }
 }
@@ -638,4 +718,8 @@ void gbSetButton(GbButton button, bool pressed) {
 
 const char *gbRomTitle() {
   return romTitle;
+}
+
+GbRuntimeStats gbRuntimeStats() {
+  return runtimeStats;
 }
