@@ -2325,6 +2325,15 @@ void handleMacroCommand(const String &line) {
 void handleRecCommand(const String &line);  // definie plus bas, pres de handleGbAudioPacket()
 
 void handleCommand(const String &line) {
+  if (line == az2::kGbAudioV2Query) {
+    if (az2::kGbAudioV2PilotEnabled) {
+      Serial1.println(az2::kGbAudioV2Ready);
+      Serial.println("GBV2:READY_SENT");
+    } else {
+      Serial1.println("GBV2:DISABLED");
+    }
+    return;
+  }
   if (line == az2::kPlay) {
     startSequencer();
     announceStatus(az2::kStatusPlaying);
@@ -2886,12 +2895,48 @@ struct AudioRxState {
 };
 AudioRxState gbAudioRx;
 
+// Independent binary V2 parser. The legacy V1 parser remains unchanged;
+// the experimental receiver is entered only after the shared pilot flag
+// is enabled, and the ESP32 must also receive GBV2:READY to transmit.
+az2::GbAudioV2Decoder gbAudioV2Rx;
+bool gbAudioV2InPacket = false;
+uint32_t gbAudioV2LastByteMs = 0;
+uint32_t gbAudioV2Accepted = 0;
+uint32_t gbAudioV2SeqGaps = 0;
+uint32_t gbAudioV2Unsupported = 0;
+uint16_t gbAudioV2ExpectedSeq = 0;
+bool gbAudioV2HaveSeq = false;
+
+void acceptGbAudioV2Frame() {
+  const az2::GbAudioV2Frame &frame = gbAudioV2Rx.frame;
+  // First live pilot reuses the proven V1 PCM mono path: stereo and
+  // alternative rates are explicitly rejected rather than misplayed.
+  if (frame.flags != 0 || frame.format != az2::kGbAudioV2FormatPcmU8 ||
+      frame.sampleRate != az2::kGbAudioSampleRate ||
+      frame.payloadLen != az2::kGbAudioSamplesPerPacket) {
+    ++gbAudioV2Unsupported;
+    return;
+  }
+  if (gbAudioV2HaveSeq && frame.sequence != gbAudioV2ExpectedSeq) {
+    ++gbAudioV2SeqGaps;
+  }
+  gbAudioV2ExpectedSeq = static_cast<uint16_t>(frame.sequence + 1u);
+  gbAudioV2HaveSeq = true;
+  ++gbAudioV2Accepted;
+  handleGbAudioPacket(frame.payload, static_cast<uint8_t>(frame.payloadLen));
+}
+
 // Un paquet complet (magic+longueur+kGbAudioSamplesPerPacket octets)
 // tient en <1 ms a kControlBaud -- 20 ms est tres large, ne se declenche
 // que si le lien est vraiment bloque/coupe au milieu d'un paquet.
 constexpr uint32_t kAudioRxTimeoutMs = 20;
 
 void readStream(Stream &in, String &lineBuffer, AudioRxState *audioState) {
+  if (audioState != nullptr && az2::kGbAudioV2PilotEnabled &&
+      gbAudioV2InPacket && millis() - gbAudioV2LastByteMs > kAudioRxTimeoutMs) {
+    gbAudioV2Rx.timeout();
+    gbAudioV2InPacket = false;
+  }
   if (audioState != nullptr && audioState->inPacket &&
       (millis() - audioState->lastByteMs) > kAudioRxTimeoutMs) {
     ++gbAudioTimeouts;
@@ -2904,6 +2949,17 @@ void readStream(Stream &in, String &lineBuffer, AudioRxState *audioState) {
     const uint8_t b = static_cast<uint8_t>(in.read());
 
     if (audioState != nullptr) {
+      if (az2::kGbAudioV2PilotEnabled && gbAudioV2InPacket) {
+        gbAudioV2LastByteMs = millis();
+        if (gbAudioV2Rx.feed(b)) {
+          acceptGbAudioV2Frame();
+          gbAudioV2InPacket = false;
+        } else if (gbAudioV2Rx.position == 0) {
+          // Bad header/CRC: return to searching for next packet magic.
+          gbAudioV2InPacket = false;
+        }
+        continue;
+      }
       if (audioState->inPacket) {
         audioState->lastByteMs = millis();
         if (!audioState->haveLen) {
@@ -2929,6 +2985,13 @@ void readStream(Stream &in, String &lineBuffer, AudioRxState *audioState) {
           handleGbAudioPacket(audioState->buf, audioState->len);
           audioState->inPacket = false;
         }
+        continue;
+      }
+      if (az2::kGbAudioV2PilotEnabled && b == az2::kGbAudioV2Magic) {
+        gbAudioV2Rx.reset();
+        gbAudioV2Rx.feed(b);
+        gbAudioV2LastByteMs = millis();
+        gbAudioV2InPacket = true;
         continue;
       }
       if (b == az2::kGbAudioPacketMagic) {
@@ -2977,7 +3040,19 @@ void reportGbAudioHealth() {
   Serial.print(":timeouts=");
   Serial.print(gbAudioTimeouts);
   Serial.print(":ring_drop=");
-  Serial.println(gbRingDrops);
+  Serial.print(gbRingDrops);
+  Serial.print(":v2_ok=");
+  Serial.print(gbAudioV2Accepted);
+  Serial.print(":v2_crc=");
+  Serial.print(gbAudioV2Rx.rejectedCrc);
+  Serial.print(":v2_header=");
+  Serial.print(gbAudioV2Rx.rejectedHeaders);
+  Serial.print(":v2_timeout=");
+  Serial.print(gbAudioV2Rx.timeouts);
+  Serial.print(":v2_seq_gap=");
+  Serial.print(gbAudioV2SeqGaps);
+  Serial.print(":v2_unsupported=");
+  Serial.println(gbAudioV2Unsupported);
 }
 
 // Verifie que la/les puce(s) PSRAM soudees sont bien detectees et
