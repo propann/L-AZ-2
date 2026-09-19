@@ -3267,6 +3267,13 @@ void goTo(Screen s) {
   // la sauvegarde : conserver le jeu en RAM et la navigation intacte.
   if (s != Screen::Retro && gbIsLoaded() && !gbUnload()) {
     Serial.println("GB:NAV_BLOCKED_UNSAVED_RAM");
+    // L'image GB occupe y=24..455 : afficher l'erreur dans la
+    // bande de titre, sans masquer l'ecran du jeu ni effacer la RAM.
+    gfx->fillRect(0, 0, kScreenSize, 22, RGB565_BLACK);
+    gfx->setTextSize(1);
+    gfx->setTextColor(RGB565_RED);
+    gfx->setCursor(kMargin, 5);
+    gfx->print("SD SAVE ERROR - C:RETRY");
     return;
   }
   // Memorise d'ou on vient (voir navPrevious plus haut) -- AVANT tout
