@@ -12,17 +12,12 @@
 
 #include <Arduino.h>
 
-// Selecteur de ROM (demande le 2026-09-15, "il nous faut un menu pour
-// demarrer la rom qu'on choisit dans une liste"). Longueur de nom
-// generereuse (255.3 = format 8.3 le plus long en FAT court, mais les
-// vraies cartes exposent des noms longs -- 40 caracteres suffit pour
-// rester lisible a l'ecran de toute facon, tronque au-dela).
-constexpr uint8_t kGbRomNameLen = 40;
-// Releve de 16 a 40 le 2026-09-17 (demande "met en plus des trucs cool
-// ... genre 20 30") -- 16 coupait silencieusement le scan avant de
-// trouver toute une collection perso plus fournie. Voir kRomVisibleRows
-// dans main.cpp pour la pagination a l'ecran (8 lignes visibles a la
-// fois, un peu de marge au-dela de kGbMaxRoms).
+// Noms complets utilises comme identifiants de fichier SD, PAS les libelles
+// tronques pour l'affichage : 87 octets max pour rester dans le chemin
+// /games/<name> (kSavePathCapacity=96 cote emulation). Les noms plus
+// longs sont exclus du scan avec un diagnostic, jamais tronques.
+constexpr uint8_t kGbRomNameLen = 88;
+// Nombre maximum d'entrees du navigateur ROM.
 constexpr uint8_t kGbMaxRoms = 40;
 
 // Scanne /games sur la carte SD pour les fichiers .gb/.gbc (jusqu'a
