@@ -1,5 +1,57 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-19 -- bug reel trouve : le tracker effacait le panneau
+lateral a chaque edition, + panneau lateral refait avec 5 gros boutons
+(MOTEUR/PATCH/EFFET/CLAVIER/METRONOME) + metronome audio, teste en
+partie sur le vrai materiel]**
+
+Retour utilisateur en direct sur le vrai materiel, plusieurs allers-
+retours :
+
+- **Bug reel trouve et corrige** : "les lignes disparaissent a mesure
+  que j'edite ... ca efface le cadre [du panneau lateral]". Cause :
+  `drawDetailRow()` effacait (fillRect noir) TOUTE la largeur jusqu'a
+  `kSeqRightEdge` (bord de l'ECRAN) a chaque ligne editee, au lieu de
+  s'arreter au bord reel de la grille (fin de la colonne CND) --
+  recouvrait donc le panneau lateral, une bande a la fois, a chaque
+  pas edite. Nouvelle constante `kDetailGridRight` (somme exacte des 7
+  largeurs de colonne) utilisee a la place -- meme correctif applique
+  a `hitTestDetailRow()` par coherence. **Confirme corrige** par
+  l'utilisateur ("on est bon").
+- **Metronome** (demande explicite) : 6e canal audio sur `mixFinal`
+  (4e entree, libre jusqu'ici), simple clic sinus court (pas de
+  sustain, decay seul) declenche depuis `advanceTick()` a chaque debut
+  de temps (`currentStep % stepsPerBeat == 0`), accentue sur le
+  premier temps du pattern. Commande `METRO:<0|1>`. **Teste sur le
+  vrai materiel, toutes pistes coupees pour n'entendre que le clic :
+  confirme ("oui il marche")**.
+- **Panneau lateral repense** (plusieurs allers-retours avant de
+  tomber juste -- voir "Ce qui n'a pas marche du premier coup" plus
+  bas) : l'ancien resume texte (moteur/patch/cutoff/reso/adsr, flagge
+  par l'utilisateur comme "pas bon") disparait, remplace par **5
+  boutons PLEINE LARGEUR empilant toute la hauteur du panneau** :
+  MOTEUR (page MOTEURS), PATCH (ex-AGRANDIR, page PATCH complete),
+  EFFET (reste dans le tracker, amene le focus croix sur la colonne
+  FX du pas selectionne -- les effets SFX sont PAR PAS, pas par piste,
+  pas de page dediee pertinente), CLAVIER (page AUDIO, pad 4x4,
+  `padEditsStep` active d'office pour jouer/enregistrer un pattern en
+  direct), METRONOME (bascule). La ligne de transport du bas (PLAY/
+  BPM/DIVISION) reste **exactement comme avant** (demande explicite :
+  "la ligne du bas on la laisse comme elle est").
+- **Ce qui n'a pas marche du premier coup** (transparence) : premier
+  essai = agrandir la ligne de transport du bas + ajouter METRONOME/
+  PADS sur une 2e ligne en dessous (en retirant la barre de statut
+  TEENSY de cette page pour liberer la place). Compile, flashe,
+  fonctionnellement correct (metronome confirme audible), mais
+  **mauvais choix de layout** : l'utilisateur voulait ces boutons dans
+  le panneau LATERAL (comme MOTEUR/AGRANDIR deja existants), pas dans
+  une nouvelle ligne de transport -- retire et redirige vers le
+  panneau lateral, comme decrit ci-dessus.
+- **Limite honnete, toujours valable** : le nouveau panneau lateral
+  (5 boutons) est purement tactile, pas verifiable par mon outil
+  SIMNAV:/SIMBTN: -- compile+flashe mais PAS encore confirme
+  visuellement par l'utilisateur au moment ou ceci est ecrit.
+
 **[2026-09-19 -- bouton MOTEUR dans le panneau lateral du tracker, PAS
 teste visuellement (tactile, hors de portee de l'outil SIMNAV/SIMBTN)]**
 

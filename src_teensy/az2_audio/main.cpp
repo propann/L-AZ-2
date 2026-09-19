@@ -210,6 +210,28 @@ AudioConnection patchFilterToGroup[kTrackCount] = {
 AudioConnection patchGroupA(mixTracksA, 0, mixFinal, 0);
 AudioConnection patchGroupB(mixTracksB, 0, mixFinal, 1);
 AudioConnection patchLiveIn(liveVoice, 0, mixFinal, 2);
+
+// Metronome (2026-09-19, "il faut un bouton metronome ... pour
+// activer/desactiver") -- occupe le 4e canal de mixFinal, laisse
+// libre jusqu'ici (voir le commentaire de mixFinal). Un simple clic
+// (sinus court, pas de sustain -- decay seul ramene a zero, pas besoin
+// de noteOff() explicite) declenche depuis advanceTick() a chaque
+// debut de temps (currentStep % stepsPerBeat == 0), accentue (plus
+// aigu) sur le premier temps du pattern.
+AudioSynthWaveform metroClick;
+AudioEffectEnvelope metroEnv;
+AudioConnection patchMetroEnv(metroClick, 0, metroEnv, 0);
+AudioConnection patchMetroOut(metroEnv, 0, mixFinal, 3);
+bool metronomeEnabled = false;
+
+void triggerMetronome(bool accent) {
+  if (!metronomeEnabled) {
+    return;
+  }
+  metroClick.frequency(accent ? 1800.0f : 1200.0f);
+  metroClick.amplitude(0.5f);
+  metroEnv.noteOn();
+}
 AudioConnection patchFinalToMaster(mixFinal, 0, mixMaster, 0);  // signal sec
 AudioConnection patchFinalToReverb(mixFinal, 0, reverbUnit, 0);
 AudioConnection patchReverbToMaster(reverbUnit, 0, mixMaster, 1);
@@ -895,6 +917,12 @@ void advanceTick() {
     ticksForCurrentStep = (currentStep % 2 == 0)
                               ? static_cast<uint8_t>(kTicksPerStep - swingAmount)
                               : static_cast<uint8_t>(kTicksPerStep + swingAmount);
+    // Metronome (voir triggerMetronome()) -- un temps commence tous les
+    // stepsPerBeat pas ; accentue (plus aigu) sur le tout premier temps
+    // du pattern. no-op silencieux si metronomeEnabled est faux.
+    if (currentStep % stepsPerBeat == 0) {
+      triggerMetronome(currentStep == 0);
+    }
     if (currentStep == 0) {
       ++currentBar;
       // Compteur de passages du pattern (2026-09-17, PROB:/COND:) -- avance
@@ -2282,6 +2310,12 @@ void handleCommand(const String &line) {
     return;
   }
 
+  if (line.startsWith("METRO:")) {
+    metronomeEnabled = line.substring(6).toInt() != 0;
+    relayLine(line);
+    return;
+  }
+
   if (line.startsWith("ENGINE:")) {
     handleEngineCommand(line);
     return;
@@ -2915,6 +2949,16 @@ void setup() {
   mixFinal.gain(0, 0.8f);  // groupe pistes 0-3 (deja attenuees par groupMixer, voir setTrackEngine())
   mixFinal.gain(1, 0.8f);  // groupe pistes 4-7
   mixFinal.gain(2, 0.5f);  // voix live
+  mixFinal.gain(3, 0.6f);  // metronome (voir triggerMetronome())
+
+  // Enveloppe "clic" du metronome : pas de sustain, decay seul ramene
+  // a zero -- une seule noteOn() par temps suffit, pas de noteOff() a
+  // gerer (voir triggerMetronome()).
+  metroClick.begin(WAVEFORM_SINE);
+  metroEnv.attack(1.0f);
+  metroEnv.decay(30.0f);
+  metroEnv.sustain(0.0f);
+  metroEnv.release(5.0f);
 
   // Bus d'effets maitre : sec a fond, reverb/delay a 0 par defaut tant
   // que les potards n'ont pas ete lus une premiere fois (voir

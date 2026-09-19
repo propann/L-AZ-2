@@ -227,7 +227,21 @@ void sendToTeensy(const String &message) {
 constexpr int16_t kMargin = 24;
 constexpr int16_t kStatusY = kScreenSize - 30;
 
+// Exclue de la page SEQUENCEUR depuis le 2026-09-19 ("on peut enlever
+// la ligne du bas tensy en vert gagner de la place pour des bouton de
+// transport plus gros") -- cette page a deja tres peu de marge
+// verticale (grille 16 pas + panneau lateral + barre transport, voir
+// kTrkControlsY), et cette ligne n'apporte rien d'utile pendant
+// l'edition d'un morceau (le lien Teensy est deja implicitement
+// confirme par le simple fait que jouer/editer fonctionne).
+bool drawLinkStatusExcluded() {
+  return currentScreen == Screen::Sequencer;
+}
+
 void drawLinkStatus() {
+  if (drawLinkStatusExcluded()) {
+    return;
+  }
   gfx->fillRect(kMargin, kStatusY, kScreenSize - 2 * kMargin, 22, RGB565_BLACK);
   gfx->setTextSize(1);
   gfx->setTextColor(teensyLinked ? RGB565(90, 220, 120) : kDim);
@@ -695,6 +709,7 @@ uint8_t seqCurrentStep = 0;
 bool seqPlaying = false;
 float seqBpm = 120.0f;
 uint8_t seqStepsPerBeat = 4;
+bool metronomeOn = false;  // 2026-09-19, voir METRO: cote Teensy
 
 // Piste/pas selectionnes dans la vue tracker (voir plus bas) -- la
 // croix du Teensy (NAV:UP/DOWN) change la valeur de la colonne
@@ -747,6 +762,17 @@ constexpr int16_t kDetailValW = 44;
 // cette session) -- premiere chose a regarder au prochain flash reel.
 constexpr int16_t kDetailProbW = 42;
 constexpr int16_t kDetailCondW = 46;
+// Bord DROIT reel de la grille (fin de la colonne CND), PAS
+// kSeqRightEdge (bord de l'ECRAN, bien plus loin -- voir plus bas,
+// kTrkSideX/kTrkSideW l'utilisent a raison pour placer le panneau
+// LATERAL apres la grille). Bug trouve le 2026-09-19 ("les lignes
+// disparaissent a mesure que j'edite ... ca efface le cadre [du
+// panneau lateral]") : drawDetailRow() effacait (fillRect noir) toute
+// la largeur jusqu'a kSeqRightEdge a chaque ligne editee -- ca
+// recouvrait donc systematiquement la bande du panneau lateral a la
+// meme hauteur Y que la ligne editee, un peu plus a chaque pas edite.
+constexpr int16_t kDetailGridRight = kDetailLeft + kDetailStepW + kDetailNoteW + kDetailInstW + kDetailFxW +
+                                      kDetailValW + kDetailProbW + kDetailCondW;
 
 const char *const kNoteNames[12] = {"C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"};
 const char *const kStepFxNames[] = {"---", "ARP", "CUT", "RET"};
@@ -805,7 +831,9 @@ void drawDetailRow(uint8_t step) {
   const bool playhead = (step == seqCurrentStep);
   const uint16_t accent = kPalette[track % kPaletteCount];
 
-  gfx->fillRect(kDetailLeft, y, kSeqRightEdge - kDetailLeft, kDetailRowH,
+  // kDetailGridRight (bord de la grille), PAS kSeqRightEdge (bord de
+  // l'ECRAN, recouvrait le panneau lateral -- voir son commentaire).
+  gfx->fillRect(kDetailLeft, y, kDetailGridRight - kDetailLeft, kDetailRowH,
                 playhead ? dimColor(accent, 4) : RGB565_BLACK);
 
   char buf[8];
@@ -933,6 +961,10 @@ bool hitTestTrkTrackNext(int16_t x, int16_t y) {
 // au milieu (moitie gauche = -5, moitie droite = +5), DIVISION a
 // droite (toucher = cran suivant).
 constexpr int16_t kTrkControlsY = kDetailTop + kSeqStepCount * (kDetailRowH + kDetailRowGap) + 6;
+// Retour a la taille/disposition d'origine (2026-09-19, retour
+// utilisateur explicite : "la ligne du bas on la laisse comme elle
+// est") -- METRONOME (et les autres boutons) vont dans le panneau
+// LATERAL (voir drawTrkSidePanel()), pas ici.
 constexpr int16_t kTrkControlsH = 34;
 constexpr int16_t kTrkControlsW = kScreenSize - 2 * kMargin;
 constexpr int16_t kTrkPlayW = kTrkControlsW / 3;
@@ -1021,91 +1053,56 @@ constexpr int16_t kTrkSideX = kDetailLeft + kDetailStepW + kDetailNoteW + kDetai
 constexpr int16_t kTrkSideW = kSeqRightEdge - kTrkSideX;
 
 constexpr int16_t kTrkSideH = kSeqStepCount * (kDetailRowH + kDetailRowGap);
-constexpr int16_t kTrkExpandH = 26;
-constexpr int16_t kTrkExpandY = kDetailTop + kTrkSideH - kTrkExpandH;
-// Bouton MOTEUR (2026-09-19, "une fenetre de reglage pour chaque
-// moteur pour les attribuer a une piste") -- juste au-dessus
-// d'AGRANDIR, meme largeur/hauteur, ouvre directement la page MOTEURS
-// (assignation moteur/patch integre par piste) sur la piste
-// actuellement affichee ici -- avant ca il fallait quitter le tracker
-// et passer par le menu pour changer le moteur d'une piste.
-constexpr int16_t kTrkEngineY = kTrkExpandY - kTrkExpandH - 4;
+
+// Panneau lateral repense le 2026-09-19 (retour utilisateur sur
+// materiel reel : "le cadre du patch est toujours pas bon" + "des
+// bouton plus gros un bouton pour le clavier un pour les effet un
+// pour le moteur et patch") -- l'ancien resume texte (moteur/patch/
+// cutoff/reso/adsr) disparait completement, remplace par 5 boutons
+// PLEINE LARGEUR empiles qui couvrent toute la hauteur du panneau :
+// MOTEUR, PATCH, EFFET, CLAVIER, METRONOME. Chacun ouvre directement
+// la page correspondante pour la piste du tracker actuellement
+// affichee (sauf METRONOME, une simple bascule, et EFFET qui reste
+// dans le tracker mais amene le focus croix sur la colonne FX).
+constexpr uint8_t kTrkSideBtnCount = 5;
+constexpr int16_t kTrkSideBtnGap = 4;
+constexpr int16_t kTrkSideBtnH = (kTrkSideH - (kTrkSideBtnCount - 1) * kTrkSideBtnGap) / kTrkSideBtnCount;
+
+int16_t trkSideBtnY(uint8_t idx) {
+  return static_cast<int16_t>(kDetailTop + idx * (kTrkSideBtnH + kTrkSideBtnGap));
+}
+
+void drawTrkSideBtn(uint8_t idx, uint16_t color, bool filled, const char *label) {
+  const int16_t y = trkSideBtnY(idx);
+  if (filled) {
+    gfx->fillRect(static_cast<int16_t>(kTrkSideX + 1), y, static_cast<int16_t>(kTrkSideW - 2), kTrkSideBtnH, color);
+    gfx->setTextColor(RGB565_BLACK);
+  } else {
+    gfx->fillRect(static_cast<int16_t>(kTrkSideX + 1), y, static_cast<int16_t>(kTrkSideW - 2), kTrkSideBtnH,
+                   RGB565_BLACK);
+    gfx->drawRect(static_cast<int16_t>(kTrkSideX + 1), y, static_cast<int16_t>(kTrkSideW - 2), kTrkSideBtnH, color);
+    gfx->setTextColor(color);
+  }
+  gfx->setTextSize(2);
+  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 10), static_cast<int16_t>(y + kTrkSideBtnH / 2 - 8));
+  gfx->print(label);
+}
+
+bool hitTestTrkSideBtn(uint8_t idx, int16_t x, int16_t y) {
+  return inBox(x, y, kTrkSideX, trkSideBtnY(idx), kTrkSideW, kTrkSideBtnH);
+}
 
 void drawTrkSidePanel() {
-  const uint8_t t = static_cast<uint8_t>(selectedSeqTrack);
   const uint16_t accent = kPalette[selectedSeqTrack % kPaletteCount];
 
   gfx->fillRect(kTrkSideX, kDetailTop, kTrkSideW, kTrkSideH, RGB565_BLACK);
   gfx->drawRect(kTrkSideX, kDetailTop, kTrkSideW, kTrkSideH, accent);
 
-  gfx->setTextSize(1);
-  gfx->setTextColor(kDim);
-  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 4));
-  gfx->print("PATCH ACTIF");
-
-  gfx->setTextSize(2);
-  gfx->setTextColor(accent);
-  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 18));
-  gfx->print(az2::engineName(trackEngine[t]));
-
-  gfx->setTextSize(1);
-  gfx->setTextColor(RGB565_WHITE);
-  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 40));
-  gfx->print(az2::enginePatchName(trackEngine[t], trackPatch[t]));
-
-  // Reglages de base (voir patchParamRef()) -- demande 2026-09-16 ("on
-  // affiche les reglages [de patch] du cote droit"). Controle complet
-  // (encore) uniquement sur la page PATCH, voir le bouton AGRANDIR.
-  char buf[20];
-  gfx->setTextColor(kDim);
-  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 58));
-  snprintf(buf, sizeof(buf), "CUTOFF %3d", trackCutoff[t]);
-  gfx->print(buf);
-  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 70));
-  snprintf(buf, sizeof(buf), "RESO   %3d", trackReso[t]);
-  gfx->print(buf);
-  // ADSR generique n'a aucun effet sur Dexed (voir patchRowActive()) --
-  // montrer ALGO/FEEDBACK a la place ici aussi, sinon le panneau
-  // afficherait un reglage qui ne sert a rien pour ce moteur.
-  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 84));
-  if (trackEngine[t] == az2::kEngineDexed) {
-    gfx->print("ALGO/FDBK");
-    gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 96));
-    snprintf(buf, sizeof(buf), "%d / %d", trackAlgo[t] + 1, trackFeedback[t]);
-  } else {
-    gfx->print("ADSR");
-    gfx->setCursor(static_cast<int16_t>(kTrkSideX + 6), static_cast<int16_t>(kDetailTop + 96));
-    snprintf(buf, sizeof(buf), "%d/%d/%d/%d", trackAttack[t], trackDecay[t], trackSustain[t], trackRelease[t]);
-  }
-  gfx->print(buf);
-
-  // Bouton MOTEUR (2026-09-19) -- ouvre la page MOTEURS (choix du
-  // moteur + patch integre par piste) directement sur cette piste, voir
-  // le commentaire de kTrkEngineY plus haut.
-  gfx->drawRect(static_cast<int16_t>(kTrkSideX + 1), kTrkEngineY, static_cast<int16_t>(kTrkSideW - 2),
-                kTrkExpandH, accent);
-  gfx->setTextSize(1);
-  gfx->setTextColor(accent);
-  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 12), static_cast<int16_t>(kTrkEngineY + 8));
-  gfx->print("MOTEUR >");
-
-  // Bouton AGRANDIR -- ouvre la page PATCH complete (filtre/ADSR
-  // editables + oscilloscope) pour CETTE piste (demande : "un bouton
-  // pour agrandir et avoir le controle total du patch").
-  gfx->fillRect(static_cast<int16_t>(kTrkSideX + 1), kTrkExpandY, static_cast<int16_t>(kTrkSideW - 2),
-                kTrkExpandH, accent);
-  gfx->setTextSize(1);
-  gfx->setTextColor(RGB565_BLACK);
-  gfx->setCursor(static_cast<int16_t>(kTrkSideX + 12), static_cast<int16_t>(kTrkExpandY + 8));
-  gfx->print("AGRANDIR >");
-}
-
-bool hitTestTrkExpand(int16_t x, int16_t y) {
-  return inBox(x, y, kTrkSideX, kTrkExpandY, kTrkSideW, kTrkExpandH);
-}
-
-bool hitTestTrkEngine(int16_t x, int16_t y) {
-  return inBox(x, y, kTrkSideX, kTrkEngineY, kTrkSideW, kTrkExpandH);
+  drawTrkSideBtn(0, accent, false, "MOTEUR");
+  drawTrkSideBtn(1, accent, true, "PATCH");
+  drawTrkSideBtn(2, kPalette[2], false, "EFFET");
+  drawTrkSideBtn(3, kPalette[5], false, "CLAVIER");
+  drawTrkSideBtn(4, metronomeOn ? kPalette[3] : kFaint, metronomeOn, "METRO");
 }
 
 void drawSeqDetailPage() {
@@ -1139,7 +1136,11 @@ void switchToPattern(uint8_t p) {
 }
 
 int8_t hitTestDetailRow(int16_t x, int16_t y) {
-  if (x < kDetailLeft || x > kSeqRightEdge) {
+  // kDetailGridRight (bord de la grille), pas kSeqRightEdge (bord de
+  // l'ecran) -- inoffensif en pratique (un toucher dans le panneau
+  // lateral finissait par ne matcher aucune colonne de toute facon),
+  // corrige par coherence avec le fix de drawDetailRow() ci-dessus.
+  if (x < kDetailLeft || x > kDetailGridRight) {
     return -1;
   }
   for (uint8_t s = 0; s < kSeqStepCount; ++s) {
@@ -3619,6 +3620,11 @@ void handleTeensyLine(const String &line) {
         drawTrkControls();
       }
     }
+  } else if (line.startsWith("METRO:")) {
+    metronomeOn = line.substring(6).toInt() != 0;
+    if (currentScreen == Screen::Sequencer && !screensaverActive) {
+      drawTrkControls();
+    }
   } else if (line.startsWith("DIV:")) {
     const uint8_t value = static_cast<uint8_t>(line.substring(4).toInt());
     if (value > 0) {
@@ -4288,18 +4294,41 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
           (selectedSeqTrack + (hitTestTrkTrackNext(x, y) ? 1 : kSeqTrackCount - 1)) % kSeqTrackCount);
       selectedSeqStep = 0;
       drawSeqDetailPage();
-    } else if (hitTestTrkExpand(x, y)) {
-      // "AGRANDIR" -- ouvre la page PATCH complete pour la piste
-      // actuellement affichee (demande : "un bouton pour agrandir et
-      // avoir le controle total du patch des parametres").
+    } else if (hitTestTrkSideBtn(0, x, y)) {
+      // MOTEUR (2026-09-19) -- ouvre la page MOTEURS directement sur
+      // cette piste (assignation moteur/patch integre par piste).
+      selectedEngineTrack = selectedSeqTrack;
+      goTo(Screen::Engines);
+    } else if (hitTestTrkSideBtn(1, x, y)) {
+      // PATCH (ex-"AGRANDIR") -- ouvre la page PATCH complete (filtre/
+      // ADSR/DXR/EXP/BXP + oscilloscope) pour cette piste.
       patchTrack = selectedSeqTrack;
       scopeHasData = false;
       goTo(Screen::Patch);
-    } else if (hitTestTrkEngine(x, y)) {
-      // "MOTEUR" (2026-09-19) -- ouvre la page MOTEURS directement sur
-      // cette piste, voir le commentaire de kTrkEngineY.
-      selectedEngineTrack = selectedSeqTrack;
-      goTo(Screen::Engines);
+    } else if (hitTestTrkSideBtn(2, x, y)) {
+      // EFFET (2026-09-19) -- reste dans le tracker (les effets SFX
+      // sont PAR PAS, pas par piste -- pas de page dediee pertinente),
+      // amene juste le focus croix sur la colonne FX du pas
+      // selectionne pour l'editer tout de suite (A maintenu + HAUT/BAS).
+      if (selectedSeqStep >= 0) {
+        seqDetailCol = 2;
+        drawDetailRow(static_cast<uint8_t>(selectedSeqStep));
+      }
+    } else if (hitTestTrkSideBtn(3, x, y)) {
+      // CLAVIER (2026-09-19) -- ouvre la page AUDIO (pad 4x4) avec
+      // padEditsStep active d'office : "pouvoir jouer une patterne en
+      // live et l'enregistrer", donc les pads posent la note sur le pas
+      // selectionne du tracker au lieu de seulement jouer en direct
+      // (voir padEditsStep, BTN:D bascule ce reglage sur cette page).
+      padEditsStep = true;
+      goTo(Screen::Audio);
+    } else if (hitTestTrkSideBtn(4, x, y)) {
+      // METRONOME (2026-09-19) -- pas d'affichage optimiste, attend
+      // l'echo METRO: confirme (meme convention que le reste de cette
+      // page).
+      char msg[12];
+      snprintf(msg, sizeof(msg), "METRO:%d", metronomeOn ? 0 : 1);
+      sendToTeensy(msg);
     } else if (hitTestTrkPlay(x, y)) {
       sendToTeensy(seqPlaying ? az2::kStop : az2::kPlay);
     } else if (hitTestTrkBpm(x, y) >= 0) {
