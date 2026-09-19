@@ -66,6 +66,13 @@ uint8_t *romData = nullptr;
 uint32_t romSize = 0;
 uint8_t *cartRam = nullptr;
 uint32_t cartRamSize = 0;
+// Sauvegarde periodique (2026-09-19, voir gbRunFrame()) -- remis a
+// zero a chaque chargement de ROM (voir gbLoadRom()) pour que le
+// premier autosave d'une nouvelle partie tombe bien kGbAutosaveIntervalMs
+// apres le CHARGEMENT, pas selon millis() depuis le boot (qui pourrait
+// deja depasser l'intervalle, declenchant une sauvegarde inutile a la
+// toute premiere frame).
+uint32_t gbLastAutosaveMs = 0;
 char romTitle[17] = {0};
 // Chemin de sauvegarde (cart RAM) pour la ROM courante, meme nom que la
 // ROM avec l'extension remplacee par .sav, a cote d'elle dans /games --
@@ -112,29 +119,71 @@ constexpr uint16_t kDmgPalette[4] = {
     RGB565(224, 248, 208), RGB565(136, 192, 112), RGB565(52, 104, 86), RGB565(8, 24, 32),
 };
 
+// Ecriture ATOMIQUE d'un buffer brut (2026-09-19, defaut P1 signale
+// par l'audit de code du meme jour : "la sauvegarde Game Boy depend de
+// la sortie propre du jeu") -- SD.open(path, FILE_WRITE) ecrivait
+// directement PAR-DESSUS le .sav existant, sans protection : une
+// coupure de courant ou un plantage en cours d'ecriture corrompait la
+// sauvegarde de progression EN PLACE (contrairement a savePatchSlot()/
+// saveProject() cote main.cpp, deja corriges le meme jour -- meme
+// defaut, meme classe de fix, mais un fichier .sav est un buffer brut,
+// pas du texte, donc une fonction dediee ici plutot que reutiliser
+// atomicSaveFile() -- template defini dans l'autre unite de
+// compilation, pas partage sans header commun). Meme sequence :
+// ecrit dans "<path>.tmp", verifie la taille, deplace l'ancien vers
+// "<path>.bak", renomme le tmp vers le nom final -- a aucun moment le
+// fichier final n'est absent ou tronque.
+bool atomicSaveRaw(const char *path, const uint8_t *data, size_t len) {
+  char tmpPath[40];
+  char bakPath[40];
+  snprintf(tmpPath, sizeof(tmpPath), "%s.tmp", path);
+  snprintf(bakPath, sizeof(bakPath), "%s.bak", path);
+
+  SD.remove(tmpPath);
+  File f = SD.open(tmpPath, FILE_WRITE);
+  if (!f) {
+    return false;
+  }
+  const size_t written = f.write(data, len);
+  f.close();
+  if (written != len) {
+    SD.remove(tmpPath);
+    return false;
+  }
+
+  if (SD.exists(path)) {
+    SD.remove(bakPath);
+    SD.rename(path, bakPath);
+  }
+  if (!SD.rename(tmpPath, path)) {
+    SD.rename(bakPath, path);
+    SD.remove(tmpPath);
+    return false;
+  }
+  return true;
+}
+
 // Sauvegarde (voir saveRamPath ci-dessus) -- convention .sav a cote de
 // la ROM sur la carte SD. Demande 2026-09-15 ("sauvegarde tout") :
 // ecrit au moment de decharger la ROM (voir gbUnload()), relu au
 // chargement suivant si le fichier existe deja (voir gbLoadRom()). Pas
 // d'ecriture pendant le jeu (juste a la sortie) -- suffisant pour une
 // sauvegarde a l'extinction/au changement de jeu, pas de risque
-// d'ecriture SD en boucle pendant que ca joue.
+// d'ecriture SD en boucle pendant que ca joue. Ecriture rendue
+// atomique le 2026-09-19 (voir atomicSaveRaw() ci-dessus) -- ne
+// protege PAS contre une coupure DIRECTE de l'alimentation pendant la
+// partie (rien n'est ecrit avant gbUnload(), voir l'audit de code du
+// meme jour pour la recommandation de sauvegarde periodique, pas
+// faite ici).
 void gbSaveCartRam() {
   if (cartRam == nullptr || cartRamSize == 0 || saveRamPath[0] == '\0') {
     return;
   }
-  File f = SD.open(saveRamPath, FILE_WRITE);
-  if (!f) {
-    Serial.print("GB:SAVE_OPEN_ERROR:");
-    Serial.println(saveRamPath);
-    return;
-  }
-  const size_t written = f.write(cartRam, cartRamSize);
-  f.close();
-  if (written != cartRamSize) {
-    Serial.println("GB:SAVE_WRITE_ERROR");
-  } else {
+  if (atomicSaveRaw(saveRamPath, cartRam, cartRamSize)) {
     Serial.print("GB:SAVED:");
+    Serial.println(saveRamPath);
+  } else {
+    Serial.print("GB:SAVE_WRITE_ERROR:");
     Serial.println(saveRamPath);
   }
 }
@@ -311,6 +360,7 @@ bool gbLoadRom(const char *filename) {
   }
 
   cartRamSize = static_cast<uint32_t>(gb.num_ram_banks) * CRAM_BANK_SIZE;
+  gbLastAutosaveMs = millis();  // reparti a zero pour cette partie, voir gbRunFrame()
   if (cartRamSize > 0) {
     cartRam = static_cast<uint8_t *>(heap_caps_malloc(cartRamSize, MALLOC_CAP_SPIRAM));
     if (cartRam != nullptr) {
@@ -353,10 +403,28 @@ bool gbLoadRom(const char *filename) {
   return true;
 }
 
+// Sauvegarde PERIODIQUE (2026-09-19, recommandation de l'audit de code
+// du meme jour : "la sauvegarde Game Boy depend de la sortie propre du
+// jeu ... une coupure directe de l'alimentation pendant une partie
+// perd toute la progression depuis le dernier chargement") -- en plus
+// de la sauvegarde a la sortie propre (gbUnload()), ecrit aussi
+// periodiquement PENDANT la partie (voir gbLastAutosaveMs plus haut).
+// 30s : assez rare pour ne pas solliciter la carte SD en continu (une
+// ecriture SD bloque quelques ms), assez frequent pour limiter la
+// perte reelle en cas de coupure brutale a "au plus 30s de jeu", pas
+// "toute la session".
+constexpr uint32_t kGbAutosaveIntervalMs = 30000;
+
 void gbRunFrame() {
   if (romLoaded) {
     gb_run_frame(&gb);
     sendGbAudioPacket();
+
+    const uint32_t now = millis();
+    if (now - gbLastAutosaveMs >= kGbAutosaveIntervalMs) {
+      gbLastAutosaveMs = now;
+      gbSaveCartRam();  // no-op silencieux si cartRamSize==0 (jeu sans sauvegarde), voir la fonction
+    }
   }
 }
 

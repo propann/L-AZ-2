@@ -1946,25 +1946,88 @@ bool hitTestPatchSlotLoad(int16_t x, int16_t y) {
 // Ecrit tel quel (pas d'ajout) -- SD.remove() d'abord pour eviter tout
 // risque d'ancien contenu residuel si FILE_WRITE ouvrait en ajout sur
 // cette version de la lib (pas verifie, prudence peu couteuse ici).
+// Ecriture ATOMIQUE (2026-09-19, defaut P1 signale par l'audit de
+// code du meme jour) : l'ancien code faisait SD.remove(path) PUIS
+// SD.open(path, FILE_WRITE) -- une coupure de courant, une erreur SD
+// ou un plantage entre ces 2 etapes detruisait la derniere sauvegarde
+// valide sans rien la remplacer. Sequence utilisee ici a la place
+// (meme principe partout ou ce fichier sauvegarde quelque chose sur
+// la carte SD -- patch, projet) : ecrit dans "<path>.tmp", verifie
+// une taille non nulle, deplace l'ancien fichier (s'il existe) vers
+// "<path>.bak", puis renomme le "tmp" vers le nom final. A aucun
+// moment le fichier "final" n'est absent ou tronque -- soit l'ancien
+// est encore la, soit le nouveau y est deja completement.
+// `content` : callback qui ecrit dans le fichier ouvert (permet de
+// reutiliser cette fonction pour un patch (1 ligne) ou un projet
+// (bien plus long) sans dupliquer la logique tmp/bak/rename).
+template <typename WriteFn>
+bool atomicSaveFile(const char *path, WriteFn writeContent) {
+  char tmpPath[40];
+  char bakPath[40];
+  snprintf(tmpPath, sizeof(tmpPath), "%s.tmp", path);
+  snprintf(bakPath, sizeof(bakPath), "%s.bak", path);
+
+  SD.remove(tmpPath);  // reste eventuel d'une tentative precedente avortee
+  File f = SD.open(tmpPath, FILE_WRITE);
+  if (!f) {
+    return false;
+  }
+  writeContent(f);
+  f.close();
+  // Taille verifiee APRES fermeture, pas avant (bug reel trouve sur le
+  // vrai materiel le 2026-09-19 : f.size() juste apres les f.printf()
+  // mais AVANT f.close() renvoyait 0 sur cette implementation FS --
+  // sans doute des octets pas encore vidanges/comptabilises tant que
+  // le fichier reste ouvert -- ce qui faisait echouer TOUTE
+  // sauvegarde avec PATCH_SAVE_ERROR/PROJECT_SAVE_ERROR alors que
+  // l'ecriture elle-meme avait reussi. Reouvrir le fichier pour
+  // verifier sa taille est donc fait expres, une seconde lecture, plus
+  // lent mais fiable.
+  File check = SD.open(tmpPath);
+  const size_t written = check ? check.size() : 0;
+  if (check) {
+    check.close();
+  }
+  if (written == 0) {
+    // Rien ecrit -- ne remplace surtout pas une sauvegarde valide par
+    // un fichier vide, abandonne proprement.
+    SD.remove(tmpPath);
+    return false;
+  }
+
+  if (SD.exists(path)) {
+    SD.remove(bakPath);  // .bak precedent, si un jour restaure manuellement puis jamais nettoye
+    SD.rename(path, bakPath);
+  }
+  if (!SD.rename(tmpPath, path)) {
+    // Echec du dernier renommage : restaure l'ancien fichier depuis le
+    // backup plutot que de laisser "path" absent.
+    SD.rename(bakPath, path);
+    SD.remove(tmpPath);
+    return false;
+  }
+  return true;
+}
+
 void savePatchSlot(uint8_t slot) {
   const uint8_t t = static_cast<uint8_t>(patchTrack);
   SD.mkdir("/patches");
   char path[24];
   snprintf(path, sizeof(path), "/patches/%d.txt", slot);
-  SD.remove(path);
-  File f = SD.open(path, FILE_WRITE);
-  if (!f) {
-    Serial.print("PATCH_SAVE_ERROR:");
-    Serial.println(path);
-    return;
-  }
+
   // 10 champs depuis l'ajout DXP (algo/feedback Dexed, sinon perdus au
   // rechargement -- PATCH: recharge tout le voice data DX7 depuis la
   // banque, voir loadDexedPatch() cote Teensy). Fichiers a 8 champs
   // (avant DXP) restent lisibles, voir loadPatchSlot().
-  f.printf("%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", trackEngine[t], trackPatch[t], trackCutoff[t], trackReso[t],
-            trackAttack[t], trackDecay[t], trackSustain[t], trackRelease[t], trackAlgo[t], trackFeedback[t]);
-  f.close();
+  const bool ok = atomicSaveFile(path, [&](File &f) {
+    f.printf("%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", trackEngine[t], trackPatch[t], trackCutoff[t], trackReso[t],
+              trackAttack[t], trackDecay[t], trackSustain[t], trackRelease[t], trackAlgo[t], trackFeedback[t]);
+  });
+  if (!ok) {
+    Serial.print("PATCH_SAVE_ERROR:");
+    Serial.println(path);
+    return;
+  }
   Serial.print("PATCH_SAVED:");
   Serial.println(path);
 }
@@ -2719,44 +2782,48 @@ void saveProject(uint8_t slot) {
   SD.mkdir("/projects");
   char path[24];
   snprintf(path, sizeof(path), "/projects/%d.proj", slot);
-  SD.remove(path);
-  File f = SD.open(path, FILE_WRITE);
-  if (!f) {
+
+  // Ecriture atomique (voir atomicSaveFile() plus haut, meme defaut P1
+  // signale par l'audit du 2026-09-19 que savePatchSlot()) -- un
+  // fichier projet est bien plus gros/long a ecrire qu'un patch, donc
+  // bien plus expose a une coupure en cours de route.
+  const bool ok = atomicSaveFile(path, [&](File &f) {
+    f.printf("BPM:%d\n", static_cast<int>(seqBpm + 0.5f));
+    f.printf("DIV:%d\n", seqStepsPerBeat);
+    f.printf("SCALE:%d\n", currentScaleIndex);
+    f.printf("SWING:%d\n", swingValue);
+    f.printf("SONGMODE:%d\n", songMode ? 1 : 0);
+    f.printf("SONGLEN:%d\n", songLen);
+    for (uint8_t i = 0; i < songLen; ++i) {
+      f.printf("SONGSET:%d:%d\n", i, songPatterns[i]);
+    }
+    for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
+      // Mute inclus (13e champ) mais PAS solo -- solo est un outil de
+      // monitoring live, pas une decision de composition (convention
+      // habituelle DAW/mixeurs : le solo ne survit pas a une
+      // sauvegarde).
+      f.printf("TRACK:%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", t, trackEngine[t], trackPatch[t], trackCutoff[t],
+               trackReso[t], trackAttack[t], trackDecay[t], trackSustain[t], trackRelease[t], trackAlgo[t],
+               trackFeedback[t], trackVolume[t], trackMuted[t] ? 1 : 0);
+    }
+    for (uint8_t p = 0; p < kPatternCount; ++p) {
+      for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
+        for (uint8_t s = 0; s < kSeqStepCount; ++s) {
+          // 10 champs depuis l'ajout de PROB/COND (2026-09-17, 9e/10e
+          // champs) -- voir loadProject() pour la lecture
+          // retro-compatible des fichiers a 8 champs (avant cet ajout).
+          f.printf("STEP:%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", p, t, s, seqStepOn[p][t][s] ? 1 : 0, seqStepNote[p][t][s],
+                   seqStepPatch[p][t][s], seqStepFx[p][t][s], seqStepFxVal[p][t][s], seqStepProb[p][t][s],
+                   seqStepCondition[p][t][s]);
+        }
+      }
+    }
+  });
+  if (!ok) {
     Serial.print("PROJECT_SAVE_ERROR:");
     Serial.println(path);
     return;
   }
-
-  f.printf("BPM:%d\n", static_cast<int>(seqBpm + 0.5f));
-  f.printf("DIV:%d\n", seqStepsPerBeat);
-  f.printf("SCALE:%d\n", currentScaleIndex);
-  f.printf("SWING:%d\n", swingValue);
-  f.printf("SONGMODE:%d\n", songMode ? 1 : 0);
-  f.printf("SONGLEN:%d\n", songLen);
-  for (uint8_t i = 0; i < songLen; ++i) {
-    f.printf("SONGSET:%d:%d\n", i, songPatterns[i]);
-  }
-  for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
-    // Mute inclus (13e champ) mais PAS solo -- solo est un outil de
-    // monitoring live, pas une decision de composition (convention
-    // habituelle DAW/mixeurs : le solo ne survit pas a une sauvegarde).
-    f.printf("TRACK:%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", t, trackEngine[t], trackPatch[t], trackCutoff[t],
-             trackReso[t], trackAttack[t], trackDecay[t], trackSustain[t], trackRelease[t], trackAlgo[t],
-             trackFeedback[t], trackVolume[t], trackMuted[t] ? 1 : 0);
-  }
-  for (uint8_t p = 0; p < kPatternCount; ++p) {
-    for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
-      for (uint8_t s = 0; s < kSeqStepCount; ++s) {
-        // 10 champs depuis l'ajout de PROB/COND (2026-09-17, 9e/10e champs)
-        // -- voir loadProject() pour la lecture retro-compatible des
-        // fichiers a 8 champs (avant cet ajout).
-        f.printf("STEP:%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", p, t, s, seqStepOn[p][t][s] ? 1 : 0, seqStepNote[p][t][s],
-                 seqStepPatch[p][t][s], seqStepFx[p][t][s], seqStepFxVal[p][t][s], seqStepProb[p][t][s],
-                 seqStepCondition[p][t][s]);
-      }
-    }
-  }
-  f.close();
   Serial.print("PROJECT_SAVED:");
   Serial.println(path);
 }
@@ -2899,10 +2966,14 @@ void loadProject(uint8_t slot) {
         sendToTeensy(msg);
         snprintf(msg, sizeof(msg), "NOTE:%d:%d:%d", t, s, vals[4]);
         sendToTeensy(msg);
-        if (vals[5] != 0xFF) {
-          snprintf(msg, sizeof(msg), "INST:%d:%d:%d", t, s, vals[5]);
-          sendToTeensy(msg);
-        }
+        // Toujours envoye, MEME 255 (0xFF = "pas d'override, patch par
+        // defaut de la piste") -- bug reel trouve par l'audit du
+        // 2026-09-19 : sauter l'envoi quand vals[5]==0xFF laissait
+        // l'ancienne valeur du Teensy en place si la memoire courante
+        // avait deja un override sur ce pas, rendant le chargement
+        // d'un projet potentiellement different du projet sauvegarde.
+        snprintf(msg, sizeof(msg), "INST:%d:%d:%d", t, s, vals[5]);
+        sendToTeensy(msg);
         if (idx == 10) {
           snprintf(msg, sizeof(msg), "PROB:%d:%d:%d", t, s, prob);
           sendToTeensy(msg);

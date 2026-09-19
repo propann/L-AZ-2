@@ -1,5 +1,52 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-19 -- les 3 defauts P1 de l'audit de code corriges (INST
+0xFF, sauvegardes atomiques patch/projet/GB, autosave GB periodique),
+teste et un bug trouve+corrige sur le vrai materiel]**
+
+Suite de `docs/AZ2_AUDIT_CODE_2026-09-19.md` (autre session IA,
+fusionne plus tot ce soir) -- 3 defauts P1 :
+
+- **INST 0xFF jamais envoye au chargement d'un projet** :
+  `loadProject()` sautait l'envoi de `INST:` quand la valeur sauvegardee
+  valait `0xFF` (= "pas d'override, patch par defaut de la piste"),
+  laissant un ancien override en place dans le Teensy si la memoire
+  courante en avait deja un sur ce pas -- le projet charge n'etait donc
+  pas forcement identique au projet sauvegarde. Corrige : `INST:` est
+  desormais TOUJOURS envoye, y compris 255 (deja une valeur acceptee
+  cote Teensy, voir `handleInstCommand()`).
+- **Sauvegardes non atomiques (patch/projet/GB)** : l'ancien code
+  faisait `SD.remove(path)` PUIS `SD.open(path, FILE_WRITE)` -- une
+  coupure de courant/plantage entre les deux detruisait la derniere
+  sauvegarde valide sans la remplacer. Nouvelle sequence partout
+  (`atomicSaveFile()` cote main.cpp -- patch/projet, template + lambda
+  pour reutiliser la meme logique tmp/bak/rename sans dupliquer ;
+  `atomicSaveRaw()` cote gb_emulator.cpp -- .sav, fonction separee non
+  template car unite de compilation differente) : ecrit dans
+  `<nom>.tmp`, verifie une taille non nulle, deplace l'ancien vers
+  `<nom>.bak`, renomme le tmp vers le nom final. A aucun moment le
+  fichier final n'est absent ou tronque.
+- **Sauvegarde GB liee a la sortie propre du jeu** : `gbSaveCartRam()`
+  n'ecrivait qu'au moment de `gbUnload()` -- une coupure directe
+  pendant la partie perdait toute la progression depuis le dernier
+  chargement. Ajoute une sauvegarde PERIODIQUE (30s, voir
+  `gbRunFrame()`/`kGbAutosaveIntervalMs`) en plus de celle a la sortie
+  propre -- limite la perte reelle a "au plus 30s de jeu" au lieu de
+  "toute la session".
+
+**Bug reel trouve ET corrige en testant sur le vrai materiel** :
+`atomicSaveFile()` verifiait `f.size()` JUSTE APRES les `f.printf()`
+mais AVANT `f.close()` -- renvoyait 0 sur cette implementation FS
+(octets pas encore vidanges/comptabilises tant que le fichier reste
+ouvert), ce qui faisait echouer TOUTE sauvegarde patch/projet avec
+`PATCH_SAVE_ERROR`/`PROJECT_SAVE_ERROR` alors que l'ecriture elle-meme
+avait reussi -- confirme casse en direct (`PATCH_SAVE_ERROR:/patches/
+0.txt`), corrige en reouvrant le fichier pour verifier sa taille APRES
+fermeture. Reteste avec une valeur distincte (FILT cutoff=99) : SAVE
+confirme reussi, valeur changee expres avant LOAD, LOAD confirme
+restaurer exactement la bonne valeur -- round-trip verifie, pas
+seulement "pas d'erreur".
+
 **[2026-09-19 -- navigation MOTEURS simplifiee (sans A), bouton retour
 deplace sur C et limite a un seul etage, teste sur le vrai materiel]**
 
