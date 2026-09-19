@@ -2656,6 +2656,7 @@ void gbRingPush(int16_t sample) {
 bool gbRecording = false;
 File gbRecFile;
 uint32_t gbRecSampleCount = 0;
+bool gbRecWriteError = false;
 int16_t gbRecBuf[512];
 size_t gbRecBufLen = 0;
 // Garde-fou phase 1 -- arrete tout seul plutot que de remplir la carte
@@ -2666,8 +2667,15 @@ void gbRecFlushBuf() {
   if (gbRecBufLen == 0 || !gbRecFile) {
     return;
   }
-  gbRecFile.write(reinterpret_cast<const uint8_t *>(gbRecBuf), gbRecBufLen * sizeof(int16_t));
-  gbRecSampleCount += static_cast<uint32_t>(gbRecBufLen);
+  const size_t expectedBytes = gbRecBufLen * sizeof(int16_t);
+  const size_t writtenBytes =
+      gbRecFile.write(reinterpret_cast<const uint8_t *>(gbRecBuf), expectedBytes);
+  gbRecSampleCount += static_cast<uint32_t>(writtenBytes / sizeof(int16_t));
+  if (writtenBytes != expectedBytes) {
+    gbRecWriteError = true;
+    Serial.println("REC:ERROR:WAV_DATA_WRITE");
+    Serial1.println("REC:ERROR:WAV_DATA_WRITE");
+  }
   gbRecBufLen = 0;
 }
 
@@ -2675,7 +2683,7 @@ void gbRecFlushBuf() {
 // -- ecrit deux fois : un placeholder a l'ouverture (tailles a 0, pour
 // que le fichier ait deja la bonne forme si jamais on plante avant
 // STOP), puis reecrit avec les vraies tailles a la fermeture (seek(0)).
-void writeWavHeader(File &f, uint32_t dataBytes) {
+bool writeWavHeader(File &f, uint32_t dataBytes) {
   uint8_t h[44] = {};
   const uint32_t riffSize = 36 + dataBytes;
   const uint32_t sampleRate = az2::kGbAudioSampleRate;
@@ -2692,8 +2700,8 @@ void writeWavHeader(File &f, uint32_t dataBytes) {
   memcpy(h + 36, "data", 4);
   memcpy(h + 4, &riffSize, 4);
   memcpy(h + 40, &dataBytes, 4);
-  f.seek(0);
-  f.write(h, sizeof(h));
+  if (!f.seek(0)) return false;
+  return f.write(h, sizeof(h)) == sizeof(h);
 }
 
 // "SAMPLE_001.wav", "SAMPLE_002.wav"... premier numero libre dans
@@ -2760,6 +2768,7 @@ void gbRecStart() {
   }
   gbRecSampleCount = 0;
   gbRecBufLen = 0;
+  gbRecWriteError = false;
   gbRecording = true;
   Serial.print("REC:STARTED:");
   Serial.println(path);
@@ -2772,9 +2781,14 @@ void gbRecStop() {
     return;
   }
   gbRecFlushBuf();
-  writeWavHeader(gbRecFile, gbRecSampleCount * sizeof(int16_t));
+  const bool headerOk = writeWavHeader(gbRecFile, gbRecSampleCount * sizeof(int16_t));
   gbRecFile.close();
   gbRecording = false;
+  if (gbRecWriteError || !headerOk) {
+    Serial.println("REC:ERROR:WAV_INCOMPLETE");
+    Serial1.println("REC:ERROR:WAV_INCOMPLETE");
+    return; // conserver le fichier pour diagnostic, jamais signaler un succes
+  }
   Serial.print("REC:STOPPED:samples=");
   Serial.println(gbRecSampleCount);
   Serial1.print("REC:STOPPED:samples=");
