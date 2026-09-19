@@ -4,6 +4,8 @@ Date : 2026-09-19. Branche de travail : main. Cible : ESP32-S3 (GB/GBC, écran, 
 
 ## Décision produit — MVP CONSOLE + CAPTURE (19 septembre 2026)
 
+**Étude de faisabilité :** [audit des racks logiciels, gains réalistes, tests A/B et transition à étapes réversibles](AZ2_AUDIT_RACKS_CONSOLE_CAPTURE.md). Commencer par mesurer puis corriger jeu + REC ; la refonte globale est conditionnelle, pas une dépendance du MVP.
+
 **Priorité actuelle : jouer à une ROM GB/GBC à sa cadence native, entendre le son sur le DAC et capturer ce son en WAV pendant la partie.** Le tracker et l'émulateur n'ont pas besoin d'être synchronisés pour atteindre cet objectif. L'approche « racks logiciels » est conservée comme **optimisation ciblée**, pas comme condition préalable ni comme refonte de toute la machine.
 
 ### Parcours utilisateur minimal
