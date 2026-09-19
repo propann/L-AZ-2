@@ -474,6 +474,11 @@ bool gbUnload() {
   return true;
 }
 
+bool gbSaveNow() {
+  if (!romLoaded) return true;
+  return gbSaveCartRam();
+}
+
 uint8_t gbScanRoms(char names[][kGbRomNameLen]) {
   uint8_t count = 0;
 
