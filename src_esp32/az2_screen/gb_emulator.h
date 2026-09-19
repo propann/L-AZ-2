@@ -12,18 +12,14 @@
 
 #include <Arduino.h>
 
-// Selecteur de ROM (demande le 2026-09-15, "il nous faut un menu pour
-// demarrer la rom qu'on choisit dans une liste"). Longueur de nom
-// generereuse (255.3 = format 8.3 le plus long en FAT court, mais les
-// vraies cartes exposent des noms longs -- 40 caracteres suffit pour
-// rester lisible a l'ecran de toute facon, tronque au-dela).
-constexpr uint8_t kGbRomNameLen = 40;
-// Releve de 16 a 40 le 2026-09-17 (demande "met en plus des trucs cool
-// ... genre 20 30") -- 16 coupait silencieusement le scan avant de
-// trouver toute une collection perso plus fournie. Voir kRomVisibleRows
-// dans main.cpp pour la pagination a l'ecran (8 lignes visibles a la
-// fois, un peu de marge au-dela de kGbMaxRoms).
-constexpr uint8_t kGbMaxRoms = 40;
+// Noms complets utilises comme identifiants de fichier SD, PAS les libelles
+// tronques pour l'affichage : 87 octets max pour rester dans le chemin
+// /games/<name> (kSavePathCapacity=96 cote emulation). Les noms plus
+// longs sont exclus du scan avec un diagnostic, jamais tronques.
+constexpr uint8_t kGbRomNameLen = 88;
+// Nombre maximum d'entrees du navigateur ROM. 100 reste sous la limite
+// int8_t du curseur UI et coute ~8,8 Ko pour les noms complets.
+constexpr uint8_t kGbMaxRoms = 100;
 
 // Scanne /games sur la carte SD pour les fichiers .gb/.gbc (jusqu'a
 // kGbMaxRoms), remplit `names` (kGbMaxRoms x kGbRomNameLen, deja
@@ -47,9 +43,30 @@ bool gbIsLoaded();
 // loop() tant que la page JEUX est affichee.
 void gbRunFrame();
 
-// Decharge la ROM courante (appele en quittant la page JEUX) -- libere
-// la PSRAM utilisee.
-void gbUnload();
+// Telemetrie legere mise a jour pendant l'emulation. Les valeurs servent
+// au diagnostic sur materiel ; elles ne constituent pas a elles seules
+// une certification de compatibilite d'une ROM.
+struct GbRuntimeStats {
+  uint16_t fpsX10 = 0;          // cadence observee x10 sur ~1 seconde
+  uint32_t avgWorkUs = 0;       // CPU emulation + paquet audio, moyenne fenetre
+  uint32_t maxWorkUs = 0;       // pire frame de la fenetre
+  uint32_t totalFrames = 0;
+  uint16_t autosaveFailures = 0;
+};
+GbRuntimeStats gbRuntimeStats();
+
+// Tente de sauvegarder la RAM modifiee puis decharger la ROM.
+// Renvoie false si la SD refuse la sauvegarde : la ROM reste chargee
+// pour permettre un nouvel essai sans perdre la progression LSDJ.
+bool gbUnload();
+
+// Sauvegarde manuelle de la SRAM de la cartouche courante. No-op reussi
+// si rien n'a change ou si la cartouche n'a pas de RAM persistante.
+bool gbSaveNow();
+
+// Handshake V2: remains V1 unless the Teensy explicitly answers READY.
+// Pilot disabled by default in shared AZ2_Protocol.h.
+void gbSetAudioV2Ready(bool ready);
 
 // Direction/bouton Game Boy standard, correspond a NAV:/BTN: du Teensy
 // (voir handleTeensyLine() dans main.cpp) -- reutilise la croix/boutons

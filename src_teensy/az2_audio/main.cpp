@@ -150,8 +150,8 @@ AudioOutputI2S i2sOut;
 
 // Son de l'emulateur Game Boy (ESP32 -> Teensy, voir AZ2_Protocol.h
 // "kGbAudioPacketMagic" et handleGbAudioPacket() plus bas) : ESP32
-// envoie du PCM mono 8 bits a kGbAudioSampleRate Hz (8kHz, delibere --
-// tient large dans le lien serie 230400 bauds) ; on le re-echantillonne
+// envoie du PCM mono 8 bits a kGbAudioSampleRate Hz (14 kHz actuellement,
+// largement sous le budget du lien serie 921600 bauds) ; on le re-echantillonne
 // vers 44.1kHz/16 bits et on le pousse dans cette queue, jouee comme
 // n'importe quel autre "moteur" par le bus d'effets maitre (reverb/
 // delay/volume s'appliquent donc dessus aussi si les potards sont
@@ -2334,6 +2334,15 @@ void handleMacroCommand(const String &line) {
 void handleRecCommand(const String &line);  // definie plus bas, pres de handleGbAudioPacket()
 
 void handleCommand(const String &line) {
+  if (line == az2::kGbAudioV2Query) {
+    if (az2::kGbAudioV2PilotEnabled) {
+      Serial1.println(az2::kGbAudioV2Ready);
+      Serial.println("GBV2:READY_SENT");
+    } else {
+      Serial1.println("GBV2:DISABLED");
+    }
+    return;
+  }
   if (line == az2::kPlay) {
     startSequencer();
     announceStatus(az2::kStatusPlaying);
@@ -2641,21 +2650,25 @@ void handleCommand(const String &line) {
 // sur Serial1 -- voir AudioRxState/readStream() plus bas pour la
 // reconnaissance de l'octet magique AVANT accumulation de ligne texte.
 //
-// Re-echantillonnage simple (repetition ponderee par un accumulateur de
-// phase, pas d'interpolation fine -- suffisant pour des formes d'onde
-// aussi simples que celles du GB) de 8kHz vers 44.1kHz (frequence native
-// de la lib Audio Teensy), 8 bits non signe -> 16 bits signe, pousse
-// dans un anneau puis servi a gbAudioQueue (voir plus haut) par blocs de
-// AUDIO_BLOCK_SAMPLES (128, definis par la lib Audio).
-constexpr size_t kGbRingCapacity = 2048;  // ~46ms a 44.1kHz, large marge face a la gigue serie
+// Re-echantillonnage 14 kHz -> 44,1 kHz (frequence native de la lib
+// Audio Teensy). Le premier prototype repetait simplement les valeurs,
+// ce qui ajoutait des marches/aliasing audibles. On interpole desormais
+// lineairement entre deux echantillons en arithmetique Q16 : cout faible
+// sur Teensy 4.1 et aucune modification du protocole UART.
+constexpr size_t kGbRingCapacity = 2048;  // ~46ms a 44.1kHz
 int16_t gbRing[kGbRingCapacity];
 size_t gbRingHead = 0;
 size_t gbRingTail = 0;
+uint32_t gbRingDrops = 0;
+uint32_t gbAudioPacketsRx = 0;
+uint32_t gbAudioBadLengths = 0;
+uint32_t gbAudioTimeouts = 0;
 
 void gbRingPush(int16_t sample) {
   const size_t next = (gbRingHead + 1) % kGbRingCapacity;
   if (next == gbRingTail) {
-    return;  // anneau plein -- echantillon perdu plutot que bloquer (micro-glitch tolere)
+    ++gbRingDrops;
+    return;  // jamais bloquer sequenceur/controles pour sauver un sample
   }
   gbRing[gbRingHead] = sample;
   gbRingHead = next;
@@ -2669,7 +2682,7 @@ void gbRingPush(int16_t sample) {
 // avec un des boutons des encodeurs et les samples se rangent direct
 // dans la SD du Teensy") + precisee le 2026-09-17 ("REC/STOP, ... une
 // routine pour capter les sons de l'emulateur"). Capture au format
-// NATIF de la source (8kHz mono 16 bits signe, avant le
+// NATIF de la source (14 kHz mono 16 bits signe, avant le
 // sur-echantillonnage vers 44.1kHz fait pour gbRing/gbAudioQueue plus
 // haut) -- fichiers plus petits, honnete sur la vraie qualite de la
 // source, pas de perte a upsampler puis re-downsampler plus tard.
@@ -2684,6 +2697,7 @@ void gbRingPush(int16_t sample) {
 bool gbRecording = false;
 File gbRecFile;
 uint32_t gbRecSampleCount = 0;
+bool gbRecWriteError = false;
 int16_t gbRecBuf[512];
 size_t gbRecBufLen = 0;
 // Garde-fou phase 1 -- arrete tout seul plutot que de remplir la carte
@@ -2694,8 +2708,15 @@ void gbRecFlushBuf() {
   if (gbRecBufLen == 0 || !gbRecFile) {
     return;
   }
-  gbRecFile.write(reinterpret_cast<const uint8_t *>(gbRecBuf), gbRecBufLen * sizeof(int16_t));
-  gbRecSampleCount += static_cast<uint32_t>(gbRecBufLen);
+  const size_t expectedBytes = gbRecBufLen * sizeof(int16_t);
+  const size_t writtenBytes =
+      gbRecFile.write(reinterpret_cast<const uint8_t *>(gbRecBuf), expectedBytes);
+  gbRecSampleCount += static_cast<uint32_t>(writtenBytes / sizeof(int16_t));
+  if (writtenBytes != expectedBytes) {
+    gbRecWriteError = true;
+    Serial.println("REC:ERROR:WAV_DATA_WRITE");
+    Serial1.println("REC:ERROR:WAV_DATA_WRITE");
+  }
   gbRecBufLen = 0;
 }
 
@@ -2703,7 +2724,7 @@ void gbRecFlushBuf() {
 // -- ecrit deux fois : un placeholder a l'ouverture (tailles a 0, pour
 // que le fichier ait deja la bonne forme si jamais on plante avant
 // STOP), puis reecrit avec les vraies tailles a la fermeture (seek(0)).
-void writeWavHeader(File &f, uint32_t dataBytes) {
+bool writeWavHeader(File &f, uint32_t dataBytes) {
   uint8_t h[44] = {};
   const uint32_t riffSize = 36 + dataBytes;
   const uint32_t sampleRate = az2::kGbAudioSampleRate;
@@ -2720,8 +2741,8 @@ void writeWavHeader(File &f, uint32_t dataBytes) {
   memcpy(h + 36, "data", 4);
   memcpy(h + 4, &riffSize, 4);
   memcpy(h + 40, &dataBytes, 4);
-  f.seek(0);
-  f.write(h, sizeof(h));
+  if (!f.seek(0)) return false;
+  return f.write(h, sizeof(h)) == sizeof(h);
 }
 
 // "SAMPLE_001.wav", "SAMPLE_002.wav"... premier numero libre dans
@@ -2735,7 +2756,7 @@ String nextSampleName() {
       return String(path);
     }
   }
-  return String("/samples/SAMPLE_999.wav");  // improbable (999 samples), ecrase plutot que planter
+  return String();  // banque pleine : ne jamais ecraser un enregistrement existant
 }
 
 void gbRecStop();  // definie juste apres -- gbRecPush() l'appelle si le garde-fou est atteint
@@ -2747,6 +2768,10 @@ void gbRecPush(int16_t sample) {
   gbRecBuf[gbRecBufLen++] = sample;
   if (gbRecBufLen >= sizeof(gbRecBuf) / sizeof(gbRecBuf[0])) {
     gbRecFlushBuf();
+    if (gbRecWriteError) {
+      gbRecStop(); // ecriture SD interrompue : ne pas continuer la capture
+      return;
+    }
   }
   if (gbRecSampleCount + gbRecBufLen >= kGbRecMaxSamples) {
     gbRecStop();
@@ -2758,16 +2783,19 @@ void gbRecStart() {
     return;
   }
   const String path = nextSampleName();
-  // SD.remove() avant open() -- meme convention que savePatchSlot()/
-  // saveProject(). No-op si le fichier n'existe pas encore (cas normal,
-  // nextSampleName() a trouve un nom libre) ; INDISPENSABLE dans le cas
-  // improbable ou les 999 noms sont pris (nextSampleName() renvoie alors
-  // SAMPLE_999.wav en le sachant deja pris) -- BUG REEL potentiel note
-  // lors de l'audit du 2026-09-17, corrige ici : FILE_WRITE sur un
-  // fichier EXISTANT ouvre en AJOUT (pas en ecrasement) sur SdFat, donc
-  // sans ce remove() la nouvelle capture se serait ajoutee APRES
-  // l'ancien contenu au lieu de le remplacer -- wav corrompu/demesure.
-  SD.remove(path.c_str());
+  if (path.length() == 0) {
+    Serial.println("REC:ERROR:SAMPLE_BANK_FULL");
+    Serial1.println("REC:ERROR:SAMPLE_BANK_FULL");
+    return;
+  }
+  // FILE_WRITE peut ouvrir en ajout ; ne jamais supprimer ni reutiliser
+  // un sample deja present (meme en cas de modification SD entre scan
+  // et ouverture).
+  if (SD.exists(path.c_str())) {
+    Serial.println("REC:ERROR:SAMPLE_NAME_COLLISION");
+    Serial1.println("REC:ERROR:SAMPLE_NAME_COLLISION");
+    return;
+  }
   gbRecFile = SD.open(path.c_str(), FILE_WRITE);
   if (!gbRecFile) {
     Serial.print("REC:ERROR:");
@@ -2777,9 +2805,15 @@ void gbRecStart() {
     return;
   }
   uint8_t placeholder[44] = {};
-  gbRecFile.write(placeholder, sizeof(placeholder));
+  if (gbRecFile.write(placeholder, sizeof(placeholder)) != sizeof(placeholder)) {
+    Serial.println("REC:ERROR:WAV_HEADER_WRITE");
+    Serial1.println("REC:ERROR:WAV_HEADER_WRITE");
+    gbRecFile.close();
+    return;
+  }
   gbRecSampleCount = 0;
   gbRecBufLen = 0;
+  gbRecWriteError = false;
   gbRecording = true;
   Serial.print("REC:STARTED:");
   Serial.println(path);
@@ -2792,9 +2826,14 @@ void gbRecStop() {
     return;
   }
   gbRecFlushBuf();
-  writeWavHeader(gbRecFile, gbRecSampleCount * sizeof(int16_t));
+  const bool headerOk = writeWavHeader(gbRecFile, gbRecSampleCount * sizeof(int16_t));
   gbRecFile.close();
   gbRecording = false;
+  if (gbRecWriteError || !headerOk) {
+    Serial.println("REC:ERROR:WAV_INCOMPLETE");
+    Serial1.println("REC:ERROR:WAV_INCOMPLETE");
+    return; // conserver le fichier pour diagnostic, jamais signaler un succes
+  }
   Serial.print("REC:STOPPED:samples=");
   Serial.println(gbRecSampleCount);
   Serial1.print("REC:STOPPED:samples=");
@@ -2809,18 +2848,34 @@ void handleRecCommand(const String &line) {
   }
 }
 
-float gbUpsamplePhase = 0.0f;
-const float kGbSamplesOutPerIn = 44100.0f / static_cast<float>(az2::kGbAudioSampleRate);
+bool gbResampleHavePrev = false;
+int16_t gbResamplePrev = 0;
+uint32_t gbResamplePhaseQ16 = 0;
+constexpr uint32_t kGbResampleOneQ16 = 1u << 16;
+constexpr uint32_t kGbResampleStepQ16 =
+    (az2::kGbAudioSampleRate * kGbResampleOneQ16 + 22050u) / 44100u;
 
 void handleGbAudioPacket(const uint8_t *pcm, uint8_t len) {
+  ++gbAudioPacketsRx;
   for (uint8_t i = 0; i < len; ++i) {
-    const int16_t sample16 = static_cast<int16_t>((static_cast<int>(pcm[i]) - 128) << 8);
-    gbRecPush(sample16);  // capture native 8kHz, avant le sur-echantillonnage ci-dessous
-    gbUpsamplePhase += kGbSamplesOutPerIn;
-    while (gbUpsamplePhase >= 1.0f) {
-      gbRingPush(sample16);
-      gbUpsamplePhase -= 1.0f;
+    const int16_t current = static_cast<int16_t>((static_cast<int>(pcm[i]) - 128) << 8);
+    gbRecPush(current);  // capture au taux natif AVANT re-echantillonnage
+
+    if (!gbResampleHavePrev) {
+      gbResamplePrev = current;
+      gbResampleHavePrev = true;
+      continue;
     }
+
+    while (gbResamplePhaseQ16 < kGbResampleOneQ16) {
+      const int32_t delta = static_cast<int32_t>(current) - gbResamplePrev;
+      const int32_t interp = static_cast<int32_t>(gbResamplePrev) +
+          ((delta * static_cast<int32_t>(gbResamplePhaseQ16)) >> 16);
+      gbRingPush(static_cast<int16_t>(interp));
+      gbResamplePhaseQ16 += kGbResampleStepQ16;
+    }
+    gbResamplePhaseQ16 -= kGbResampleOneQ16;
+    gbResamplePrev = current;
   }
 }
 
@@ -2868,21 +2923,71 @@ struct AudioRxState {
 };
 AudioRxState gbAudioRx;
 
+// Independent binary V2 parser. The legacy V1 parser remains unchanged;
+// the experimental receiver is entered only after the shared pilot flag
+// is enabled, and the ESP32 must also receive GBV2:READY to transmit.
+az2::GbAudioV2Decoder gbAudioV2Rx;
+bool gbAudioV2InPacket = false;
+uint32_t gbAudioV2LastByteMs = 0;
+uint32_t gbAudioV2Accepted = 0;
+uint32_t gbAudioV2SeqGaps = 0;
+uint32_t gbAudioV2Unsupported = 0;
+uint16_t gbAudioV2ExpectedSeq = 0;
+bool gbAudioV2HaveSeq = false;
+
+void acceptGbAudioV2Frame() {
+  const az2::GbAudioV2Frame &frame = gbAudioV2Rx.frame;
+  // First live pilot reuses the proven V1 PCM mono path: stereo and
+  // alternative rates are explicitly rejected rather than misplayed.
+  if (frame.flags != 0 || frame.format != az2::kGbAudioV2FormatPcmU8 ||
+      frame.sampleRate != az2::kGbAudioSampleRate ||
+      frame.payloadLen != az2::kGbAudioSamplesPerPacket) {
+    ++gbAudioV2Unsupported;
+    return;
+  }
+  if (gbAudioV2HaveSeq && frame.sequence != gbAudioV2ExpectedSeq) {
+    ++gbAudioV2SeqGaps;
+  }
+  gbAudioV2ExpectedSeq = static_cast<uint16_t>(frame.sequence + 1u);
+  gbAudioV2HaveSeq = true;
+  ++gbAudioV2Accepted;
+  handleGbAudioPacket(frame.payload, static_cast<uint8_t>(frame.payloadLen));
+}
+
 // Un paquet complet (magic+longueur+kGbAudioSamplesPerPacket octets)
 // tient en <1 ms a kControlBaud -- 20 ms est tres large, ne se declenche
 // que si le lien est vraiment bloque/coupe au milieu d'un paquet.
 constexpr uint32_t kAudioRxTimeoutMs = 20;
 
 void readStream(Stream &in, String &lineBuffer, AudioRxState *audioState) {
+  if (audioState != nullptr && az2::kGbAudioV2PilotEnabled &&
+      gbAudioV2InPacket && millis() - gbAudioV2LastByteMs > kAudioRxTimeoutMs) {
+    gbAudioV2Rx.timeout();
+    gbAudioV2InPacket = false;
+  }
   if (audioState != nullptr && audioState->inPacket &&
       (millis() - audioState->lastByteMs) > kAudioRxTimeoutMs) {
+    ++gbAudioTimeouts;
     audioState->inPacket = false;
+    audioState->haveLen = false;
+    audioState->pos = 0;
   }
 
   while (in.available() > 0) {
     const uint8_t b = static_cast<uint8_t>(in.read());
 
     if (audioState != nullptr) {
+      if (az2::kGbAudioV2PilotEnabled && gbAudioV2InPacket) {
+        gbAudioV2LastByteMs = millis();
+        if (gbAudioV2Rx.feed(b)) {
+          acceptGbAudioV2Frame();
+          gbAudioV2InPacket = false;
+        } else if (gbAudioV2Rx.position == 0) {
+          // Bad header/CRC: return to searching for next packet magic.
+          gbAudioV2InPacket = false;
+        }
+        continue;
+      }
       if (audioState->inPacket) {
         audioState->lastByteMs = millis();
         if (!audioState->haveLen) {
@@ -2896,7 +3001,10 @@ void readStream(Stream &in, String &lineBuffer, AudioRxState *audioState) {
           // d'avaler N octets arbitraires en payload, ce qui ne ferait
           // qu'aggraver le desalignement.
           if (audioState->len != az2::kGbAudioSamplesPerPacket || audioState->len == 0) {
+            ++gbAudioBadLengths;
             audioState->inPacket = false;
+            audioState->haveLen = false;
+            audioState->pos = 0;
           }
           continue;
         }
@@ -2905,6 +3013,13 @@ void readStream(Stream &in, String &lineBuffer, AudioRxState *audioState) {
           handleGbAudioPacket(audioState->buf, audioState->len);
           audioState->inPacket = false;
         }
+        continue;
+      }
+      if (az2::kGbAudioV2PilotEnabled && b == az2::kGbAudioV2Magic) {
+        gbAudioV2Rx.reset();
+        gbAudioV2Rx.feed(b);
+        gbAudioV2LastByteMs = millis();
+        gbAudioV2InPacket = true;
         continue;
       }
       if (b == az2::kGbAudioPacketMagic) {
@@ -2938,6 +3053,34 @@ void readStream(Stream &in, String &lineBuffer, AudioRxState *audioState) {
 void readSerialCommands() {
   readStream(Serial, usbLine, nullptr);
   readStream(Serial1, espLine, &gbAudioRx);
+}
+
+void reportGbAudioHealth() {
+  static uint32_t lastReportMs = 0;
+  const uint32_t now = millis();
+  if (now - lastReportMs < 5000) return;
+  lastReportMs = now;
+
+  Serial.print("GB:AUDIO_RX:packets=");
+  Serial.print(gbAudioPacketsRx);
+  Serial.print(":bad_len=");
+  Serial.print(gbAudioBadLengths);
+  Serial.print(":timeouts=");
+  Serial.print(gbAudioTimeouts);
+  Serial.print(":ring_drop=");
+  Serial.print(gbRingDrops);
+  Serial.print(":v2_ok=");
+  Serial.print(gbAudioV2Accepted);
+  Serial.print(":v2_crc=");
+  Serial.print(gbAudioV2Rx.rejectedCrc);
+  Serial.print(":v2_header=");
+  Serial.print(gbAudioV2Rx.rejectedHeaders);
+  Serial.print(":v2_timeout=");
+  Serial.print(gbAudioV2Rx.timeouts);
+  Serial.print(":v2_seq_gap=");
+  Serial.print(gbAudioV2SeqGaps);
+  Serial.print(":v2_unsupported=");
+  Serial.println(gbAudioV2Unsupported);
 }
 
 // Verifie que la/les puce(s) PSRAM soudees sont bien detectees et
@@ -3198,6 +3341,7 @@ void setup() {
 
 void loop() {
   readSerialCommands();
+  reportGbAudioHealth();
   updateMidiIn();
   feedGbAudioQueue();
   updateScope();

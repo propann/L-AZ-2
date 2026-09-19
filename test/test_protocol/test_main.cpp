@@ -111,6 +111,95 @@ void test_pad_id_and_valid_pad() {
   TEST_ASSERT_FALSE(az2::validPad(16));
 }
 
+
+void test_gb_audio_v2_stream_roundtrip() {
+  az2::GbAudioV2Frame frame;
+  frame.sequence = 65534;
+  frame.sampleRate = 32000;
+  frame.format = az2::kGbAudioV2FormatPcmU8;
+  frame.flags = az2::kGbAudioV2FlagStereo;
+  frame.payloadLen = 128;
+  for (uint16_t i = 0; i < frame.payloadLen; ++i)
+    frame.payload[i] = static_cast<uint8_t>((i * 37) & 0xff);
+  uint8_t wire[az2::kGbAudioV2HeaderBytes + az2::kGbAudioV2MaxPayload +
+               az2::kGbAudioV2CrcBytes] = {};
+  const size_t size = az2::encodeGbAudioV2(wire, sizeof(wire), frame);
+  TEST_ASSERT_EQUAL_UINT32(140, size);
+  az2::GbAudioV2Decoder decoder;
+  bool complete = false;
+  for (size_t i = 0; i < size; ++i) {
+    if (decoder.feed(wire[i])) {
+      TEST_ASSERT_FALSE(complete);
+      complete = true;
+    }
+  }
+  TEST_ASSERT_TRUE(complete);
+  TEST_ASSERT_EQUAL_UINT16(frame.sequence, decoder.frame.sequence);
+  TEST_ASSERT_EQUAL_UINT16(frame.sampleRate, decoder.frame.sampleRate);
+  TEST_ASSERT_EQUAL_UINT16(frame.payloadLen, decoder.frame.payloadLen);
+  TEST_ASSERT_EQUAL_MEMORY(frame.payload, decoder.frame.payload, frame.payloadLen);
+  TEST_ASSERT_EQUAL_UINT32(0, decoder.rejectedCrc);
+}
+
+void test_gb_audio_v2_reject_corruption_and_recover() {
+  az2::GbAudioV2Frame frame;
+  frame.sequence = 7;
+  frame.sampleRate = 14000;
+  frame.format = az2::kGbAudioV2FormatPcmU8;
+  frame.payloadLen = 4;
+  frame.payload[0] = 0x03; frame.payload[1] = 0xff;
+  frame.payload[2] = 0x03; frame.payload[3] = 0x00;
+  uint8_t wire[32] = {};
+  const size_t size = az2::encodeGbAudioV2(wire, sizeof(wire), frame);
+  TEST_ASSERT_EQUAL_UINT32(16, size);
+  az2::GbAudioV2Decoder decoder;
+  wire[11] ^= 0x80;
+  for (size_t i = 0; i < size; ++i) TEST_ASSERT_FALSE(decoder.feed(wire[i]));
+  TEST_ASSERT_EQUAL_UINT32(1, decoder.rejectedCrc);
+  wire[11] ^= 0x80;
+  bool complete = false;
+  for (size_t i = 0; i < size; ++i) complete |= decoder.feed(wire[i]);
+  TEST_ASSERT_TRUE(complete);
+  // Broken header must be rejected before touching the payload buffer.
+  wire[6] = 0xff; wire[7] = 0xff;
+  for (size_t i = 0; i < az2::kGbAudioV2HeaderBytes; ++i)
+    TEST_ASSERT_FALSE(decoder.feed(wire[i]));
+  TEST_ASSERT_EQUAL_UINT32(1, decoder.rejectedHeaders);
+  decoder.timeout();
+  TEST_ASSERT_EQUAL_UINT32(0, decoder.timeouts);
+}
+
+void test_gb_audio_v2_endian_helpers() {
+  uint8_t bytes[2] = {0, 0};
+  az2::writeLe16(bytes, 0xBEEF);
+  TEST_ASSERT_EQUAL_HEX8(0xEF, bytes[0]);
+  TEST_ASSERT_EQUAL_HEX8(0xBE, bytes[1]);
+  TEST_ASSERT_EQUAL_HEX16(0xBEEF, az2::readLe16(bytes));
+}
+
+void test_gb_audio_v2_crc16_known_vector() {
+  const uint8_t data[] = {'1','2','3','4','5','6','7','8','9'};
+  TEST_ASSERT_EQUAL_HEX16(0x29B1, az2::crc16CcittFalse(data, sizeof(data)));
+}
+
+void test_gb_audio_v2_header_sanity() {
+  uint8_t h[az2::kGbAudioV2HeaderBytes] = {};
+  h[0] = az2::kGbAudioV2Magic;
+  h[1] = az2::kGbAudioV2Version;
+  h[2] = az2::kGbAudioV2FlagStereo;
+  h[3] = az2::kGbAudioV2FormatPcmU8;
+  az2::writeLe16(h + 4, 42);
+  az2::writeLe16(h + 6, 512);
+  az2::writeLe16(h + 8, 32000);
+  TEST_ASSERT_TRUE(az2::gbAudioV2HeaderSane(h, sizeof(h)));
+
+  h[3] = 99;
+  TEST_ASSERT_FALSE(az2::gbAudioV2HeaderSane(h, sizeof(h)));
+  h[3] = az2::kGbAudioV2FormatPcmS16Le;
+  az2::writeLe16(h + 6, az2::kGbAudioV2MaxPayload + 1);
+  TEST_ASSERT_FALSE(az2::gbAudioV2HeaderSane(h, sizeof(h)));
+}
+
 void test_engine_patch_count_and_name() {
   // 255 depuis le 2026-09-18 ("recuperer un max de patch") -- 255 des
   // 256 vraies voix d'usine du Yamaha DX7 original (ROM1-ROM4), pas
@@ -134,5 +223,10 @@ int main(int argc, char **argv) {
   RUN_TEST(test_division_label_known_values);
   RUN_TEST(test_pad_id_and_valid_pad);
   RUN_TEST(test_engine_patch_count_and_name);
+  RUN_TEST(test_gb_audio_v2_endian_helpers);
+  RUN_TEST(test_gb_audio_v2_crc16_known_vector);
+  RUN_TEST(test_gb_audio_v2_header_sanity);
+  RUN_TEST(test_gb_audio_v2_stream_roundtrip);
+  RUN_TEST(test_gb_audio_v2_reject_corruption_and_recover);
   return UNITY_END();
 }

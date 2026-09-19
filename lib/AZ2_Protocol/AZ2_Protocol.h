@@ -57,6 +57,180 @@ constexpr uint32_t kGbAudioSampleRate = 14000;
 // 2026-09-18, voir AZ2_ETAT_DES_LIEUX.md).
 constexpr uint8_t kGbAudioSamplesPerPacket = static_cast<uint8_t>(kGbAudioSampleRate / (4194304.0 / 70224.0));
 
+// ---------------------------------------------------------------------
+// Audio GB V2 — CONTRAT PREPARE, NON ACTIVE SUR LE FIL.
+// Le V1 ci-dessus reste le format utilise par les deux firmwares. Ces
+// constantes/helpers permettent de developper et tester le futur format
+// sans basculer une seule extremite par erreur.
+//
+// Frame V2 proposee :
+// [magic=0x03][version=2][flags][format][seqLE16][payloadLenLE16]
+// [sampleRateLE16][payload...][crc16LE]
+// CRC-16/CCITT-FALSE sur version..fin payload (magic et CRC exclus).
+// flags bit0 = stereo. format 1=PCM_U8, 2=PCM_S16LE.
+// ---------------------------------------------------------------------
+// Pilot disabled until full ESP32+Teensy hardware qualification; setting
+// this true on BOTH boards still requires explicit READY handshake.
+constexpr bool kGbAudioV2PilotEnabled = false;
+constexpr const char *kGbAudioV2Query = "GBV2:QUERY";
+constexpr const char *kGbAudioV2Ready = "GBV2:READY";
+constexpr uint8_t kGbAudioV2Magic = 0x03;
+constexpr uint8_t kGbAudioV2Version = 2;
+constexpr uint8_t kGbAudioV2FlagStereo = 0x01;
+constexpr uint8_t kGbAudioV2FormatPcmU8 = 1;
+constexpr uint8_t kGbAudioV2FormatPcmS16Le = 2;
+constexpr uint8_t kGbAudioV2HeaderBytes = 10;
+constexpr uint8_t kGbAudioV2CrcBytes = 2;
+constexpr uint16_t kGbAudioV2MaxPayload = 2048;
+
+inline uint16_t readLe16(const uint8_t *p) {
+  return static_cast<uint16_t>(p[0]) |
+         static_cast<uint16_t>(static_cast<uint16_t>(p[1]) << 8);
+}
+
+inline void writeLe16(uint8_t *p, uint16_t value) {
+  p[0] = static_cast<uint8_t>(value & 0xFFu);
+  p[1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
+}
+
+inline uint16_t crc16CcittFalse(const uint8_t *data, size_t len) {
+  uint16_t crc = 0xFFFFu;
+  for (size_t i = 0; i < len; ++i) {
+    crc ^= static_cast<uint16_t>(data[i]) << 8;
+    for (uint8_t bit = 0; bit < 8; ++bit) {
+      crc = (crc & 0x8000u) ? static_cast<uint16_t>((crc << 1) ^ 0x1021u)
+                            : static_cast<uint16_t>(crc << 1);
+    }
+  }
+  return crc;
+}
+
+inline bool gbAudioV2HeaderSane(const uint8_t *header, size_t len) {
+  if (header == nullptr || len < kGbAudioV2HeaderBytes) return false;
+  if (header[0] != kGbAudioV2Magic || header[1] != kGbAudioV2Version) return false;
+  const uint8_t format = header[3];
+  if (format != kGbAudioV2FormatPcmU8 && format != kGbAudioV2FormatPcmS16Le) return false;
+  if (header[2] & ~kGbAudioV2FlagStereo) return false;
+  const uint16_t payloadLen = readLe16(header + 6);
+  const uint16_t sampleRate = readLe16(header + 8);
+  const uint8_t bytesPerSample = format == kGbAudioV2FormatPcmU8 ? 1 : 2;
+  const uint8_t channels = (header[2] & kGbAudioV2FlagStereo) ? 2 : 1;
+  return payloadLen > 0 && payloadLen <= kGbAudioV2MaxPayload &&
+         payloadLen % (bytesPerSample * channels) == 0 &&
+         sampleRate >= 8000 && sampleRate <= 48000;
+}
+
+// Wire encoder/decoder used by both boards. A decoder instance is owned
+// by each receiving stream; feed() consumes exactly one byte. Payload is
+// bounded and CRC-checked BEFORE any sample is made visible to the caller.
+// On a damaged header/CRC, the following byte can start a fresh packet.
+// The parser intentionally does not scan inside opaque audio payload.
+struct GbAudioV2Frame {
+  uint16_t sequence = 0;
+  uint16_t sampleRate = 0;
+  uint16_t payloadLen = 0;
+  uint8_t flags = 0;
+  uint8_t format = 0;
+  uint8_t payload[kGbAudioV2MaxPayload] = {};
+};
+
+inline size_t encodeGbAudioV2(uint8_t *out, size_t capacity, const GbAudioV2Frame &frame) {
+  if (out == nullptr || capacity < kGbAudioV2HeaderBytes + frame.payloadLen + kGbAudioV2CrcBytes)
+    return 0;
+  uint8_t header[kGbAudioV2HeaderBytes] = {
+      kGbAudioV2Magic, kGbAudioV2Version, frame.flags, frame.format, 0, 0, 0, 0, 0, 0};
+  writeLe16(header + 4, frame.sequence);
+  writeLe16(header + 6, frame.payloadLen);
+  writeLe16(header + 8, frame.sampleRate);
+  if (!gbAudioV2HeaderSane(header, sizeof(header))) return 0;
+  for (size_t i = 0; i < sizeof(header); ++i) out[i] = header[i];
+  for (size_t i = 0; i < frame.payloadLen; ++i) out[sizeof(header) + i] = frame.payload[i];
+  const uint16_t crc = crc16CcittFalse(out + 1, sizeof(header) - 1 + frame.payloadLen);
+  writeLe16(out + sizeof(header) + frame.payloadLen, crc);
+  return sizeof(header) + frame.payloadLen + kGbAudioV2CrcBytes;
+}
+
+struct GbAudioV2Decoder {
+  uint8_t header[kGbAudioV2HeaderBytes] = {};
+  uint16_t position = 0;
+  uint16_t expected = 0;
+  uint16_t receivedCrc = 0;
+  uint32_t rejectedHeaders = 0;
+  uint32_t rejectedCrc = 0;
+  uint32_t timeouts = 0;
+  GbAudioV2Frame frame;
+
+  void reset() {
+    position = 0;
+    expected = 0;
+    receivedCrc = 0;
+  }
+  void timeout() {
+    if (position != 0) ++timeouts;
+    reset();
+  }
+  // true: exactly one validated frame has just completed.
+  bool feed(uint8_t byte) {
+    if (position == 0) {
+      if (byte != kGbAudioV2Magic) return false;
+      header[0] = byte;
+      position = 1;
+      return false;
+    }
+    if (position < kGbAudioV2HeaderBytes) {
+      header[position++] = byte;
+      if (position == kGbAudioV2HeaderBytes) {
+        if (!gbAudioV2HeaderSane(header, sizeof(header))) {
+          ++rejectedHeaders;
+          reset();
+          return false;
+        }
+        frame.flags = header[2];
+        frame.format = header[3];
+        frame.sequence = readLe16(header + 4);
+        frame.payloadLen = readLe16(header + 6);
+        frame.sampleRate = readLe16(header + 8);
+        expected = static_cast<uint16_t>(kGbAudioV2HeaderBytes + frame.payloadLen +
+                                         kGbAudioV2CrcBytes);
+      }
+      return false;
+    }
+    if (position < kGbAudioV2HeaderBytes + frame.payloadLen) {
+      frame.payload[position - kGbAudioV2HeaderBytes] = byte;
+      ++position;
+      return false;
+    }
+    if (position == kGbAudioV2HeaderBytes + frame.payloadLen) {
+      receivedCrc = byte;
+      ++position;
+      return false;
+    }
+    receivedCrc |= static_cast<uint16_t>(byte) << 8;
+    // Compute CRC incrementally over the header (excluding magic) and
+    // payload. Equivalent to crc16CcittFalse() over contiguous wire bytes.
+    uint16_t crc = 0xFFFFu;
+    for (size_t i = 1; i < kGbAudioV2HeaderBytes; ++i) {
+      crc ^= static_cast<uint16_t>(header[i]) << 8;
+      for (uint8_t bit = 0; bit < 8; ++bit)
+        crc = (crc & 0x8000u) ? static_cast<uint16_t>((crc << 1) ^ 0x1021u)
+                             : static_cast<uint16_t>(crc << 1);
+    }
+    for (size_t i = 0; i < frame.payloadLen; ++i) {
+      crc ^= static_cast<uint16_t>(frame.payload[i]) << 8;
+      for (uint8_t bit = 0; bit < 8; ++bit)
+        crc = (crc & 0x8000u) ? static_cast<uint16_t>((crc << 1) ^ 0x1021u)
+                             : static_cast<uint16_t>(crc << 1);
+    }
+    const uint16_t expectedCrc = receivedCrc;
+    reset();
+    if (crc != expectedCrc) {
+      ++rejectedCrc;
+      return false;
+    }
+    return true;
+  }
+};
+
 // Oscilloscope, Teensy -> ESP32 cette fois (demande 2026-09-15, "une
 // fenetre ou on voit l'onde du son jouer evoluer en modifiant le
 // patch"). Meme principe de paquet binaire que le son GB (magique +

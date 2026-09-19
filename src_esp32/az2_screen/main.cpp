@@ -2726,7 +2726,20 @@ void drawRomRow(uint8_t index) {
   gfx->setTextSize(2);
   gfx->setTextColor(RGB565_WHITE);
   gfx->setCursor(static_cast<int16_t>(kMargin + 10), static_cast<int16_t>(y + 6));
-  gfx->print(gbRomNames[index]);
+  // L'identifiant SD reste complet dans gbRomNames[]. On tronque
+  // uniquement le LIBELLE visible pour ne jamais dessiner hors cadre.
+  constexpr size_t kRomLabelChars = 32;
+  char label[kRomLabelChars + 1];
+  const size_t fullLen = strlen(gbRomNames[index]);
+  if (fullLen <= kRomLabelChars) {
+    strncpy(label, gbRomNames[index], sizeof(label));
+    label[kRomLabelChars] = '\0';
+  } else {
+    memcpy(label, gbRomNames[index], kRomLabelChars - 3);
+    memcpy(label + kRomLabelChars - 3, "...", 3);
+    label[kRomLabelChars] = '\0';
+  }
+  gfx->print(label);
 }
 
 // Renvoie l'index ABSOLU (pas relatif a la page) de la ROM touchee.
@@ -2821,8 +2834,8 @@ void drawRetroPage() {
     gfx->print(gbRomTitle());
     // Rappel discret : C quitte la partie (voir le commentaire pres de
     // "il faut un truc pour sortir de l'emulateur", 2026-09-17).
-    gfx->setCursor(static_cast<int16_t>(kScreenSize - kMargin - 48), 4);
-    gfx->print("C:MENU");
+    gfx->setCursor(static_cast<int16_t>(kScreenSize - kMargin - 94), 4);
+    gfx->print("C:MENU D:SAVE");
     drawGbRecIndicator();
     return;
   }
@@ -3454,6 +3467,19 @@ void drawScreen(Screen s) {
 }
 
 void goTo(Screen s) {
+  // La sortie de la page Jeux doit etre annulee si la carte SD refuse
+  // la sauvegarde : conserver le jeu en RAM et la navigation intacte.
+  if (s != Screen::Retro && gbIsLoaded() && !gbUnload()) {
+    Serial.println("GB:NAV_BLOCKED_UNSAVED_RAM");
+    // L'image GB occupe y=24..455 : afficher l'erreur dans la
+    // bande de titre, sans masquer l'ecran du jeu ni effacer la RAM.
+    gfx->fillRect(0, 0, kScreenSize, 22, RGB565_BLACK);
+    gfx->setTextSize(1);
+    gfx->setTextColor(RGB565_RED);
+    gfx->setCursor(kMargin, 5);
+    gfx->print("SD SAVE ERROR - C:RETRY");
+    return;
+  }
   // Memorise d'ou on vient (voir navPrevious plus haut) -- AVANT tout
   // le reste, pour que meme un "retour" (goTo(navPrevious)) enregistre
   // correctement l'etape precedente (permet de faire l'aller-retour
@@ -3474,8 +3500,6 @@ void goTo(Screen s) {
     gbRomCount = gbScanRoms(gbRomNames);
     gbRomScroll = 0;
     selectedRomIndex = 0;
-  } else if (s != Screen::Retro && gbIsLoaded()) {
-    gbUnload();
   }
 
   // Page MOTEURS (2026-09-19) : aligne le defilement de la liste PATCH
@@ -3529,6 +3553,11 @@ void goTo(Screen s) {
 String teensyLine;
 
 void handleTeensyLine(const String &line) {
+  if (line == az2::kGbAudioV2Ready) {
+    gbSetAudioV2Ready(true);
+  } else if (line == "GBV2:DISABLED") {
+    gbSetAudioV2Ready(false);
+  }
   Serial.print("TEENSY:");
   Serial.println(line);
   teensyLinked = true;
@@ -3994,6 +4023,16 @@ void handleTeensyLine(const String &line) {
       // ailleurs desormais), pas force au menu.
       if (pressed && letter == 'C' && inGbGame) {
         goTo(navPrevious);
+      }
+      // Sauvegarde manuelle LSDJ/GB : D force l'ecriture de la SRAM
+      // sans quitter la partie. Le message tient dans la bande de titre.
+      if (pressed && letter == 'D' && inGbGame) {
+        const bool saved = gbSaveNow();
+        gfx->fillRect(0, 0, kScreenSize, 22, RGB565_BLACK);
+        gfx->setTextSize(1);
+        gfx->setTextColor(saved ? kDim : RGB565_RED);
+        gfx->setCursor(kMargin, 5);
+        gfx->print(saved ? "GB SAVE OK" : "GB SAVE ERROR - D:RETRY");
       }
       // Menu principal : A confirme la selection surlignee par la
       // croix (voir menuSelected ci-dessus) -- demande 2026-09-15.
@@ -4905,10 +4944,11 @@ constexpr int16_t kGbScaledW = 160 * 3;
 constexpr int16_t kGbScaledH = 144 * 3;
 constexpr int16_t kGbScreenTop = (kScreenSize - kGbScaledH) / 2;
 
-// Un SEUL draw16bitRGBBitmap() par ligne source (480x3 d'un coup) au
-// lieu de 3 -- demande le 2026-09-15 ("on a des sauts d'images, on peut
-// stabiliser"), moins d'appels = moins de surcharge par appel vers le
-// bus RGB parallele.
+// Le rendu est regroupe par bandes de 8 lignes GB : 160x8 pixels deviennent
+// un bloc 480x24. Cela ramene une image de 144 a 18 appels au pilote RGB,
+// sans recreer le grand framebuffer PSRAM 480x432 qui avait scintille sur
+// le vrai materiel. Le tampon de bande (~23 Kio) reste stable pendant
+// l'appel et n'exige aucune synchronisation de deux grands framebuffers.
 // [2026-09-18] Tentative de rendu "1 bloc PSRAM entier envoye a la fin
 // de l'image" essayee par une autre session IA le meme jour -- ANNULEE
 // : premier retour utilisateur sur le vrai materiel = "l'ecran
@@ -4921,20 +4961,30 @@ constexpr int16_t kGbScreenTop = (kScreenSize - kGbScaledH) / 2;
 // ("certaines animations ne s'affichent pas correctement, ex.
 // Prehistorik Man") -- accepte comme compromis connu, pas un bug AZ-2.
 void gbBlitLine(int line, const uint16_t *row) {
-  static uint16_t scaledBlock[kGbScaledW * 3];
+  constexpr int16_t kGbSourceRowsPerBand = 8;
+  constexpr int16_t kGbScaledRowsPerBand = kGbSourceRowsPerBand * 3;
+  static uint16_t scaledBand[kGbScaledW * kGbScaledRowsPerBand];
+  const int16_t sourceRowInBand = static_cast<int16_t>(line % kGbSourceRowsPerBand);
+  uint16_t *scaledRow = scaledBand + sourceRowInBand * 3 * kGbScaledW;
+
   for (int x = 0; x < 160; ++x) {
     const uint16_t c = row[x];
     const int16_t base = static_cast<int16_t>(x * 3);
-    scaledBlock[base] = c;
-    scaledBlock[base + 1] = c;
-    scaledBlock[base + 2] = c;
+    scaledRow[base] = c;
+    scaledRow[base + 1] = c;
+    scaledRow[base + 2] = c;
   }
   // Les 2 autres rangees de sortie sont identiques a la premiere.
-  memcpy(scaledBlock + kGbScaledW, scaledBlock, kGbScaledW * sizeof(uint16_t));
-  memcpy(scaledBlock + kGbScaledW * 2, scaledBlock, kGbScaledW * sizeof(uint16_t));
+  memcpy(scaledRow + kGbScaledW, scaledRow, kGbScaledW * sizeof(uint16_t));
+  memcpy(scaledRow + kGbScaledW * 2, scaledRow, kGbScaledW * sizeof(uint16_t));
 
-  const int16_t y = static_cast<int16_t>(kGbScreenTop + line * 3);
-  gfx->draw16bitRGBBitmap(0, y, scaledBlock, kGbScaledW, 3);
+  const bool bandComplete = sourceRowInBand == (kGbSourceRowsPerBand - 1) || line == 143;
+  if (bandComplete) {
+    const int16_t sourceBandStart = static_cast<int16_t>(line - sourceRowInBand);
+    const int16_t sourceRows = static_cast<int16_t>(sourceRowInBand + 1);
+    const int16_t y = static_cast<int16_t>(kGbScreenTop + sourceBandStart * 3);
+    gfx->draw16bitRGBBitmap(0, y, scaledBand, kGbScaledW, sourceRows * 3);
+  }
 }
 
 void setup() {
@@ -4992,7 +5042,11 @@ void setup() {
   // large sans cout memoire notable (PSRAM/RAM disponibles ici).
   Serial1.setRxBufferSize(2048);
   Serial1.begin(az2::kControlBaud, SERIAL_8N1, kTeensyRxPin, kTeensyTxPin);
+  gbSetAudioV2Ready(false);
   sendToTeensy(az2::kHelloControl);
+  if (az2::kGbAudioV2PilotEnabled) {
+    sendToTeensy(az2::kGbAudioV2Query);
+  }
 
   Wire.begin(kTouchSdaPin, kTouchSclPin);
   Wire.setClock(400000);  // I2C fast mode: tactile plus reactif
@@ -5452,22 +5506,19 @@ void loop() {
     }
   }
 
-  // Emulateur Game Boy (page JEUX, voir gb_emulator.h) : cadence CIBLE
-  // ~59,7 images/s (periode Game Boy reelle) tant qu'une ROM est chargee
-  // et que cette page est affichee. Le "if >= 17" est un LIMITEUR, pas
-  // un ordonnanceur -- il ne fait que plafonner la cadence, il ne
-  // rattrape jamais un retard. Si l'ESP32-S3 met plus de 17ms pour
-  // finir un tour de loop() (rendu + emulation + reseau), la cadence
-  // REELLE tombe sous 59,7 im/s -- le jeu ET sa musique (meme horloge
-  // interne) tournent alors au ralenti. Compteur ajoute le 2026-09-17
-  // (retour utilisateur : "c'est cote vitesse qu'on est pas bon" sur
-  // les jeux GBC) pour MESURER la cadence reelle au lieu de deviner --
-  // imprime "GB:FPS:<n>" une fois par seconde pendant une partie.
-  // Frequence GB reelle : ~59,7275 Hz, soit 16 742 us. L'ancien
-  // intervalle entier de 17 ms plafonnait deja la machine a 58,8 FPS.
+  // Emulateur Game Boy : une frame dure exactement 70224 cycles a
+  // 4 194 304 Hz, soit 16 742,706298 us. Garder seulement 16 742 us
+  // cree une petite derive permanente ; l'accumulateur de reste ci-dessous
+  // alterne 16 742/16 743 us et conserve la cadence native sur la duree.
   constexpr uint32_t kGbFramePeriodUs = 16742;
+  constexpr uint32_t kGbFrameRemainder = 2962432;
+  constexpr uint32_t kGbClockHz = 4194304;
   static uint32_t nextGbFrameUs = 0;
+  static uint32_t gbFrameFraction = 0;
   static uint32_t gbFrameCount = 0;
+  static uint32_t gbFrameTimeTotalUs = 0;
+  static uint32_t gbFrameTimeMaxUs = 0;
+  static uint32_t gbMissedFrames = 0;
   static uint32_t gbFpsWindowStartMs = 0;
   if (currentScreen == Screen::Retro && gbIsLoaded() && !screensaverActive) {
     const uint32_t nowUs = micros();
@@ -5475,24 +5526,77 @@ void loop() {
       nextGbFrameUs = nowUs;
     }
     if (static_cast<int32_t>(nowUs - nextGbFrameUs) >= 0) {
+      const uint32_t frameStartUs = micros();
       gbRunFrame();
+      const uint32_t frameDurationUs = micros() - frameStartUs;
       ++gbFrameCount;
+      gbFrameTimeTotalUs += frameDurationUs;
+      if (frameDurationUs > gbFrameTimeMaxUs) {
+        gbFrameTimeMaxUs = frameDurationUs;
+      }
+
       nextGbFrameUs += kGbFramePeriodUs;
-      // Ne pas lancer une rafale pour rattraper un gros retard : UI et
-      // commandes doivent rester reactives.
-      if (static_cast<int32_t>(nowUs - nextGbFrameUs) > static_cast<int32_t>(kGbFramePeriodUs * 2)) {
-        nextGbFrameUs = nowUs + kGbFramePeriodUs;
+      gbFrameFraction += kGbFrameRemainder;
+      if (gbFrameFraction >= kGbClockHz) {
+        ++nextGbFrameUs;
+        gbFrameFraction -= kGbClockHz;
+      }
+
+      // Un retard superieur a deux frames n'est pas cache : on le compte,
+      // puis on resynchronise pour conserver les commandes/UI reactives.
+      // La cible de qualification impose que ce compteur reste a zero.
+      const uint32_t afterFrameUs = micros();
+      const int32_t lateUs = static_cast<int32_t>(afterFrameUs - nextGbFrameUs);
+      if (lateUs > static_cast<int32_t>(kGbFramePeriodUs * 2)) {
+        gbMissedFrames += static_cast<uint32_t>(lateUs) / 16743U;
+        nextGbFrameUs = afterFrameUs + kGbFramePeriodUs;
+        gbFrameFraction = kGbFrameRemainder;
       }
     }
-    if (now - gbFpsWindowStartMs >= 1000) {
-      Serial.print("GB:FPS:");
-      Serial.println(gbFrameCount);
+    const uint32_t fpsElapsedMs = now - gbFpsWindowStartMs;
+    if (fpsElapsedMs >= 1000) {
+      const uint32_t fpsX100 = (fpsElapsedMs > 0)
+                                   ? static_cast<uint32_t>((static_cast<uint64_t>(gbFrameCount) * 100000ULL) /
+                                                           fpsElapsedMs)
+                                   : 0;
+      const uint32_t frameAvgUs = (gbFrameCount > 0) ? gbFrameTimeTotalUs / gbFrameCount : 0;
+      Serial.print("GB:PERF:fps_x100=");
+      Serial.print(fpsX100);
+      Serial.print(":frame_us_avg=");
+      Serial.print(frameAvgUs);
+      Serial.print(":frame_us_max=");
+      Serial.print(gbFrameTimeMaxUs);
+      Serial.print(":missed=");
+      Serial.println(gbMissedFrames);
+
+      // Diagnostic discret dans la bande superieure reservee au mode GB.
+      // Ne touche jamais aux 432 px de l'image du jeu (y=24..455).
+      const GbRuntimeStats runtime = gbRuntimeStats();
+      gfx->fillRect(120, 0, 270, 22, RGB565_BLACK);
+      gfx->setTextSize(1);
+      gfx->setTextColor(gbMissedFrames == 0 ? kDim : RGB565_RED);
+      gfx->setCursor(120, 5);
+      char perfLabel[48];
+      snprintf(perfLabel, sizeof(perfLabel), "%lu.%02luFPS %luus M%lu S%u",
+               static_cast<unsigned long>(fpsX100 / 100),
+               static_cast<unsigned long>(fpsX100 % 100),
+               static_cast<unsigned long>(frameAvgUs),
+               static_cast<unsigned long>(gbMissedFrames),
+               static_cast<unsigned>(runtime.autosaveFailures));
+      gfx->print(perfLabel);
       gbFrameCount = 0;
+      gbFrameTimeTotalUs = 0;
+      gbFrameTimeMaxUs = 0;
+      gbMissedFrames = 0;
       gbFpsWindowStartMs = now;
     }
   } else {
     nextGbFrameUs = 0;
+    gbFrameFraction = 0;
     gbFrameCount = 0;
+    gbFrameTimeTotalUs = 0;
+    gbFrameTimeMaxUs = 0;
+    gbMissedFrames = 0;
     gbFpsWindowStartMs = now;
   }
 
