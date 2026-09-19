@@ -198,6 +198,12 @@ bool inBox(int16_t x, int16_t y, int16_t bx, int16_t by, int16_t bw, int16_t bh)
 // ---------------------------------------------------------------------
 enum class Screen : uint8_t { Menu, Controls, Audio, Sequencer, Engines, Retro, Config, Links, About, Patch, Song, Project };
 Screen currentScreen = Screen::Menu;
+// "Retour" (2026-09-19, "il faut pas que ca revienne aux menu general
+// il faut que ca revienne d'un etage seulement") -- UN SEUL niveau
+// memorise (pas une pile complete), mis a jour a chaque goTo() reel
+// (voir plus bas) : suffit pour "revenir d'ou on vient" partout, sans
+// la complexite d'une vraie pile d'historique.
+Screen navPrevious = Screen::Menu;
 
 bool teensyLinked = false;
 
@@ -1206,6 +1212,12 @@ int8_t selectedEngineTrack = 0;
 // la colonne au focus.
 bool engineColPatch = false;
 uint16_t engPatchScroll = 0;
+// true = focus croix sur la ligne PISTE en haut (GAUCHE/DROITE change
+// alors la piste), false = focus dans une des 2 listes (voir
+// engineColPatch pour laquelle) -- voir le gestionnaire NAV: pour le
+// detail complet (2026-09-19, 2e passe suite au retour "on est un peu
+// dans le desordre de controle").
+bool engOnTrackRow = false;
 
 constexpr int16_t kEngTrackRowY = 66;
 constexpr int16_t kEngTrackRowH = 22;
@@ -1225,8 +1237,15 @@ constexpr int16_t kEngMiniY = kEngListTop + kEngListH + 10;
 constexpr int16_t kEngMiniH = 66;
 
 void drawEngTrackRow() {
-  gfx->fillRect(kMargin, kEngTrackRowY, static_cast<int16_t>(kScreenSize - 2 * kMargin), kEngTrackRowH,
-                RGB565_BLACK);
+  const int16_t w = static_cast<int16_t>(kScreenSize - 2 * kMargin);
+  gfx->fillRect(kMargin, kEngTrackRowY, w, kEngTrackRowH, RGB565_BLACK);
+  // Contour blanc quand le focus croix est sur cette ligne (2026-09-19,
+  // voir engOnTrackRow) -- seul indice visuel de "ou" on est avant de
+  // bouger, important puisque GAUCHE/DROITE change de sens selon le
+  // focus (piste ici, moteur/patch sinon).
+  if (engOnTrackRow) {
+    gfx->drawRect(kMargin, kEngTrackRowY, w, kEngTrackRowH, RGB565_WHITE);
+  }
   gfx->setTextSize(2);
   gfx->setTextColor(kPalette[selectedEngineTrack % kPaletteCount]);
   char buf[16];
@@ -1246,7 +1265,7 @@ void drawEngListRow(uint8_t engineIdx) {
   const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
   const int16_t y = static_cast<int16_t>(kEngListTop + engineIdx * kEngListRowH);
   const bool isCurrent = (engineIdx == trackEngine[t]);
-  const bool focused = isCurrent && !engineColPatch;
+  const bool focused = isCurrent && !engineColPatch && !engOnTrackRow;
   const uint16_t accent = kPalette[t % kPaletteCount];
   const int16_t h = static_cast<int16_t>(kEngListRowH - 2);
 
@@ -1276,7 +1295,7 @@ void drawEngPatchRow(uint8_t slot) {
     return;
   }
   const bool isCurrent = (patchIdx == trackPatch[t]);
-  const bool focused = isCurrent && engineColPatch;
+  const bool focused = isCurrent && engineColPatch && !engOnTrackRow;
   const uint16_t accent = kPalette[t % kPaletteCount];
 
   gfx->fillRect(kEngListRightX, y, kEngListRightW, h, isCurrent ? accent : RGB565_BLACK);
@@ -3004,6 +3023,16 @@ void drawScreen(Screen s) {
 }
 
 void goTo(Screen s) {
+  // Memorise d'ou on vient (voir navPrevious plus haut) -- AVANT tout
+  // le reste, pour que meme un "retour" (goTo(navPrevious)) enregistre
+  // correctement l'etape precedente (permet de faire l'aller-retour
+  // entre 2 pages avec le bouton retour, pas seulement "une fois").
+  // Garde inutile si s == currentScreen (pas un vrai changement de
+  // page, ex: re-goTo() sur l'ecran deja affiche).
+  if (s != currentScreen) {
+    navPrevious = currentScreen;
+  }
+
   // Rescanne /games et decharge la ROM GB en entrant/sortant de la page
   // JEUX (voir gb_emulator.h) -- libere la PSRAM des qu'on quitte, evite
   // de garder une ROM chargee inutilement sur les autres pages. Le scan
@@ -3026,6 +3055,7 @@ void goTo(Screen s) {
     const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
     const uint8_t patch = trackPatch[t];
     engPatchScroll = (patch < kEngListVisibleRows) ? 0 : static_cast<uint16_t>(patch - kEngListVisibleRows + 1);
+    engOnTrackRow = false;  // atterrit dans la liste MOTEUR, pas sur la ligne PISTE
   }
 
   // Revenir sur le menu depuis un autre ecran retombe toujours sur la
@@ -3164,44 +3194,74 @@ void handleTeensyLine(const String &line) {
             drawMenu();
           }
         }
-        // Page MOTEURS repensee (2026-09-19, voir le commentaire de
-        // selectedEngineTrack plus haut) -- meme convention que la page
-        // PATCH : GAUCHE/DROITE SEULS changent la piste, A maintenu +
-        // GAUCHE/DROITE bascule le focus entre la liste MOTEUR et la
-        // liste PATCH (comme A+GAUCHE/DROITE = SAVE/LOAD sur la ligne
-        // SLOT de la page PATCH), HAUT/BAS deplace ET CHOISIT
-        // IMMEDIATEMENT dans la liste au focus (pas d'etape de
-        // confirmation separee, meme esprit que le reste de l'appli).
+        // Page MOTEURS repensee UNE 2e FOIS le 2026-09-19 (retour
+        // utilisateur sur materiel reel : "on est un peu dans le
+        // desordre de controle ... il faut selectionner l'encadre
+        // piste et droite gauche [pour changer de piste]") -- le
+        // premier essai (A+GAUCHE/DROITE pour le focus, comme la ligne
+        // SLOT de la page PATCH) portait a confusion ici, pas assez
+        // evident. Nouveau modele SANS modificateur A : GAUCHE/DROITE
+        // bascule TOUJOURS le focus entre liste MOTEUR et liste PATCH
+        // quand on est DANS une de ces 2 listes (naturel, elles sont
+        // cote a cote a l'ecran) ; pour changer de PISTE, il faut
+        // d'abord remonter (HAUT) jusqu'a "sortir" de la liste -- la
+        // ligne PISTE en haut devient alors le point selectionne
+        // (engOnTrackRow), et GAUCHE/DROITE y change la piste. BAS
+        // depuis la ligne PISTE redescend dans la liste au focus.
         if (pressed && currentScreen == Screen::Engines) {
           const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
-          if (btnState[0] && (index == 2 || index == 3)) {
-            engineColPatch = !engineColPatch;
-            drawEnginesPage();
+          if (engOnTrackRow) {
+            if (index == 2 || index == 3) {
+              selectedEngineTrack = static_cast<int8_t>(
+                  (selectedEngineTrack + (index == 3 ? 1 : kSeqTrackCount - 1)) % kSeqTrackCount);
+              engPatchScroll = 0;
+              drawEnginesPage();
+            } else if (index == 1) {  // BAS -- entre dans la liste au focus
+              engOnTrackRow = false;
+              drawEnginesPage();
+            }
+            // HAUT : deja tout en haut, no-op.
           } else if (index == 2 || index == 3) {
-            selectedEngineTrack = static_cast<int8_t>((selectedEngineTrack + (index == 3 ? 1 : kSeqTrackCount - 1)) %
-                                                        kSeqTrackCount);
-            engPatchScroll = 0;
+            engineColPatch = !engineColPatch;
             drawEnginesPage();
           } else if (index == 0 || index == 1) {
             const int dir = (index == 0) ? -1 : 1;
-            char msg[16];
             if (!engineColPatch) {
-              const uint8_t nextEngine = static_cast<uint8_t>((trackEngine[t] + dir + az2::kEngineCount) % az2::kEngineCount);
-              snprintf(msg, sizeof(msg), "ENGINE:%d:%d", t, nextEngine);
-            } else {
-              const uint16_t count = az2::enginePatchCount(trackEngine[t]);
-              const uint16_t nextPatch = static_cast<uint16_t>((trackPatch[t] + dir + count) % count);
-              // Fait suivre le defilement si la nouvelle selection sort
-              // de la fenetre visible -- meme principe que patchScroll
-              // sur la page PATCH.
-              if (nextPatch < engPatchScroll) {
-                engPatchScroll = nextPatch;
-              } else if (nextPatch >= engPatchScroll + kEngListVisibleRows) {
-                engPatchScroll = static_cast<uint16_t>(nextPatch - kEngListVisibleRows + 1);
+              // Liste MOTEUR : PAS de bouclage -- HAUT depuis le tout
+              // premier moteur (index 0) remonte a la ligne PISTE au
+              // lieu de boucler sur le dernier moteur (SAMPLER),
+              // sinon aucun moyen d'atteindre la ligne PISTE au clavier.
+              if (dir < 0 && trackEngine[t] == 0) {
+                engOnTrackRow = true;
+                drawEnginesPage();
+              } else {
+                const int nextEngine = constrain(static_cast<int>(trackEngine[t]) + dir, 0, az2::kEngineCount - 1);
+                char msg[16];
+                snprintf(msg, sizeof(msg), "ENGINE:%d:%d", t, nextEngine);
+                sendToTeensy(msg);
               }
-              snprintf(msg, sizeof(msg), "PATCH:%d:%d", t, nextPatch);
+            } else {
+              // Liste PATCH : meme principe -- pas de bouclage, HAUT
+              // depuis le patch 0 remonte a la ligne PISTE.
+              if (dir < 0 && trackPatch[t] == 0) {
+                engOnTrackRow = true;
+                drawEnginesPage();
+              } else {
+                const uint16_t count = az2::enginePatchCount(trackEngine[t]);
+                const int nextPatch = constrain(static_cast<int>(trackPatch[t]) + dir, 0, static_cast<int>(count) - 1);
+                // Fait suivre le defilement si la nouvelle selection
+                // sort de la fenetre visible -- meme principe que
+                // patchScroll sur la page PATCH.
+                if (nextPatch < engPatchScroll) {
+                  engPatchScroll = static_cast<uint16_t>(nextPatch);
+                } else if (nextPatch >= engPatchScroll + kEngListVisibleRows) {
+                  engPatchScroll = static_cast<uint16_t>(nextPatch - kEngListVisibleRows + 1);
+                }
+                char msg[16];
+                snprintf(msg, sizeof(msg), "PATCH:%d:%d", t, nextPatch);
+                sendToTeensy(msg);
+              }
             }
-            sendToTeensy(msg);
           }
         }
         // Sur la page SEQUENCEUR (vue tracker, voir seqDetailMode plus
@@ -3461,14 +3521,16 @@ void handleTeensyLine(const String &line) {
       }
       // Sortir d'une partie : demande 2026-09-17 ("il faut un truc pour
       // sortir de l'emulateur cote code") -- B est deja pris par le jeu
-      // (voir plus bas) donc pas utilisable comme "retour menu" ici. La
-      // Game Boy d'origine n'a pas de boutons L/R : C et D restent donc
+      // (voir plus bas) donc pas utilisable comme "retour" ici. La Game
+      // Boy d'origine n'a pas de boutons L/R : C et D restent donc
       // libres meme en pleine partie (voir AZ2_TODO_PICO.md, "gachette"
-      // jamais assignee) -- C sert desormais a quitter proprement
-      // (goTo(Screen::Menu) sauvegarde la RAM cartouche via gbUnload()
-      // avant de liberer la ROM, meme chemin que changer de page).
+      // jamais assignee) -- C sert a quitter proprement (goTo()
+      // sauvegarde la RAM cartouche via gbUnload() avant de liberer la
+      // ROM, meme chemin que changer de page) -- vers navPrevious
+      // (2026-09-19, meme convention "retour d'un etage" que partout
+      // ailleurs desormais), pas force au menu.
       if (pressed && letter == 'C' && inGbGame) {
-        goTo(Screen::Menu);
+        goTo(navPrevious);
       }
       // Menu principal : A confirme la selection surlignee par la
       // croix (voir menuSelected ci-dessus) -- demande 2026-09-15.
@@ -3490,19 +3552,25 @@ void handleTeensyLine(const String &line) {
       // Page MOTEURS : le focus (A+GAUCHE/DROITE) est gere directement
       // dans le bloc NAV: ci-dessus desormais (2026-09-19) -- A seul
       // n'a plus de role ici.
-      // Dans une sous-liste du menu : B revient a la grille de
-      // categories (pas besoin de ressortir de Screen::Menu).
-      if (pressed && letter == 'B' && currentScreen == Screen::Menu && menuCategory >= 0) {
+      // Bouton RETOUR : C (2026-09-19, "le bouton retour on le met sur
+      // c c'est plus cool moins tendance a appuyer dessus" -- deplace
+      // de B, confirme fonctionnel sur le vrai materiel : "tout les
+      // bouton marche deja"). Revient d'UN SEUL ETAGE (navPrevious),
+      // PAS force au menu general ("il faut pas que ca revienne au
+      // menu general"). Exclu en pleine partie GB (C = quitter
+      // proprement, voir plus haut -- meme esprit, juste un chemin
+      // dedie qui sauvegarde la RAM cartouche avant).
+      //
+      // Dans une sous-liste du menu : cas particulier, revient a la
+      // grille de categories (deja "un etage", pas besoin de
+      // navPrevious ici -- on reste dans Screen::Menu).
+      if (pressed && letter == 'C' && currentScreen == Screen::Menu && menuCategory >= 0) {
         menuCategory = -1;
         menuSelected = 0;
         drawMenu();
       }
-      if (pressed && letter == 'B' && currentScreen != Screen::Menu && !inGbGame) {
-        // Partout ailleurs (sauf en pleine partie GB, ou B est le
-        // bouton B du jeu) : B revient au menu -- convention manette
-        // classique, meme demande ("il faut que ca serve dans les
-        // menus").
-        goTo(Screen::Menu);
+      if (pressed && letter == 'C' && currentScreen != Screen::Menu && !inGbGame) {
+        goTo(navPrevious);
       }
       // Page AUDIO : D bascule le clavier tactile entre "jouer en
       // direct" et "poser la note sur le pas selectionne du
@@ -3532,18 +3600,20 @@ void handleTeensyLine(const String &line) {
           sendToTeensy("FILL:0");  // no-op cote Teensy si fillActive etait deja false
         }
       }
-      // Page MOTEURS : C bascule MUTE, D bascule SOLO pour la piste
-      // choisie par la croix (priorite #1 de la liste indispensable).
-      if (pressed && currentScreen == Screen::Engines && (letter == 'C' || letter == 'D')) {
+      // Page MOTEURS : D bascule SOLO pour la piste choisie (priorite
+      // #1 de la liste indispensable). C bascule MUTE avant le
+      // 2026-09-19 -- retire, C est desormais le bouton RETOUR global
+      // (voir plus haut), le conflit aurait ouvert/coupe une piste par
+      // erreur a chaque "retour" depuis cette page. MUTE reste
+      // accessible par serie (MUTE:<piste>:<0|1>) mais n'a plus de
+      // raccourci dedie ici pour l'instant -- pas plus grave que
+      // l'absence d'indicateur visuel M/S depuis la refonte de cette
+      // page (voir plus haut), a rouvrir ensemble si besoin.
+      if (pressed && currentScreen == Screen::Engines && letter == 'D') {
         const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
+        trackSoloed[t] = !trackSoloed[t];
         char msg[12];
-        if (letter == 'C') {
-          trackMuted[t] = !trackMuted[t];
-          snprintf(msg, sizeof(msg), "MUTE:%d:%d", t, trackMuted[t] ? 1 : 0);
-        } else {
-          trackSoloed[t] = !trackSoloed[t];
-          snprintf(msg, sizeof(msg), "SOLO:%d:%d", t, trackSoloed[t] ? 1 : 0);
-        }
+        snprintf(msg, sizeof(msg), "SOLO:%d:%d", t, trackSoloed[t] ? 1 : 0);
         sendToTeensy(msg);
         drawEngRow(t);
       }
@@ -4504,6 +4574,7 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       selectedEngineTrack = static_cast<int8_t>(
           (selectedEngineTrack + (hitTestEngTrackNext(x, y) ? 1 : kSeqTrackCount - 1)) % kSeqTrackCount);
       engPatchScroll = 0;
+      engOnTrackRow = true;  // toucher les fleches piste = focus croix sur la ligne PISTE, coherent
       drawEnginesPage();
     } else if (hitTestEngMini(x, y)) {
       // Bandeau mini-reglages -- ouvre la page PATCH complete pour
@@ -4520,6 +4591,7 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
         // meme reflexe que partout ailleurs dans l'appli (tap = select
         // + edit, tactile et croix restent synchronises).
         engineColPatch = false;
+        engOnTrackRow = false;
         char msg[16];
         snprintf(msg, sizeof(msg), "ENGINE:%d:%d", t, engineHit);
         sendToTeensy(msg);
@@ -4527,6 +4599,7 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
         const uint16_t patchIdx = static_cast<uint16_t>(engPatchScroll + patchSlotHit);
         if (patchIdx < az2::enginePatchCount(trackEngine[t])) {
           engineColPatch = true;
+          engOnTrackRow = false;
           char msg[16];
           snprintf(msg, sizeof(msg), "PATCH:%d:%d", t, patchIdx);
           sendToTeensy(msg);

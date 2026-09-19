@@ -1,5 +1,55 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-19 -- navigation MOTEURS simplifiee (sans A), bouton retour
+deplace sur C et limite a un seul etage, teste sur le vrai materiel]**
+
+Retour utilisateur apres le premier essai de la page MOTEURS (entree
+precedente) : "on est un peu dans le desordre de controle ... il faut
+selectionner l'encadre piste et droite gauche [pour changer de
+piste]". Le systeme A+GAUCHE/DROITE pour basculer le focus (calque sur
+A+GAUCHE/DROITE=SAVE/LOAD de la page PATCH) ne se sentait pas naturel
+ici. Remplace par un modele SANS modificateur :
+
+- GAUCHE/DROITE bascule TOUJOURS le focus entre liste MOTEUR et liste
+  PATCH quand on est dans une de ces listes (naturel, cote a cote a
+  l'ecran).
+- Pour changer de PISTE, il faut remonter jusqu'a la ligne PISTE :
+  HAUT depuis le tout premier element d'une liste (moteur 0 ou patch
+  0) n'y boucle plus (pas de retour a SAMPLER/dernier patch) mais fait
+  passer le focus sur la ligne PISTE, ou GAUCHE/DROITE change alors la
+  piste. BAS depuis la ligne PISTE redescend dans la liste. Contour
+  blanc sur la ligne PISTE quand elle a le focus (seul repere visuel
+  de "ou" on est).
+
+Demande separee, meme message : "en global hors emulateur le bouton
+retour on le met sur C ... il faut pas que ca revienne au menu
+general il faut que ca revienne d'un etage seulement" :
+
+- **Bouton retour deplace de B a C** partout (sauf en pleine partie
+  GB, ou C garde son role de sortie propre deja existant) -- confirme
+  fonctionnel sur le vrai materiel par l'utilisateur ("tout les
+  bouton marche deja", C etait suspecte non cable plus tot dans la
+  session, ce n'est plus le cas).
+- **Un seul niveau de retour, pas le menu general** : nouvelle
+  variable `navPrevious` (UN SEUL ecran memorise, pas une pile
+  complete -- suffisant pour "un etage seulement") mise a jour dans
+  `goTo()` a chaque vrai changement de page. Le bouton retour appelle
+  desormais `goTo(navPrevious)` au lieu de `goTo(Screen::Menu)` --
+  fonctionne en cascade (A -> B -> C, retour = B, retour encore =
+  A).
+- **Conflit trouve et corrige au passage** : la page MOTEURS utilisait
+  deja C pour bascule MUTE (piste selectionnee) -- retire (D reste
+  SOLO, MUTE n'a plus de raccourci dedie sur cette page pour
+  l'instant, reste accessible par serie).
+
+**Valide sur le vrai materiel via SIMNAV:/SIMBTN:** : bascule de focus
+sans A confirmee (DROITE change le focus, BAS envoie alors PATCH:0:1
+correctement), remontee sur la ligne PISTE confirmee (HAUT depuis
+DEXED/index 0 n'envoie AUCUN ENGINE:, contrairement au comportement
+bouclant d'avant), changement de piste sur la ligne PISTE confirme
+(action locale, aucune commande parasite envoyee). BTN:C execute sans
+erreur ni blocage depuis la page MOTEURS.
+
 **[2026-09-19 -- page MOTEURS reorganisee (liste moteurs + liste
 patches + mini-reglages), navigation croix entierement validee sur le
 vrai materiel]**
