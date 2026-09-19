@@ -1,0 +1,73 @@
+name: Bug AZ-2
+description: Signaler un bug reproductible du firmware, de l'interface ou du matériel
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Merci. N'ajoutez pas de ROM commerciale ni de sauvegarde privée.
+  - type: input
+    id: sha
+    attributes:
+      label: SHA Git
+      description: Révision exacte utilisée sur les deux firmwares.
+      placeholder: abcdef123...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Zone
+      options:
+        - Teensy / audio
+        - ESP32-S3 / écran
+        - Game Boy / LSDJ
+        - SD / sauvegarde
+        - Tracker / séquenceur
+        - MIDI
+        - Câblage / matériel
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Matériel
+      description: Cartes, écran, SD, DAC, alimentation et variantes utiles.
+  - type: textarea
+    id: steps
+    attributes:
+      label: Étapes pour reproduire
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Comportement attendu
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Comportement observé
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Coller les lignes série utiles. Retirer les données personnelles.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Vérifications
+      options:
+        - label: Les deux firmwares proviennent du même SHA.
+        - label: J'ai vérifié que le problème est reproductible.
+        - label: Je n'ai joint aucune ROM commerciale.
