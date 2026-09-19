@@ -42,6 +42,18 @@ bool gbIsLoaded();
 // loop() tant que la page JEUX est affichee.
 void gbRunFrame();
 
+// Telemetrie legere mise a jour pendant l'emulation. Les valeurs servent
+// au diagnostic sur materiel ; elles ne constituent pas a elles seules
+// une certification de compatibilite d'une ROM.
+struct GbRuntimeStats {
+  uint16_t fpsX10 = 0;          // cadence observee x10 sur ~1 seconde
+  uint32_t avgWorkUs = 0;       // CPU emulation + paquet audio, moyenne fenetre
+  uint32_t maxWorkUs = 0;       // pire frame de la fenetre
+  uint32_t totalFrames = 0;
+  uint16_t autosaveFailures = 0;
+};
+GbRuntimeStats gbRuntimeStats();
+
 // Tente de sauvegarder la RAM modifiee puis decharger la ROM.
 // Renvoie false si la SD refuse la sauvegarde : la ROM reste chargee
 // pour permettre un nouvel essai sans perdre la progression LSDJ.
