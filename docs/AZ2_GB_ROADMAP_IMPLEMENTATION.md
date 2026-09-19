@@ -17,7 +17,7 @@ Ce document distingue **code intégré**, **à implémenter**, et **à valider s
 - [ ] Remplacer la rotation à deux noms .sav/.bak par un journal de génération vérifié (taille + CRC/version), récupération du fichier le plus récent valide ; éviter la perte de l'ancien backup avant confirmation de la nouvelle version.
 - [x] Ne plus tronquer silencieusement les noms du navigateur : les noms complets jusqu'à 87 octets sont conservés, les noms trop longs sont ignorés avec diagnostic. [x] Navigateur porté à 100 ROMs et tri alphabétique. [ ] Ajouter si besoin un stockage dynamique pour les noms >87 octets / collections >100.
 - [x] Charger la nouvelle ROM en staging : ouverture, taille, allocation PSRAM et lecture complète sont validées avant de sauvegarder/décharger le jeu courant. L'initialisation du cœur reste postérieure au basculement et doit encore être couverte par tests de cartouches invalides.
-- [ ] Sauvegarder et restaurer le RTC MBC3 ; ne pas confondre sauvegarde SRAM et état complet de l'émulateur.
+- [x] RTC MBC3 persisté séparément dans un fichier `.rtc` versionné avec CRC32, `.tmp/.bak`, récupération du backup et blocage de sortie en cas d'échec. Si l'heure système ESP32 est valide, le temps écoulé hors tension est rattrapé ; sinon l'état RTC exact est restauré sans inventer d'heure. [ ] Qualifier sur vraies cartouches/ROMs RTC et coupures.
 
 - [x] Refuser de démarrer une cartouche dont les sauvegardes existantes sont invalides (au lieu de lancer une SRAM vierge). Après récupération .bak, le premier enregistrement conserve cette copie valide.
 - [x] Empêcher la capture Game Boy d'écraser SAMPLE_999.wav quand la banque est pleine ; contrôler les écritures WAV et signaler les fichiers incomplets.
@@ -50,7 +50,7 @@ Ce document distingue **code intégré**, **à implémenter**, et **à valider s
 - [ ] Menu Console : ROMs paginées, noms distincts, sauvegarde explicite et stats sont désormais présents en base. Restent boutons configurables, palette/volume dédiés et polish de l'interface.
 - [ ] Mode LSDJ Studio : combos Start/Select ergonomiques, sortie sûre, mixage stéréo, lecture simultanée.
 - [ ] Capture audio GB depuis le mixeur AVANT effets si choix dry et APRÈS effets si choix wet ; enregistrer WAV valide avec durée/échantillonnage/canaux.
-- [ ] Envoi au sampleur utilisateur (le sampleur actuel ne dispose pas encore du parcours complet de banque/capture).
+- [x] Parcours capture → sampleur intégré : le dernier WAV GB valide est chargé en PSRAM du Teensy comme patch dynamique `SAMPLER / GB Capture`, avec sample rate source respecté et restauration automatique au boot. [ ] Qualifier sur matériel et ajouter navigateur/gestion de plusieurs captures utilisateur.
 - [ ] Synchronisation LSDJ via émulation précise du port série GB et pont horodaté vers clock/MIDI ; définir maître/esclave ; ne jamais asservir directement la cadence CPU GB au BPM.
 
 ## Matrice d'acceptation matériel
