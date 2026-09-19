@@ -82,6 +82,11 @@ char romTitle[17] = {0};
 // convention classique d'emulateur (rom.gb + rom.sav). Vide si aucune
 // ROM chargee ou si la cartouche n'a pas de RAM (cartRamSize==0).
 constexpr size_t kSavePathCapacity = 96;
+// /games/ + nom + extension .sav eventuellement un octet plus longue
+// que .gb + terminateur : ne pas modifier la taille de liste sans
+// ajuster l'espace alloue au chemin SD.
+static_assert(kGbRomNameLen + sizeof("/games/") <= kSavePathCapacity,
+              "GB: ROM filename capacity exceeds save path capacity");
 char saveRamPath[kSavePathCapacity] = {0};
 
 uint8_t romRead(struct gb_s *, const uint_fast32_t addr) {
