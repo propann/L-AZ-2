@@ -67,6 +67,8 @@ uint32_t romSize = 0;
 uint8_t *cartRam = nullptr;
 uint32_t cartRamSize = 0;
 bool cartRamDirty = false;
+// La copie .bak est l'unique sauvegarde valide apres recuperation.
+bool cartRamRecoveredFromBackup = false;
 // Sauvegarde periodique (2026-09-19, voir gbRunFrame()) -- remis a
 // zero a chaque chargement de ROM (voir gbLoadRom()) pour que le
 // premier autosave d'une nouvelle partie tombe bien kGbAutosaveIntervalMs
@@ -171,6 +173,20 @@ bool atomicSaveRaw(const char *path, const uint8_t *data, size_t len) {
   // Ne jamais ecraser le seul backup si sa suppression ou le
   // deplacement de la sauvegarde courante echoue.
   const bool hadSave = SD.exists(path);
+  if (cartRamRecoveredFromBackup) {
+    // Le .sav peut etre corrompu ; ne jamais ecraser le seul .bak valide.
+    if (hadSave && !SD.remove(path)) {
+      Serial.println("GB:SAVE_RECOVERY_REMOVE_ERROR");
+      SD.remove(tmpPath);
+      return false;
+    }
+    if (!SD.rename(tmpPath, path)) {
+      Serial.println("GB:SAVE_RECOVERY_RENAME_ERROR");
+      SD.remove(tmpPath);
+      return false; // .bak intact
+    }
+    return true;
+  }
   if (hadSave) {
     if (SD.exists(bakPath) && !SD.remove(bakPath)) {
       Serial.println("GB:SAVE_BACKUP_REMOVE_ERROR");
@@ -215,6 +231,7 @@ bool gbSaveCartRam() {
   }
   if (atomicSaveRaw(saveRamPath, cartRam, cartRamSize)) {
     cartRamDirty = false;
+    cartRamRecoveredFromBackup = false;
     Serial.print("GB:SAVED:");
     Serial.println(saveRamPath);
     return true;
@@ -270,6 +287,7 @@ bool gbLoadCartRamIfPresent() {
   const bool primaryExists = SD.exists(saveRamPath);
   if (gbLoadCartRamFile(saveRamPath)) {
     cartRamDirty = false;
+    cartRamRecoveredFromBackup = false;
     return true;
   }
 
@@ -287,6 +305,7 @@ bool gbLoadCartRamIfPresent() {
     // Reconstituer le .sav normal a la prochaine sauvegarde, sans
     // ecraser immediatement la seule copie valide (.bak).
     cartRamDirty = true;
+    cartRamRecoveredFromBackup = true;
     Serial.println("GB:SAVE_RECOVERED_FROM_BACKUP");
     return true;
   }
@@ -390,6 +409,7 @@ bool gbUnload() {
   romTitle[0] = '\0';
   saveRamPath[0] = '\0';
   cartRamDirty = false;
+  cartRamRecoveredFromBackup = false;
   return true;
 }
 
@@ -505,6 +525,7 @@ bool gbLoadRom(const char *filename) {
   }
   cartRamSize = static_cast<uint32_t>(detectedSaveSize);
   cartRamDirty = false;
+  cartRamRecoveredFromBackup = false;
   gbLastAutosaveMs = millis();  // reparti a zero pour cette partie, voir gbRunFrame()
   if (cartRamSize > 0) {
     cartRam = static_cast<uint8_t *>(heap_caps_malloc(cartRamSize, MALLOC_CAP_SPIRAM));
