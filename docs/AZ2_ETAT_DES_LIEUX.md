@@ -1,5 +1,62 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-19 -- page PATCH : 2 reglages par ligne + navigation
+repensee (GAUCHE/DROITE choisit le reglage, PISTE sur sa propre
+ligne) -- teste sur le vrai materiel]**
+
+Suite immediate du chantier "barre TEENSY retiree + bouton B" plus
+haut (meme soiree) -- 2 retours utilisateur enchaines :
+
+- **"mettre 2 reglage par ligne pour gagner de la place"** : tous les
+  parametres "simples" de la page (CUTOFF/RESONANCE/ALGO-ou-ATTACK/
+  FEEDBACK-ou-DECAY/SUSTAIN/RELEASE, les lignes EXTRA par moteur DXR/
+  EXP/BXP, et desormais VOLUME aussi) partagent leur ligne 2 par 2
+  (colonne gauche/droite) au lieu d'une ligne pleine largeur chacun.
+  Seule la ligne SLOT (3 sous-boutons SLOT/SAVE/LOAD, deja dense)
+  reste seule sur sa ligne. Plus de boutons tactiles +/- (pas la place
+  en demi-largeur) -- l'edition passe entierement a la croix (A
+  maintenu + HAUT/BAS, deja le reflexe utilise partout ailleurs ce
+  soir), le tactile ne fait plus que SELECTIONNER une case.
+- **Interrompu en cours de route par** : "la droite gauche change les
+  piste il faut que ce change les reglage selectionner dans la fenetre
+  des patch" -- GAUCHE/DROITE servait encore a changer de piste,
+  incompatible avec "choisir entre les 2 reglages d'une ligne". Meme
+  refonte que la page MOTEURS plus tot dans la soiree
+  (`engOnTrackRow`) : nouvel etat `patchOnTrackRow`, ligne PISTE
+  desormais separee (contour blanc quand elle a le focus croix) --
+  GAUCHE/DROITE n'y change la piste QUE sur cette ligne, atteinte en
+  montant (HAUT) depuis la toute premiere ligne de la grille. Dans la
+  grille : GAUCHE/DROITE parcourt l'ordre logique des parametres
+  (`patchStepLogical()`, saute les lignes DEXED 4-5 desactivees comme
+  avant), HAUT/BAS monte/descend d'une ligne VISUELLE en gardant la
+  colonne quand elle existe (`patchStepVisual()`). Ligne SLOT : A
+  maintenu + GAUCHE/DROITE reste SAVE/LOAD, seule ligne ou GAUCHE/
+  DROITE garde un role hors navigation.
+- **Bug latent trouve en reprenant ce chantier (pas encore flashe,
+  trouve a la lecture)** : les 3 `hitTest*()` tactiles de la ligne SLOT
+  (numero/SAVE/LOAD) utilisaient encore une position Y figee au moment
+  de la compilation, calculee pour l'ancienne mise en page (1 ligne =
+  1 reglage). Avec l'appariement 2-par-ligne, la ligne SLOT ne tombe
+  plus forcement a la meme position ecran (ex. KARPLUS/ANALOG, 0 ligne
+  extra : 4 lignes visuelles plus haut qu'avant) -- le tactile visait
+  donc a cote sans jamais planter, juste "ca ne fait rien". Corrige en
+  recalculant la position via `patchRowVisible()` a chaque appel,
+  comme `drawPatchSlotRow()` le fait deja.
+
+**Valide sur le vrai materiel** (SIMNAV:/SIMBTN:, meme methode que
+tout le reste de la soiree) : GAUCHE/DROITE dans la grille ne change
+plus de piste (aucun `SCOPE:` envoye) ; HAUT depuis la 1ere ligne
+bascule sur la ligne PISTE (aucune commande parasite) ; GAUCHE/DROITE
+sur la ligne PISTE change bien la piste (`SCOPE:7` observe) et
+reinitialise la selection ; A+HAUT/BAS edite bien la bonne ligne
+(`FILT:`/`ENV:` observes selon la ligne selectionnee, valeurs
+coherentes avec les pas RIGHT/LEFT effectues avant) ; ligne SLOT
+atteinte en pur DOWN (jamais depassee), A+DROITE sauvegarde
+(`PATCH_SAVED:/patches/0.txt`), A+GAUCHE recharge et reapplique tout
+(`ENGINE:`/`PATCH:`/`FILT:`/`ENV:`/`DXP:` + `PATCH_LOADED:`).
+Compile propre (`screen_esp`, `master_teensy`, `native`), 9 tests
+natifs toujours au vert.
+
 **[2026-09-19 -- page MOTEURS : A ouvre PATCH + surbrillance plus
 visible ; page PATCH : barre TEENSY retiree + bouton B pour entendre
 les reglages en direct -- teste sur le vrai materiel]**

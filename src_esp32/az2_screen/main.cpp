@@ -1434,6 +1434,17 @@ void drawEngRow(uint8_t track) {
 // piste, SCOPE:OFF en quittant (voir goTo()).
 // ---------------------------------------------------------------------
 int8_t patchTrack = 0;
+// true = focus croix sur la ligne PISTE en haut (GAUCHE/DROITE change
+// alors la piste), false = focus dans la grille de parametres (voir
+// selectedPatchRow, declare plus bas) -- meme convention que
+// engOnTrackRow sur la page MOTEURS (2026-09-19, "la droite gauche
+// change les piste il faut que ca change les reglages selectionnes
+// [a la place]") : on atteint la ligne PISTE en montant (HAUT) depuis
+// la toute premiere ligne de la grille, jamais autrement. Declare ici
+// (avant drawPatchTrackRow()) plutot qu'aux cotes de selectedPatchRow
+// car utilise des la definition de cette fonction, plus bas dans ce
+// meme bloc.
+bool patchOnTrackRow = false;
 // cutoff, resonance, attaque, chute, maintien, relachement -- tous 0-127,
 // memes defauts "neutres" que cote Teensy (grand ouvert / ADSR rapide).
 // PAR PISTE (pas juste un etat transitoire de la page PATCH) -- demande
@@ -1538,6 +1549,93 @@ uint8_t patchVolRow(uint8_t track) { return static_cast<uint8_t>(6 + patchExtraC
 uint8_t patchSlotRow(uint8_t track) { return static_cast<uint8_t>(patchVolRow(track) + 1); }
 uint8_t patchTotalRows(uint8_t track) { return static_cast<uint8_t>(patchSlotRow(track) + 1); }
 
+// 2 parametres par ligne VISUELLE (2026-09-19, "mettre 2 reglage par
+// ligne pour gagner de la place") -- tous les parametres "simples"
+// (0..patchVolRow(track) inclus, donc VOLUME participe aussi a la
+// paire) partagent leur ligne 2 par 2 ; SLOT (le dernier, 3 sous-
+// boutons deja denses -- SLOT/SAVE/LOAD) reste TOUJOURS seul sur sa
+// propre ligne. logicalRow reste le meme index qu'avant (0-5 base,
+// 6..volRow-1 extra, volRow=volume, slotRow=slot) -- seule la
+// POSITION A L'ECRAN change ici, pas la numerotation logique (utilisee
+// par selectedPatchRow/patchScroll, la navigation croix reste
+// coherente sans etre reecrite en profondeur).
+int16_t patchVisualRow(uint8_t track, uint8_t logicalRow) {
+  const uint8_t volRow = patchVolRow(track);
+  if (logicalRow <= volRow) {
+    return static_cast<int16_t>(logicalRow / 2);
+  }
+  return static_cast<int16_t>((volRow + 2) / 2);  // = ceil((volRow+1)/2), la ligne SLOT juste apres les paires
+}
+uint8_t patchTotalVisualRows(uint8_t track) {
+  const uint8_t volRow = patchVolRow(track);
+  return static_cast<uint8_t>((volRow + 2) / 2 + 1);
+}
+// true = colonne DROITE (logicalRow impair), false = GAUCHE -- sans
+// objet pour la ligne SLOT (toujours pleine largeur, jamais appele
+// pour elle).
+bool patchIsRightCol(uint8_t logicalRow) { return (logicalRow % 2) == 1; }
+
+// Deplacement HAUT/BAS (2026-09-19, suite du chantier "2 reglages par
+// ligne") : monte/descend d'une ligne VISUELLE en gardant la meme
+// colonne (gauche/droite) quand elle existe, saute les lignes
+// inactives (DEXED 4-5, voir patchRowActive()). Renvoie -1 quand on
+// doit sortir vers la ligne PISTE (HAUT depuis la toute premiere
+// ligne) -- l'appelant bascule alors patchOnTrackRow. Ne bouge pas
+// (renvoie `row` tel quel) quand on est deja sur la derniere ligne
+// (BAS depuis SLOT).
+int8_t patchStepVisual(uint8_t track, int8_t row, int8_t dir) {
+  const uint8_t volRow = patchVolRow(track);
+  const uint8_t slotRow = patchSlotRow(track);
+  const int16_t slotVisual = patchVisualRow(track, slotRow);
+  const bool wasRight = (row <= static_cast<int8_t>(volRow)) && patchIsRightCol(static_cast<uint8_t>(row));
+  int16_t visualRow = patchVisualRow(track, static_cast<uint8_t>(row));
+  for (;;) {
+    visualRow = static_cast<int16_t>(visualRow + dir);
+    if (visualRow < 0) {
+      return -1;
+    }
+    if (visualRow > slotVisual) {
+      return row;
+    }
+    int8_t candidate;
+    if (visualRow == slotVisual) {
+      candidate = static_cast<int8_t>(slotRow);
+    } else {
+      const int8_t left = static_cast<int8_t>(visualRow * 2);
+      const int8_t right = static_cast<int8_t>(visualRow * 2 + 1);
+      candidate = (wasRight && right <= static_cast<int8_t>(volRow)) ? right : left;
+    }
+    if (candidate == static_cast<int8_t>(slotRow) || candidate >= 6 ||
+        patchRowActive(track, static_cast<uint8_t>(candidate))) {
+      return candidate;
+    }
+    // Ligne inactive : continue de chercher dans la meme direction
+    // plutot que de s'arreter dessus (meme esprit que la boucle
+    // GAUCHE/DROITE ci-dessous).
+  }
+}
+
+// Deplacement GAUCHE/DROITE (2026-09-19, "la droite gauche [doit]
+// changer les reglages selectionnes [dans la fenetre des patch]" --
+// avant, GAUCHE/DROITE changeait de piste ici ; ce role passe
+// desormais a la ligne PISTE, voir patchOnTrackRow) : parcourt l'ORDRE
+// LOGIQUE des parametres (0,1 = 1ere ligne visuelle colonne gauche/
+// droite, 2,3 = 2e ligne, etc.) -- comme une grille lue de gauche a
+// droite puis ligne suivante, ce qui fait naturellement alterner les
+// 2 colonnes d'une meme ligne puis passer a la ligne suivante en
+// bout de course. Boucle (dernier <-> premier), saute les lignes
+// inactives.
+int8_t patchStepLogical(uint8_t track, int8_t row, int8_t dir, uint8_t total) {
+  int8_t next = row;
+  for (uint8_t tries = 0; tries < total; ++tries) {
+    next = static_cast<int8_t>(((next + dir) % total + total) % total);
+    if (next >= 6 || patchRowActive(track, static_cast<uint8_t>(next))) {
+      return next;
+    }
+  }
+  return row;
+}
+
 // Octet brut DXR (0-144) pour chaque ligne extra DEXED, dans l'ordre
 // d'affichage -- voir DexedVoiceParameters dans dexed.h cote Teensy
 // (offset 126 dans le buffer deballe, ajoute ici a l'envoi/la lecture).
@@ -1641,10 +1739,18 @@ constexpr int16_t kPatchScopeTop = 96;
 constexpr int16_t kPatchScopeH = 90;
 constexpr int16_t kPatchRowTop = kPatchScopeTop + kPatchScopeH + 14;
 constexpr int16_t kPatchRowH = 34;
-constexpr int16_t kPatchBtnW = 36;
 
 void drawPatchTrackRow() {
-  gfx->fillRect(kMargin, kPatchTrackRowY, kScreenSize - 2 * kMargin, 22, RGB565_BLACK);
+  const int16_t w = static_cast<int16_t>(kScreenSize - 2 * kMargin);
+  gfx->fillRect(kMargin, kPatchTrackRowY, w, 22, RGB565_BLACK);
+  // Contour blanc quand le focus croix est sur cette ligne (2026-09-19,
+  // meme convention que drawEngTrackRow()/engOnTrackRow sur la page
+  // MOTEURS) -- seul indice visuel de "ou" on est avant de bouger,
+  // important puisque GAUCHE/DROITE change de sens selon le focus
+  // (piste ici, reglage de patch sinon).
+  if (patchOnTrackRow) {
+    gfx->drawRect(kMargin, kPatchTrackRowY, w, 22, RGB565_WHITE);
+  }
   gfx->setTextSize(2);
   gfx->setTextColor(kPalette[patchTrack % kPaletteCount]);
   char buf[16];
@@ -1685,30 +1791,43 @@ void drawPatchScope() {
   }
 }
 
-// Nombre de lignes affichees a l'ecran en meme temps -- INCHANGE
-// depuis l'origine de cette page (8 lignes, meme disposition pixel),
-// mais desormais une FENETRE qui defile sur un nombre de lignes
-// LOGIQUES variable (6 fixes + patchExtraCount(track) + volume + slot,
-// voir plus haut) plutot que toujours exactement 8 -- necessaire
-// depuis l'ajout des lignes extra par moteur (2026-09-18, "un editeur
-// de patch complet", jusqu'a 17 lignes de plus pour DEXED : aucune
-// place libre sur l'ecran pour les caser sans defilement).
+// Nombre de lignes VISUELLES affichees a l'ecran en meme temps --
+// INCHANGE depuis l'origine de cette page (8, meme disposition pixel),
+// mais depuis le 2026-09-19 chaque ligne visuelle peut contenir 2
+// parametres LOGIQUES (voir patchVisualRow()) -- la fenetre defile
+// desormais sur des lignes VISUELLES, pas logiques.
 constexpr uint8_t kPatchVisibleRows = 8;
-uint8_t patchScroll = 0;  // 1ere ligne LOGIQUE affichee en haut de la fenetre
+uint8_t patchScroll = 0;  // 1ere ligne VISUELLE affichee en haut de la fenetre
+constexpr int16_t kPatchColGap = 8;
 
-// Si `logicalRow` est actuellement dans la fenetre visible
-// (patchScroll..patchScroll+7), calcule son Y et renvoie true ; sinon
-// renvoie false SANS rien dessiner -- les appelants existants (echo
-// FILT:/ENV:/DXP:/VOL: notamment) redessinent par NUMERO DE LIGNE
-// LOGIQUE, pas par position ecran : quand cette ligne est scrollee
-// hors champ, le bon geste est de ne rien dessiner (le shadow reste a
-// jour, elle se redessine correctement au retour), pas de planter ou
-// de dessiner au mauvais endroit.
-bool patchRowVisible(uint8_t logicalRow, int16_t &y) {
-  if (logicalRow < patchScroll || logicalRow >= patchScroll + kPatchVisibleRows) {
+// Si le parametre logique `logicalRow` est actuellement dans la
+// fenetre visible, calcule sa position (y/x/largeur -- x/w different
+// selon la colonne gauche/droite pour les lignes appariees, voir
+// patchVisualRow()/patchIsRightCol(), SLOT reste seule/pleine largeur)
+// et renvoie true ; sinon renvoie false SANS rien dessiner -- les
+// appelants existants (echo FILT:/ENV:/DXP:/VOL: notamment)
+// redessinent par NUMERO DE PARAMETRE LOGIQUE, pas par position
+// ecran : quand ce parametre est scrolle hors champ, le bon geste est
+// de ne rien dessiner (le shadow reste a jour, il se redessine
+// correctement au retour), pas de planter ou de dessiner au mauvais
+// endroit.
+bool patchRowVisible(uint8_t logicalRow, int16_t &y, int16_t &x, int16_t &w) {
+  const uint8_t track = static_cast<uint8_t>(patchTrack);
+  const uint8_t volRow = patchVolRow(track);
+  const int16_t visualRow = patchVisualRow(track, logicalRow);
+  if (visualRow < patchScroll || visualRow >= patchScroll + kPatchVisibleRows) {
     return false;
   }
-  y = static_cast<int16_t>(kPatchRowTop + (logicalRow - patchScroll) * kPatchRowH);
+  y = static_cast<int16_t>(kPatchRowTop + (visualRow - patchScroll) * kPatchRowH);
+  if (logicalRow > volRow) {
+    // Ligne SLOT : seule sur sa ligne, pleine largeur.
+    x = kMargin;
+    w = static_cast<int16_t>(kScreenSize - 2 * kMargin);
+    return true;
+  }
+  const int16_t halfW = static_cast<int16_t>((kScreenSize - 2 * kMargin - kPatchColGap) / 2);
+  x = patchIsRightCol(logicalRow) ? static_cast<int16_t>(kMargin + halfW + kPatchColGap) : kMargin;
+  w = halfW;
   return true;
 }
 
@@ -1727,44 +1846,45 @@ bool patchRowVisible(uint8_t logicalRow, int16_t &y) {
 // gestionnaire de croix plus bas.
 int8_t selectedPatchRow = 0;
 
-// Dessine la ligne LOGIQUE `i` (0-5 uniquement -- les lignes extra ont
-// leur propre fonction, drawPatchExtraRow() plus bas) si elle est
+// Dessine le parametre LOGIQUE `i` (0-5 uniquement -- les lignes extra
+// ont leur propre fonction, drawPatchExtraRow() plus bas) si il est
 // actuellement visible dans la fenetre de defilement ; ne fait rien
-// sinon (voir patchRowVisible()).
+// sinon (voir patchRowVisible()). Demi-largeur depuis le 2026-09-19
+// ("mettre 2 reglage par ligne pour gagner de la place") -- PLUS de
+// boutons tactiles +/- ici (pas la place, voir le commentaire de
+// patchRowVisible()) : edition croix uniquement (A maintenu +
+// HAUT/BAS), deja le moyen principal utilise partout ce soir. Le
+// tactile reste utile pour SELECTIONNER une case (tap = select),
+// juste plus pour l'editer directement.
 void drawPatchRow(uint8_t i) {
-  int16_t y;
-  if (!patchRowVisible(i, y)) {
+  int16_t y, x, w;
+  if (!patchRowVisible(i, y, x, w)) {
     return;
   }
   const int16_t rowH = static_cast<int16_t>(kPatchRowH - 4);
   const uint8_t track = static_cast<uint8_t>(patchTrack);
-  const bool rowSelected = (selectedPatchRow == static_cast<int8_t>(i));
+  const bool rowSelected = !patchOnTrackRow && (selectedPatchRow == static_cast<int8_t>(i));
   const uint16_t accent = kPalette[track % kPaletteCount];
 
-  gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, rowH, RGB565_BLACK);
+  gfx->fillRect(x, y, w, rowH, RGB565_BLACK);
 
   if (!patchRowActive(track, i)) {
     // Piste DEXED : lignes 4-5 sans effet (ADSR generique non ecoutee,
-    // voir patchRowActive()) -- grisees plutot que des +/- qui ne
-    // feraient rien.
-    gfx->drawRect(kMargin, y, kScreenSize - 2 * kMargin, rowH, kFaint);
+    // voir patchRowActive()) -- grisees plutot qu'une valeur qui ne
+    // sert a rien pour ce moteur.
+    gfx->drawRect(x, y, w, rowH, kFaint);
     gfx->setTextSize(1);
     gfx->setTextColor(kFaint);
-    gfx->setCursor(static_cast<int16_t>(kMargin + 6), static_cast<int16_t>(y + 4));
-    gfx->print("(sans effet sur ce moteur)");
+    gfx->setCursor(static_cast<int16_t>(x + 4), static_cast<int16_t>(y + 4));
+    gfx->print("(sans effet)");
     return;
   }
 
-  const int16_t minusX = static_cast<int16_t>(kScreenSize - kMargin - 2 * kPatchBtnW - 4);
-  const int16_t plusX = static_cast<int16_t>(kScreenSize - kMargin - kPatchBtnW);
-
-  gfx->drawRect(kMargin, y, kScreenSize - 2 * kMargin, rowH, rowSelected ? accent : kFaint);
-  gfx->drawRect(minusX, y, kPatchBtnW, rowH, kFaint);
-  gfx->drawRect(plusX, y, kPatchBtnW, rowH, kFaint);
+  gfx->drawRect(x, y, w, rowH, rowSelected ? accent : kFaint);
 
   gfx->setTextSize(1);
   gfx->setTextColor(kDim);
-  gfx->setCursor(static_cast<int16_t>(kMargin + 6), static_cast<int16_t>(y + 4));
+  gfx->setCursor(static_cast<int16_t>(x + 4), static_cast<int16_t>(y + 3));
   gfx->print(patchRowLabel(track, i));
 
   // ALGO (Dexed) affiche 1-32 (convention DX7), stocke 0-31 en interne.
@@ -1774,54 +1894,41 @@ void drawPatchRow(uint8_t i) {
   snprintf(buf, sizeof(buf), "%3d", isDexedAlgo ? raw + 1 : raw);
   gfx->setTextSize(2);
   gfx->setTextColor(RGB565_WHITE);
-  gfx->setCursor(static_cast<int16_t>(kMargin + 130), static_cast<int16_t>(y + 2));
+  gfx->setCursor(static_cast<int16_t>(x + w - 34), static_cast<int16_t>(y + 3));
   gfx->print(buf);
-
-  gfx->setCursor(static_cast<int16_t>(minusX + 12), static_cast<int16_t>(y + 4));
-  gfx->print('-');
-  gfx->setCursor(static_cast<int16_t>(plusX + 12), static_cast<int16_t>(y + 4));
-  gfx->print('+');
 }
 
 // Dessine une ligne EXTRA (logicalRow >= 6, < patchVolRow(track)) --
-// meme habillage visuel que drawPatchRow() ci-dessus (cadre/valeur/
-// boutons +/-), juste une source de donnees differente (patchExtraVal[]
-// au lieu de patchParamRef()). Ne fait rien si hors fenetre visible,
-// meme convention que drawPatchRow().
+// meme habillage visuel que drawPatchRow() ci-dessus (demi-largeur,
+// sans boutons tactiles +/-, voir son commentaire), juste une source
+// de donnees differente (patchExtraVal[] au lieu de patchParamRef()).
+// Ne fait rien si hors fenetre visible, meme convention que
+// drawPatchRow().
 void drawPatchExtraRow(uint8_t logicalRow) {
-  int16_t y;
-  if (!patchRowVisible(logicalRow, y)) {
+  int16_t y, x, w;
+  if (!patchRowVisible(logicalRow, y, x, w)) {
     return;
   }
   const int16_t rowH = static_cast<int16_t>(kPatchRowH - 4);
   const uint8_t track = static_cast<uint8_t>(patchTrack);
   const uint8_t extraIdx = static_cast<uint8_t>(logicalRow - 6);
-  const bool rowSelected = (selectedPatchRow == static_cast<int8_t>(logicalRow));
+  const bool rowSelected = !patchOnTrackRow && (selectedPatchRow == static_cast<int8_t>(logicalRow));
   const uint16_t accent = kPalette[track % kPaletteCount];
-  const int16_t minusX = static_cast<int16_t>(kScreenSize - kMargin - 2 * kPatchBtnW - 4);
-  const int16_t plusX = static_cast<int16_t>(kScreenSize - kMargin - kPatchBtnW);
 
-  gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, rowH, RGB565_BLACK);
-  gfx->drawRect(kMargin, y, kScreenSize - 2 * kMargin, rowH, rowSelected ? accent : kFaint);
-  gfx->drawRect(minusX, y, kPatchBtnW, rowH, kFaint);
-  gfx->drawRect(plusX, y, kPatchBtnW, rowH, kFaint);
+  gfx->fillRect(x, y, w, rowH, RGB565_BLACK);
+  gfx->drawRect(x, y, w, rowH, rowSelected ? accent : kFaint);
 
   gfx->setTextSize(1);
   gfx->setTextColor(kDim);
-  gfx->setCursor(static_cast<int16_t>(kMargin + 6), static_cast<int16_t>(y + 4));
+  gfx->setCursor(static_cast<int16_t>(x + 4), static_cast<int16_t>(y + 3));
   gfx->print(patchExtraLabel(track, extraIdx));
 
   char buf[6];
   snprintf(buf, sizeof(buf), "%3d", patchExtraVal[track][extraIdx]);
   gfx->setTextSize(2);
   gfx->setTextColor(RGB565_WHITE);
-  gfx->setCursor(static_cast<int16_t>(kMargin + 130), static_cast<int16_t>(y + 2));
+  gfx->setCursor(static_cast<int16_t>(x + w - 34), static_cast<int16_t>(y + 3));
   gfx->print(buf);
-
-  gfx->setCursor(static_cast<int16_t>(minusX + 12), static_cast<int16_t>(y + 4));
-  gfx->print('-');
-  gfx->setCursor(static_cast<int16_t>(plusX + 12), static_cast<int16_t>(y + 4));
-  gfx->print('+');
 }
 
 void sendPatchFilt() {
@@ -1856,55 +1963,35 @@ void sendPatchDxp(uint8_t index) {
 // le meler a cette logique conditionnelle). Voir trackVolume[] et le
 // commentaire du piege Braids cote Teensy (AZ2_FEUILLE_DE_ROUTE.md).
 uint8_t trackVolume[kSeqTrackCount] = {127, 127, 127, 127, 127, 127, 127, 127};
-// Position "historique" (moteur sans ligne extra, KARPLUS/ANALOG,
-// patchScroll=0 -- le cas le plus courant) -- servent de reference aux
-// hitTest*() ci-dessous, qui restent tactiles UNIQUEMENT dans ce cas
-// (voir le commentaire de patchVolRow()/patchSlotRow() plus haut : au-
-// dela, VOLUME/SLOT sont scrolles ailleurs, la croix reste le chemin
-// fiable -- meme choix que documente pour les lignes extra).
-constexpr int16_t kVolRowY = kPatchRowTop + 6 * kPatchRowH;
-constexpr int16_t kVolRowH = kPatchRowH - 4;
 
+// VOLUME participe desormais a l'appariement 2-par-ligne comme les
+// autres parametres simples (2026-09-19) -- meme habillage/memes
+// contraintes de largeur que drawPatchRow(), plus de boutons tactiles
+// +/- (voir son commentaire).
 void drawVolRow() {
   const uint8_t t = static_cast<uint8_t>(patchTrack);
-  int16_t y;
-  if (!patchRowVisible(patchVolRow(t), y)) {
+  int16_t y, x, w;
+  if (!patchRowVisible(patchVolRow(t), y, x, w)) {
     return;
   }
-  const int16_t minusX = static_cast<int16_t>(kScreenSize - kMargin - 2 * kPatchBtnW - 4);
-  const int16_t plusX = static_cast<int16_t>(kScreenSize - kMargin - kPatchBtnW);
-  const bool rowSelected = (selectedPatchRow == static_cast<int8_t>(patchVolRow(t)));
+  const int16_t rowH = static_cast<int16_t>(kPatchRowH - 4);
+  const bool rowSelected = !patchOnTrackRow && (selectedPatchRow == static_cast<int8_t>(patchVolRow(t)));
   const uint16_t accent = kPalette[t % kPaletteCount];
 
-  gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, kVolRowH, RGB565_BLACK);
-  gfx->drawRect(kMargin, y, kScreenSize - 2 * kMargin, kVolRowH, rowSelected ? accent : kFaint);
-  gfx->drawRect(minusX, y, kPatchBtnW, kVolRowH, kFaint);
-  gfx->drawRect(plusX, y, kPatchBtnW, kVolRowH, kFaint);
+  gfx->fillRect(x, y, w, rowH, RGB565_BLACK);
+  gfx->drawRect(x, y, w, rowH, rowSelected ? accent : kFaint);
 
   gfx->setTextSize(1);
   gfx->setTextColor(kDim);
-  gfx->setCursor(static_cast<int16_t>(kMargin + 6), static_cast<int16_t>(y + 4));
+  gfx->setCursor(static_cast<int16_t>(x + 4), static_cast<int16_t>(y + 3));
   gfx->print("VOLUME");
 
   char buf[6];
   snprintf(buf, sizeof(buf), "%3d", trackVolume[t]);
   gfx->setTextSize(2);
   gfx->setTextColor(RGB565_WHITE);
-  gfx->setCursor(static_cast<int16_t>(kMargin + 130), static_cast<int16_t>(y + 2));
+  gfx->setCursor(static_cast<int16_t>(x + w - 34), static_cast<int16_t>(y + 3));
   gfx->print(buf);
-
-  gfx->setCursor(static_cast<int16_t>(minusX + 12), static_cast<int16_t>(y + 4));
-  gfx->print('-');
-  gfx->setCursor(static_cast<int16_t>(plusX + 12), static_cast<int16_t>(y + 4));
-  gfx->print('+');
-}
-
-bool hitTestVolMinus(int16_t x, int16_t y) {
-  return inBox(x, y, static_cast<int16_t>(kScreenSize - kMargin - 2 * kPatchBtnW - 4), kVolRowY, kPatchBtnW,
-               kVolRowH);
-}
-bool hitTestVolPlus(int16_t x, int16_t y) {
-  return inBox(x, y, static_cast<int16_t>(kScreenSize - kMargin - kPatchBtnW), kVolRowY, kPatchBtnW, kVolRowH);
 }
 
 void sendPatchVol() {
@@ -1918,26 +2005,21 @@ void sendPatchVol() {
 // integre + filtre + ADSR de la piste affichee (patchTrack), ecrit sur
 // la carte SD de l'ESP32 (deja utilisee pour les ROM GB) dans
 // /patches/N.txt, format simple "moteur,patch,cutoff,reso,a,d,s,r".
-// 8 emplacements numerotes, comme les patterns. Decale d'une ligne
-// (kPatchRowTop + 7*... au lieu de 6*...) depuis l'ajout de la ligne
-// VOLUME juste au-dessus.
+// 8 emplacements numerotes, comme les patterns.
 constexpr uint8_t kPatchSlotCount = 8;
 uint8_t patchSlot = 0;
-// Position "historique" (voir le commentaire de kVolRowY plus haut,
-// meme raisonnement) -- reference des hitTest*() ci-dessous seulement.
-constexpr int16_t kPatchSlotY = kPatchRowTop + 7 * kPatchRowH;
 constexpr int16_t kPatchSlotH = 32;
 constexpr int16_t kPatchSlotBtnW = (kScreenSize - 2 * kMargin) / 3;
 
 void drawPatchSlotRow() {
   const uint8_t t = static_cast<uint8_t>(patchTrack);
-  int16_t y;
-  if (!patchRowVisible(patchSlotRow(t), y)) {
+  int16_t y, rx, rw;
+  if (!patchRowVisible(patchSlotRow(t), y, rx, rw)) {
     return;
   }
   const int16_t saveX = static_cast<int16_t>(kMargin + kPatchSlotBtnW);
   const int16_t loadX = static_cast<int16_t>(kMargin + 2 * kPatchSlotBtnW);
-  const bool rowSelected = (selectedPatchRow == static_cast<int8_t>(patchSlotRow(t)));
+  const bool rowSelected = !patchOnTrackRow && (selectedPatchRow == static_cast<int8_t>(patchSlotRow(t)));
   const uint16_t accent = kPalette[t % kPaletteCount];
   gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, kPatchSlotH, RGB565_BLACK);
   gfx->drawRect(kMargin, y, kPatchSlotBtnW, kPatchSlotH, rowSelected ? accent : kFaint);
@@ -1960,14 +2042,36 @@ void drawPatchSlotRow() {
   gfx->print("LOAD");
 }
 
+// Position dynamique (2026-09-19, bug reel trouve en reprenant ce
+// chantier : ces 3 hitTest*() utilisaient encore une constante figee
+// "kPatchSlotY" calculee pour l'ANCIENNE mise en page 1-reglage-par-
+// ligne -- depuis l'appariement 2-par-ligne, la ligne SLOT n'est plus
+// forcement a la position visuelle 7 (ex. KARPLUS/ANALOG, 0 ligne
+// extra : elle tombe desormais en position visuelle 4), le tactile
+// visait donc completement a cote sans jamais planter (juste un tap
+// qui "ne fait rien"). Recalcule via patchRowVisible() a chaque appel,
+// comme drawPatchSlotRow() le fait deja -- renvoie false si la ligne
+// est actuellement scrollee hors champ (aucun hit possible).
 bool hitTestPatchSlotNum(int16_t x, int16_t y) {
-  return inBox(x, y, kMargin, kPatchSlotY, kPatchSlotBtnW, kPatchSlotH);
+  int16_t ry, rx, rw;
+  if (!patchRowVisible(patchSlotRow(static_cast<uint8_t>(patchTrack)), ry, rx, rw)) {
+    return false;
+  }
+  return inBox(x, y, kMargin, ry, kPatchSlotBtnW, kPatchSlotH);
 }
 bool hitTestPatchSlotSave(int16_t x, int16_t y) {
-  return inBox(x, y, static_cast<int16_t>(kMargin + kPatchSlotBtnW), kPatchSlotY, kPatchSlotBtnW, kPatchSlotH);
+  int16_t ry, rx, rw;
+  if (!patchRowVisible(patchSlotRow(static_cast<uint8_t>(patchTrack)), ry, rx, rw)) {
+    return false;
+  }
+  return inBox(x, y, static_cast<int16_t>(kMargin + kPatchSlotBtnW), ry, kPatchSlotBtnW, kPatchSlotH);
 }
 bool hitTestPatchSlotLoad(int16_t x, int16_t y) {
-  return inBox(x, y, static_cast<int16_t>(kMargin + 2 * kPatchSlotBtnW), kPatchSlotY, kPatchSlotBtnW, kPatchSlotH);
+  int16_t ry, rx, rw;
+  if (!patchRowVisible(patchSlotRow(static_cast<uint8_t>(patchTrack)), ry, rx, rw)) {
+    return false;
+  }
+  return inBox(x, y, static_cast<int16_t>(kMargin + 2 * kPatchSlotBtnW), ry, kPatchSlotBtnW, kPatchSlotH);
 }
 
 // Ecrit tel quel (pas d'ajout) -- SD.remove() d'abord pour eviter tout
@@ -2131,8 +2235,8 @@ void drawPatchWindow() {
   for (uint8_t slot = 0; slot < kPatchVisibleRows; ++slot) {
     const uint8_t logicalRow = static_cast<uint8_t>(patchScroll + slot);
     if (logicalRow >= total) {
-      int16_t y;
-      if (patchRowVisible(logicalRow, y)) {
+      int16_t y, rx, rw;
+      if (patchRowVisible(logicalRow, y, rx, rw)) {
         gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, kPatchRowH - 4, RGB565_BLACK);
       }
       continue;
@@ -2184,27 +2288,23 @@ bool hitTestPatchTrackNext(int16_t x, int16_t y) {
   return inBox(x, y, kScreenSize / 2, kPatchTrackRowY, kScreenSize / 2 - kMargin, 22);
 }
 
-// Renvoie -1 (aucun), sinon l'index de ligne (0-5) ; isPlusSide indique -/+.
-// Ne detecte quelque chose que si la ligne est actuellement visible
-// (voir patchRowVisible() -- vrai par defaut, patchScroll ne bouge que
-// si l'utilisateur navigue a la croix au-dela des lignes fixes, voir
-// leur commentaire plus haut : le tactile reste fiable pour ces 6
-// lignes dans l'usage courant, moins si on est reste scrolle plus bas).
-int8_t hitTestPatchRow(int16_t x, int16_t y, bool &isPlusSide) {
-  for (uint8_t i = 0; i < 6; ++i) {
-    int16_t rowY;
-    if (!patchRowVisible(i, rowY)) {
+// Renvoie -1 (aucun), sinon l'index du PARAMETRE LOGIQUE touche (0..
+// patchVolRow(track) inclus -- base+extra+VOLUME, tous appariees 2 par
+// ligne desormais ; SLOT garde ses propres hitTest*() dedies, voir
+// plus bas, jamais couvert ici). Un tap SELECTIONNE seulement
+// (2026-09-19, plus d'edition +/- directe au tactile -- voir le
+// commentaire de patchRowVisible()) : l'edition se fait ensuite a la
+// croix (A maintenu + HAUT/BAS), meme reflexe que partout ailleurs.
+int8_t hitTestPatchParam(int16_t x, int16_t y) {
+  const uint8_t t = static_cast<uint8_t>(patchTrack);
+  const uint8_t volRow = patchVolRow(t);
+  const int16_t rowH = static_cast<int16_t>(kPatchRowH - 4);
+  for (uint8_t i = 0; i <= volRow; ++i) {
+    int16_t rowY, rowX, rowW;
+    if (!patchRowVisible(i, rowY, rowX, rowW)) {
       continue;
     }
-    const int16_t rowH = static_cast<int16_t>(kPatchRowH - 4);
-    const int16_t minusX = static_cast<int16_t>(kScreenSize - kMargin - 2 * kPatchBtnW - 4);
-    const int16_t plusX = static_cast<int16_t>(kScreenSize - kMargin - kPatchBtnW);
-    if (inBox(x, y, minusX, rowY, kPatchBtnW, rowH)) {
-      isPlusSide = false;
-      return static_cast<int8_t>(i);
-    }
-    if (inBox(x, y, plusX, rowY, kPatchBtnW, rowH)) {
-      isPlusSide = true;
+    if (inBox(x, y, rowX, rowY, rowW, rowH)) {
       return static_cast<int8_t>(i);
     }
   }
@@ -3179,6 +3279,7 @@ void goTo(Screen s) {
     // fois, voir queryPatchExtra()).
     selectedPatchRow = 0;
     patchScroll = 0;
+    patchOnTrackRow = false;  // atterrit dans la grille de parametres, pas sur la ligne PISTE
     queryPatchExtra(static_cast<uint8_t>(patchTrack));
   } else if (currentScreen == Screen::Patch) {
     sendToTeensy("SCOPE:OFF");
@@ -3469,75 +3570,94 @@ void handleTeensyLine(const String &line) {
             }
           }
         }
-        // Page PATCH : meme convention que la page SEQUENCEUR ci-dessus
-        // (2026-09-18, retour utilisateur sur materiel reel : "la
-        // fenetre de patch on peut rien regler avec les boutons") --
-        // GAUCHE/DROITE changent de piste, HAUT/BAS SEULS deplacent la
-        // ligne selectionnee (0-5 = filtre/ADSR-ou-DXP, 6 = volume), A
-        // maintenu + HAUT/BAS edite sa valeur. Reutilise exactement la
-        // meme logique que les +/- tactiles (patchParamRef()/
-        // sendPatchFilt()/sendPatchDxp()/sendPatchEnv()/sendPatchVol()).
-        // (2026-09-18, suite : lignes EXTRA par moteur, voir
-        // patchExtraCount()/patchVolRow()/patchSlotRow() plus haut --
-        // VOLUME/SLOT ne sont plus fixes a 6/7, la boucle de
-        // navigation et le defilement (patchScroll) suivent le nombre
-        // total de lignes REEL de la piste/moteur affiche.)
+        // Page PATCH : navigation repensee le 2026-09-19 (retour
+        // utilisateur sur le chantier "2 reglages par ligne" : "la
+        // droite gauche change les piste il faut que ce change les
+        // reglage selectionner dans la fenetre des patch") -- meme
+        // modele que la page MOTEURS ci-dessus (patchOnTrackRow miroir
+        // d'engOnTrackRow) : GAUCHE/DROITE parcourent desormais les
+        // reglages (patchStepLogical(), colonne gauche/droite d'une
+        // meme ligne visuelle puis ligne suivante), HAUT/BAS montent/
+        // descendent d'une ligne visuelle en gardant la colonne
+        // (patchStepVisual()). La ligne PISTE (ou GAUCHE/DROITE change
+        // vraiment de piste, comme avant ce chantier) ne s'atteint plus
+        // qu'en montant depuis la toute premiere ligne. A maintenu +
+        // HAUT/BAS edite toujours la valeur selectionnee, inchange.
+        // Ligne SLOT : A maintenu + GAUCHE/DROITE reste SAVE/LOAD,
+        // seule ligne ou GAUCHE/DROITE garde un role hors navigation.
         if (pressed && currentScreen == Screen::Patch) {
           const uint8_t t = static_cast<uint8_t>(patchTrack);
           const uint8_t total = patchTotalRows(t);
           const uint8_t volRow = patchVolRow(t);
           const uint8_t slotRow = patchSlotRow(t);
-          // Ligne SLOT (2026-09-18, meme demande que le reste de cette
-          // page : "on peut rien regler avec les boutons") -- AJOUTEE
-          // sans toucher a la mise en page (la ligne SLOT/SAVE/LOAD
-          // existait deja a l'ecran, seulement au tactile). A
-          // maintenu + GAUCHE/DROITE = SAVE/LOAD (combinaison neuve,
-          // GAUCHE/DROITE seuls restent le changement de piste comme
-          // avant) ; A maintenu + HAUT/BAS = cycle le numero de slot.
-          if (btnState[0] && selectedPatchRow == static_cast<int8_t>(slotRow) && (index == 2 || index == 3)) {
+          if (btnState[0] && !patchOnTrackRow && selectedPatchRow == static_cast<int8_t>(slotRow) &&
+              (index == 2 || index == 3)) {
             if (index == 3) {
               savePatchSlot(patchSlot);
             } else {
               loadPatchSlot(patchSlot);
             }
-          } else if (index == 2 || index == 3) {
-            patchTrack = static_cast<int8_t>((patchTrack + (index == 3 ? 1 : kSeqTrackCount - 1)) % kSeqTrackCount);
-            scopeHasData = false;
-            // Piste differente = potentiellement un moteur different,
-            // donc un nombre de lignes different -- repart du haut de
-            // la fenetre plutot que de garder une selection/un
-            // defilement qui ne correspondrait plus a rien.
-            selectedPatchRow = 0;
-            patchScroll = 0;
-            char msg[12];
-            snprintf(msg, sizeof(msg), "SCOPE:%d", patchTrack);
-            sendToTeensy(msg);
-            queryPatchExtra(static_cast<uint8_t>(patchTrack));
-            drawPatchPage();
-          } else if ((index == 0 || index == 1) && !btnState[0]) {
+          } else if (patchOnTrackRow) {
+            if (index == 2 || index == 3) {
+              patchTrack = static_cast<int8_t>((patchTrack + (index == 3 ? 1 : kSeqTrackCount - 1)) % kSeqTrackCount);
+              scopeHasData = false;
+              // Piste differente = potentiellement un moteur different,
+              // donc un nombre de lignes different -- repart du haut de
+              // la fenetre plutot que de garder une selection/un
+              // defilement qui ne correspondrait plus a rien.
+              selectedPatchRow = 0;
+              patchScroll = 0;
+              char msg[12];
+              snprintf(msg, sizeof(msg), "SCOPE:%d", patchTrack);
+              sendToTeensy(msg);
+              queryPatchExtra(static_cast<uint8_t>(patchTrack));
+              drawPatchPage();
+            } else if (index == 1) {  // BAS -- entre dans la grille au focus
+              patchOnTrackRow = false;
+              drawPatchTrackRow();
+              redrawPatchLogicalRow(t, static_cast<uint8_t>(selectedPatchRow));
+            }
+            // HAUT : deja tout en haut, no-op.
+          } else if ((index == 2 || index == 3) && !btnState[0]) {
             const int8_t prevRow = selectedPatchRow;
-            const int8_t dir = (index == 0) ? -1 : 1;
-            int8_t nextRow = selectedPatchRow;
-            for (uint8_t tries = 0; tries < total; ++tries) {
-              nextRow = static_cast<int8_t>(((nextRow + dir) % total + total) % total);
-              // patchRowActive() ne s'applique qu'aux 6 lignes fixes
-              // (voir son commentaire) -- toute ligne extra/volume/
-              // slot (>= 6) est toujours un arret valide.
-              if (nextRow >= 6 || patchRowActive(t, static_cast<uint8_t>(nextRow))) {
-                break;
+            selectedPatchRow = patchStepLogical(t, selectedPatchRow, (index == 3) ? 1 : -1, total);
+            if (selectedPatchRow != prevRow) {
+              // Fait suivre le defilement (en lignes VISUELLES) si la
+              // nouvelle selection sort de la fenetre visible -- meme
+              // principe que selectedRomIndex/gbRomScroll pour la
+              // liste de ROM.
+              bool scrolled = false;
+              const int16_t nextVisual = patchVisualRow(t, static_cast<uint8_t>(selectedPatchRow));
+              if (nextVisual < patchScroll) {
+                patchScroll = static_cast<uint8_t>(nextVisual);
+                scrolled = true;
+              } else if (nextVisual >= patchScroll + kPatchVisibleRows) {
+                patchScroll = static_cast<uint8_t>(nextVisual - kPatchVisibleRows + 1);
+                scrolled = true;
+              }
+              if (scrolled) {
+                drawPatchWindow();
+              } else {
+                redrawPatchLogicalRow(t, static_cast<uint8_t>(prevRow));
+                redrawPatchLogicalRow(t, static_cast<uint8_t>(selectedPatchRow));
               }
             }
-            selectedPatchRow = nextRow;
-            if (selectedPatchRow != prevRow) {
-              // Fait suivre le defilement si la nouvelle selection
-              // sort de la fenetre visible -- meme principe que
-              // selectedRomIndex/gbRomScroll pour la liste de ROM.
+          } else if ((index == 0 || index == 1) && !btnState[0]) {
+            const int8_t prevRow = selectedPatchRow;
+            const int8_t next = patchStepVisual(t, selectedPatchRow, (index == 0) ? -1 : 1);
+            if (next < 0) {
+              patchOnTrackRow = true;
+              drawPatchTrackRow();
+              redrawPatchLogicalRow(t, static_cast<uint8_t>(prevRow));
+            } else if (next != prevRow) {
+              selectedPatchRow = next;
               bool scrolled = false;
-              if (selectedPatchRow < static_cast<int8_t>(patchScroll)) {
-                patchScroll = static_cast<uint8_t>(selectedPatchRow);
+              const int16_t nextVisual = patchVisualRow(t, static_cast<uint8_t>(selectedPatchRow));
+              if (nextVisual < patchScroll) {
+                patchScroll = static_cast<uint8_t>(nextVisual);
                 scrolled = true;
-              } else if (selectedPatchRow >= static_cast<int8_t>(patchScroll + kPatchVisibleRows)) {
-                patchScroll = static_cast<uint8_t>(selectedPatchRow - kPatchVisibleRows + 1);
+              } else if (nextVisual >= patchScroll + kPatchVisibleRows) {
+                patchScroll = static_cast<uint8_t>(nextVisual - kPatchVisibleRows + 1);
                 scrolled = true;
               }
               if (scrolled) {
@@ -3548,6 +3668,10 @@ void handleTeensyLine(const String &line) {
               }
             }
           } else if (index == 0 || index == 1) {
+            // A maintenu + HAUT/BAS : edite la valeur de la ligne
+            // selectionnee (inchange, reutilise patchParamRef()/
+            // sendPatchFilt()/sendPatchDxp()/sendPatchEnv()/sendPatchVol()/
+            // sendPatchExtra()).
             const int delta = (index == 0) ? 1 : -1;
             if (selectedPatchRow == static_cast<int8_t>(volRow)) {
               uint8_t &vol = trackVolume[t];
@@ -4738,36 +4862,38 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       }
     }
   } else if (currentScreen == Screen::Patch) {
+    // Tactile repense le 2026-09-19 en meme temps que la croix (voir
+    // le gestionnaire NAV: pour le detail complet) : un tap dans la
+    // grille SELECTIONNE seulement (plus d'edition +/- directe au
+    // tactile, voir hitTestPatchParam()) -- l'edition se fait ensuite
+    // a la croix, A maintenu + HAUT/BAS. Toucher les fleches PISTE
+    // deplace aussi le focus croix sur la ligne PISTE (patchOnTrackRow),
+    // meme reflexe que hitTestEngTrackPrev/Next sur la page MOTEURS.
+    const uint8_t t = static_cast<uint8_t>(patchTrack);
     if (hitTestPatchTrackPrev(x, y) || hitTestPatchTrackNext(x, y)) {
       patchTrack = static_cast<int8_t>((patchTrack + (hitTestPatchTrackNext(x, y) ? 1 : kSeqTrackCount - 1)) %
                                         kSeqTrackCount);
       scopeHasData = false;
+      selectedPatchRow = 0;
+      patchScroll = 0;
+      patchOnTrackRow = true;
       char msg[12];
       snprintf(msg, sizeof(msg), "SCOPE:%d", patchTrack);
       sendToTeensy(msg);
+      queryPatchExtra(static_cast<uint8_t>(patchTrack));
       drawPatchPage();
     } else {
-      bool isPlusSide = false;
-      const int8_t row = hitTestPatchRow(x, y, isPlusSide);
-      const uint8_t t = static_cast<uint8_t>(patchTrack);
-      if (row >= 0 && patchRowActive(t, static_cast<uint8_t>(row))) {
-        const int delta = isPlusSide ? 1 : -1;
-        uint8_t &param = patchParamRef(t, static_cast<uint8_t>(row));
-        param = static_cast<uint8_t>(constrain(static_cast<int>(param) + delta, 0, static_cast<int>(patchRowMax(t, static_cast<uint8_t>(row)))));
-        drawPatchRow(static_cast<uint8_t>(row));
-        if (row < 2) {
-          sendPatchFilt();
-        } else if (trackEngine[t] == az2::kEngineDexed) {
-          sendPatchDxp(static_cast<uint8_t>(row - 2));  // row 2->index 0 (algo), row 3->index 1 (feedback)
-        } else {
-          sendPatchEnv();
+      const int8_t row = hitTestPatchParam(x, y);
+      if (row >= 0 && (row >= 6 || patchRowActive(t, static_cast<uint8_t>(row)))) {
+        const int8_t prevRow = selectedPatchRow;
+        selectedPatchRow = row;
+        const bool leavingTrackRow = patchOnTrackRow;
+        patchOnTrackRow = false;
+        if (leavingTrackRow) {
+          drawPatchTrackRow();
         }
-      } else if (hitTestVolMinus(x, y) || hitTestVolPlus(x, y)) {
-        const int delta = hitTestVolPlus(x, y) ? 1 : -1;
-        uint8_t &vol = trackVolume[t];
-        vol = static_cast<uint8_t>(constrain(static_cast<int>(vol) + delta, 0, 127));
-        drawVolRow();
-        sendPatchVol();
+        redrawPatchLogicalRow(t, static_cast<uint8_t>(prevRow));
+        redrawPatchLogicalRow(t, static_cast<uint8_t>(selectedPatchRow));
       } else if (hitTestPatchSlotNum(x, y)) {
         patchSlot = static_cast<uint8_t>((patchSlot + 1) % kPatchSlotCount);
         drawPatchSlotRow();
