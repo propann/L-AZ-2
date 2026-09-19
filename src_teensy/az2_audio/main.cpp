@@ -2937,19 +2937,44 @@ bool gbAudioV2HaveSeq = false;
 
 void acceptGbAudioV2Frame() {
   const az2::GbAudioV2Frame &frame = gbAudioV2Rx.frame;
-  // First live pilot reuses the proven V1 PCM mono path: stereo and
-  // alternative rates are explicitly rejected rather than misplayed.
-  if (frame.flags != 0 || frame.format != az2::kGbAudioV2FormatPcmU8 ||
-      frame.sampleRate != az2::kGbAudioSampleRate ||
-      frame.payloadLen != az2::kGbAudioSamplesPerPacket) {
+  if (frame.format != az2::kGbAudioV2FormatPcmU8 ||
+      frame.sampleRate != az2::kGbAudioSampleRate) {
     ++gbAudioV2Unsupported;
     return;
   }
+
   if (gbAudioV2HaveSeq && frame.sequence != gbAudioV2ExpectedSeq) {
     ++gbAudioV2SeqGaps;
   }
   gbAudioV2ExpectedSeq = static_cast<uint16_t>(frame.sequence + 1u);
   gbAudioV2HaveSeq = true;
+
+  if ((frame.flags & az2::kGbAudioV2FlagStereo) != 0) {
+    const uint16_t expectedLen =
+        static_cast<uint16_t>(az2::kGbAudioSamplesPerPacket) * 2u;
+    if (frame.payloadLen != expectedLen) {
+      ++gbAudioV2Unsupported;
+      return;
+    }
+    // Le transport V2 conserve maintenant L/R. Le graphe audio AZ-2 est
+    // encore mono ; on effectue donc un downmix propre uniquement au
+    // dernier moment. Les deux canaux restent disponibles sur le fil pour
+    // la future sortie/capture stereo sans refaire le protocole.
+    uint8_t mono[az2::kGbAudioSamplesPerPacket];
+    for (uint16_t i = 0; i < az2::kGbAudioSamplesPerPacket; ++i) {
+      const uint16_t l = frame.payload[i * 2];
+      const uint16_t r = frame.payload[i * 2 + 1];
+      mono[i] = static_cast<uint8_t>((l + r + 1u) / 2u);
+    }
+    ++gbAudioV2Accepted;
+    handleGbAudioPacket(mono, az2::kGbAudioSamplesPerPacket);
+    return;
+  }
+
+  if (frame.flags != 0 || frame.payloadLen != az2::kGbAudioSamplesPerPacket) {
+    ++gbAudioV2Unsupported;
+    return;
+  }
   ++gbAudioV2Accepted;
   handleGbAudioPacket(frame.payload, static_cast<uint8_t>(frame.payloadLen));
 }
