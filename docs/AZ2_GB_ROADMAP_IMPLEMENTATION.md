@@ -13,7 +13,7 @@ Ce document distingue **code intégré**, **à implémenter**, et **à valider s
 - [x] Vérifier l'échec de suppression/renommage des fichiers temporaires et backups, et conserver le .bak en cas d'échec de restauration.
 - [x] Refuser le lancement si la taille de la RAM cartouche est inconnue ou si son allocation échoue.
 - [ ] Valider sur ESP32-S3 la compilation, puis une série de sauvegardes/restaurations, avec coupures simulées à chaque transition .sav/.tmp/.bak.
-- [ ] Ne plus libérer une cartouche modifiée si son enregistrement échoue : passer gbUnload() à un résultat explicite, traiter les appelants, et proposer réessai/annulation.
+- [x] Ne plus libérer une cartouche modifiée si son enregistrement échoue : gbUnload() retourne false, le changement de page et de ROM est bloqué, message SD SAVE ERROR et nouvel essai possible par C. À qualifier matériel.
 - [ ] Remplacer la rotation à deux noms .sav/.bak par un journal de génération vérifié (taille + CRC/version), récupération du fichier le plus récent valide ; éviter la perte de l'ancien backup avant confirmation de la nouvelle version.
 - [ ] Corriger les chemins des noms de ROM affichés tronqués (40 caractères) : stocker un identifiant/chemin non tronqué, afficher seulement un libellé raccourci, gérer pagination et homonymes.
 - [ ] Charger et valider une nouvelle ROM sans interrompre le jeu courant en cas d'ouverture/lecture/allocation échouée (staging et séparation état candidat/état actif).
