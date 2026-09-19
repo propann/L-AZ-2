@@ -1,304 +1,179 @@
-# AZ-3 — Panneau de contrôle Pico (matrice, encodeurs, LED)
+# AZ-3 — Firmware du panneau Pico : conception
 
-**Version :** V1, 19 septembre 2026
-**Statut :** code écrit, **rien de vérifié sur le vrai matériel** — le Pico
-n'était pas branché au moment de l'écriture.
-**Branche :** `az3`
+**Version :** V2, 19 septembre 2026
+**Branche :** `az3` · **Environnement :** `ctrl_pico`
+**Statut :** compile, **rien de vérifié sur le vrai matériel**.
 
-## Décision d'architecture
+Le **câblage** est dans [AZ3_CABLAGE_PANNEAU.md](AZ3_CABLAGE_PANNEAU.md). Ce
+document-ci ne traite que des choix logiciels.
 
-L'AZ-3 sépare nettement les trois cerveaux, chacun avec un rôle unique :
+---
 
-```mermaid
-flowchart LR
-    PICO[Pico RP2040<br/>FACADE] -- UART 921600 --> TEENSY[Teensy 4.1<br/>AUDIO]
-    TEENSY -- UART 921600 --> ESP[ESP32-S3<br/>ECRAN / WIFI / SD]
-    TEENSY --> DAC[DAC PCM5102A]
-    TEENSY --> RACK[Rack AZ-BUS<br/>moteurs ESP32]
-```
+## 1. Structure
 
-| Carte | Rôle | Sources |
+Quatre fichiers, une responsabilité chacun :
+
+| Fichier | Contient | Ne contient pas |
 |---|---|---|
-| **ESP32-S3** | écran 480×480, Wi-Fi, carte SD, projets, émulateur GB/GBC | `src_esp32/az2_screen/` |
-| **Teensy 4.1** | moteurs audio, séquenceur, DAC PCM5102A, rack AZ-BUS | `src_teensy/az2_audio/` |
-| **Pico RP2040** | **toute la façade** : matrice, encodeurs, LED | `src_pico/` |
+| `az3_panel_config.h` | **tout le brochage**, les rôles, les temporisations | aucune logique |
+| `az3_panel_io.h` | lecture des contacts et des broches de quadrature | ni protocole, ni rôles |
+| `az3_led_driver.h` | pilote I2C IS31FL3731, image locale | rien du panneau |
+| `main.cpp` | logique, protocole, modes, diagnostics | aucun numéro de broche |
 
-Le Teensy ne garde **aucune** commande. C'est le retournement complet de la
-décision du 2026-09-14, où le Pico avait été abandonné et les commandes
-recâblées en direct sur le Teensy.
+Changer un fil ne touche qu'à `az3_panel_config.h`. Changer de puce LED ne
+touche qu'à `az3_led_driver.h`.
 
-## Ce qui disparaît, et pourquoi ça ne casse rien
+---
 
-La croix directionnelle et les boutons A/B/C/D **n'existent plus en
-matériel**. Leurs messages `NAV:` et `BTN:`, eux, continuent d'exister : le
-Pico les **synthétise** depuis ses encodeurs.
+## 2. Le choix qui a évité de réécrire l'interface
 
-C'est le point de conception qui économise le plus de travail. L'UI de
-l'ESP32 (4680 lignes) consomme déjà ce vocabulaire pour naviguer dans les
-menus, déplacer le curseur du tracker et piloter l'émulateur. En gardant le
-protocole identique, **elle n'a pas été modifiée d'une seule ligne**.
+La croix et les boutons A/B/C/D n'existent plus en matériel. Leurs messages
+`NAV:` et `BTN:` **continuent d'exister** : le Pico les synthétise depuis les
+encodeurs et, en mode manette, depuis les pads.
 
-| Ancien matériel AZ-2 | Remplacé par | Message émis |
-|---|---|---|
-| Croix ↑ ↓ | Encodeur 1, rotation | `NAV:UP` / `NAV:DOWN` |
-| Croix ← → | Encodeur 2, rotation | `NAV:LEFT` / `NAV:RIGHT` |
-| Bouton A (valider) | Encodeur 1, clic | `BTN:A` |
-| Bouton B (retour) | Encodeur 2, clic | `BTN:B` |
-| Potard 1 (volume) | Encodeur 3, rotation | `POT:0` |
-| Potard 2 (reverb) | Encodeur 4, rotation | `POT:1` |
-| Bouton C / D | Encodeurs 3 / 4, clic | `BTN:C` / `BTN:D` |
-| Potard 3 (delay) | *aucun* avec 4 encodeurs | `POT:2`, écran seulement |
+L'UI de l'ESP32 — 4680 lignes — consomme déjà ce vocabulaire pour naviguer
+dans les menus, déplacer le curseur du tracker et piloter l'émulateur. En
+gardant le protocole identique, **elle n'a eu besoin d'aucune modification**.
 
-### Limite assumée : le mode Jeux perd sa croix
+C'est de loin la décision qui a économisé le plus de travail sur ce chantier.
 
-Un encodeur émet une **impulsion** (`DOWN` puis `UP` immédiat), il ne peut
-pas *maintenir* une direction. C'est sans conséquence pour les menus —
-l'ESP32 agit sur `:DOWN` — mais l'émulateur Game Boy a besoin qu'on tienne
-une direction. Il faudra mapper les 4 directions GB sur 4 pads de la
-matrice, qui eux savent rester enfoncés. **Pas encore fait.**
+---
 
-## Brochage du Pico
+## 3. Décisions logicielles
 
-Le RP2040 a **26 broches utilisables** : GPIO 0-22 et 26-28. GPIO 23 pilote
-le mode d'alimentation SMPS, GPIO 24 détecte le VBUS, GPIO 25 est la LED
-embarquée — les trois sont exclues.
+### 3.1 La quadrature est sondée souvent, pas une fois par tour
 
-| Usage | GPIO | Nb | Sens |
-|---|---|---:|---|
-| UART → Teensy `Serial7` | 0 (TX), 1 (RX) | 2 | — |
-| Colonnes matrice COL_0-3 | 2, 3, 4, 5 | 4 | sortie (LOW au scan) |
-| Lignes matrice ROW_0-3 | 6, 7, 8, 9 | 4 | entrée `INPUT_PULLUP` |
-| Adresse mux S0-S3 (**partagée**) | 10, 11, 12, 13 | 4 | sortie |
-| Mux **LED** SIG | 14 | 1 | sortie, **résistance série** |
-| Mux **IN** SIG | 15 | 1 | entrée `INPUT_PULLUP` |
-| Encodeur 1 A/B | 16, 17 | 2 | entrée `INPUT_PULLUP` |
-| Encodeur 2 A/B | 18, 19 | 2 | entrée `INPUT_PULLUP` |
-| Encodeur 3 A/B | 20, 21 | 2 | entrée `INPUT_PULLUP` |
-| Encodeur 4 A/B | 22, 26 | 2 | entrée `INPUT_PULLUP` |
-| LED embarquée (heartbeat) | 25 | — | sortie (interne) |
-| **Libres** | **27, 28** | **2** | — |
+Un scan complet des pads prend ~450 µs (4 colonnes × 4 lignes, chacune avec
+son temps d'établissement de mux), celui des boutons ~130 µs. Lire les
+encodeurs une seule fois par tour de boucle laisserait passer des crans sur
+une rotation rapide.
 
-Les **boutons** d'encodeur ne consomment aucune GPIO : ils passent par le
-mux d'entrée (canaux 0 à 3).
+`pollEncoders()` est donc appelé **entre chaque bloc** : avant les pads, entre
+pads et boutons, après les boutons. Il ne fait que de l'arithmétique — aucune
+émission série — et dépose les crans dans un compteur.
 
-### Deux CD74HC4067 partageant les lignes d'adresse
+**Le défaut existait dans le firmware Pico d'origine**, où il passait
+inaperçu : presque aucune LED ne s'allumait, donc la boucle était rapide.
 
-C'est l'astuce qui rend le brochage tenable : les deux multiplexeurs
-reçoivent les **mêmes** S0-S3 et gardent chacun leur propre broche SIG.
-Résultat : **32 canaux pour 6 broches** au lieu de 10.
+### 3.2 L'émission série est séparée de l'échantillonnage
 
-| | Mux LED (sortie) | Mux IN (entrée) |
-|---|---|---|
-| S0-S3 | GPIO 10-13 (partagés) | GPIO 10-13 (partagés) |
-| SIG | GPIO 14 | GPIO 15 |
-| Canaux 0-3 | Rouge, lignes 0-3 | Boutons encodeurs 1-4 |
-| Canaux 4-7 | Vert, lignes 0-3 | *libres* |
-| Canaux 8-11 | Bleu, lignes 0-3 | *libres* |
-| Canaux 12-15 | *inutilisés* | *libres* |
+`drainEncoders()` traduit les crans en messages **après** tous les scans,
+jamais au milieu. Envoyer sur l'UART pendant un scan allongerait le créneau en
+cours de façon imprévisible.
 
-Il n'y a pas de conflit : pendant la lecture du mux IN, la broche SIG du mux
-LED est maintenue à LOW, donc aucune LED ne s'allume même si l'adresse
-change.
+### 3.3 Pourquoi `attachInterrupt()` n'est pas utilisé
 
-### ⚠ La broche EN — la panne qui a coûté le projet en 2026-09
+Théoriquement plus propre, mais sur le cœur Arduino-mbed `attachInterrupt`
+crée un objet `InterruptIn` qui prend la main sur la broche, et faire un
+`digitalRead` de cette même broche depuis l'ISR demande une validation sur
+matériel réel. Le sondage réutilise exactement le chemin déjà confirmé
+fonctionnel le 2026-09-13. **Si la quadrature s'avère insuffisante une fois
+tout câblé, l'interruption est le plan B.**
 
-**La broche EN de CHAQUE CD74HC4067 doit être reliée au GND commun.**
+### 3.4 Une seule colonne pilotée à la fois, les autres en haute impédance
 
-Elle est active à l'état **BAS**. Laissée en l'air, le multiplexeur entier
-reste désactivé en permanence : aucun canal ne passe jamais, quoi que
-fassent S0-S3 et SIG. C'est exactement le symptôme observé le 2026-09-14 —
-zéro LED sur les 48 combinaisons testées, alors que boutons et alimentation
-du mux étaient corrects — et c'est ce qui a fait abandonner le Pico.
+Jamais à HIGH. Si deux touches d'une même ligne sont enfoncées, deux colonnes
+se retrouvent reliées entre elles : en haute impédance ça ne fait rien, mais
+une sortie à HIGH face à une sortie à LOW est un court-circuit franc entre
+deux GPIO.
 
-La cause avait été identifiée, **mais la correction (EN → GND) n'a jamais
-été revérifiée** avant que le projet soit abandonné. Le chemin mux LED est
-donc conservé tel quel dans le firmware : c'est un test de cinq minutes, pas
-un chantier.
+### 3.5 Les LED n'ont plus aucune contrainte temps réel
 
-Autre rappel de courant : le CD74HC4067 est un **commutateur analogique**,
-pas un driver. Une résistance série sur la ligne SIG du mux LED est
-indispensable, et n'allumer qu'un canal à la fois (ce que fait le firmware)
-reste la seule façon sûre de procéder. Si la luminosité s'avère
-insuffisante une fois le mux fonctionnel, la suite est un vrai driver à
-courant constant (IS31FL3731) ou des LED adressables par pad — pas un
-réglage du mux.
+Le balayage est fait **par le matériel** du IS31FL3731. Le firmware écrit une
+image locale de 48 octets et ne l'envoie que lorsqu'elle a changé, au plus à
+50 Hz. Rater une échéance ne fait plus scintiller quoi que ce soit — c'était
+toute la fragilité du POV logiciel précédent.
 
-## Matrice SparkFun 4×4 RGB
+Le pilote est écrit à la main plutôt que d'utiliser la bibliothèque Adafruit,
+qui tire `Adafruit_GFX` et `BusIO` derrière elle pour une poignée de
+registres. L'audit du 2026-09-17 avait retiré `lvgl` du projet pour la même
+raison.
 
-C'est une **vraie matrice** ligne/colonne, pas 16 boutons indépendants :
-appuyer sur un pad relie sa ligne à sa colonne. Les LED sont trois matrices
-4×4 superposées, une par couleur, partageant les **mêmes 4 colonnes**
-(cathodes communes).
+### 3.6 Le cœur mbed n'a pas `Wire.setSDA()`
 
-Référence : <https://learn.sparkfun.com/tutorials/button-pad-hookup-guide/all>
+Les broches I2C se donnent au **constructeur** : le pilote déclare sa propre
+instance `arduino::MbedI2C bus(kI2cSdaPin, kI2cSclPin)` au lieu d'utiliser le
+`Wire` global, qui serait câblé sur les broches par défaut.
 
-Nommage AZ-2 (`pad = ligne*4 + colonne`, voir `az2::padId`) :
+### 3.7 Un pad pressé s'allume immédiatement, sans Teensy
 
-| | COL_0 | COL_1 | COL_2 | COL_3 |
-|---|---|---|---|---|
-| **ROW_0** | 0 | 1 | 2 | 3 |
-| **ROW_1** | 4 | 5 | 6 | 7 |
-| **ROW_2** | 8 | 9 | 10 | 11 |
-| **ROW_3** | 12 | 13 | 14 | 15 |
+L'appui physique prime sur l'état musical venant du Teensy. C'est le test de
+câblage le plus rapide qui soit : brancher le Pico seul, appuyer, voir.
 
-Deux pièges documentés par SparkFun :
+---
 
-- les connexions du bas sont des **colonnes**, pas de vrais GND — suivre le
-  guide plutôt que de deviner au multimètre en mode continuité ;
-- **errata Vert/Bleu inversé** sur certains lots. Si les couleurs sortent
-  échangées à l'usage, c'est ça : inverser les deux fils.
+## 4. Protocole
 
-## Choix logiciels à connaître
+### Émis par le Pico
 
-### Quadrature : sondage fréquent, pas interruption
-
-Le balayage LED en POV peut occuper jusqu'à ~7 ms par tour de boucle (4
-colonnes × jusqu'à 12 impulsions de 150 µs). Si on ne lit les encodeurs
-qu'une fois par tour, une rotation rapide franchit plusieurs crans entre
-deux lectures et le firmware en perd. Le défaut existait dans le firmware
-Pico d'origine où il passait inaperçu, précisément parce que presque aucune
-LED ne s'allumait — la boucle était donc rapide.
-
-`pollEncoders()` est appelé **depuis l'intérieur du balayage LED, après
-chaque impulsion**. L'intervalle maximal entre deux lectures tombe ainsi à
-~150 µs, largement sous la milliseconde qui sépare deux transitions même sur
-une rotation très rapide. Coût : 2 `digitalRead` par encodeur, soit ~5 % du
-temps d'une impulsion.
-
-La traduction en messages (`drainEncoderRotation`) est séparée de
-l'échantillonnage : l'émission série n'a rien à faire au milieu d'un
-balayage, elle étirerait l'impulsion en cours et ferait clignoter la
-matrice.
-
-**Pourquoi pas `attachInterrupt()`**, théoriquement plus propre : sur le
-cœur Arduino-mbed, `attachInterrupt` crée un objet `InterruptIn` qui prend
-la main sur la broche, et faire un `digitalRead` de cette même broche depuis
-l'ISR est un comportement qui demande une validation sur le vrai matériel.
-Le sondage réutilise exactement le chemin de code déjà confirmé fonctionnel
-le 2026-09-13. Si la quadrature s'avère malgré tout trop lente une fois les
-LED réellement allumées, **l'interruption est le plan B**.
-
-### Scan en deux passes
-
-Les boutons de la matrice sont lus sur les 4 colonnes **avant** la phase
-LED, jamais en alternance colonne par colonne. Sinon, appuyer sur un pad de
-la colonne 3 attend que les colonnes 0-2 aient fini boutons *et* LED, soit
-du temps mort ajouté avant même l'envoi de l'événement. Comportement établi
-lors du rapport temps réel du 2026-09-14 — à ne pas « simplifier ».
-
-### Table des rôles
-
-Ajouter ou retirer un encodeur se fait **à un seul endroit**, la table
-`kEncoders` dans `src_pico/main.cpp` :
-
-```cpp
-constexpr EncoderConfig kEncoders[] = {
-    {16, 17, EncoderRole::NavVertical,   0, 'A',   0},
-    {18, 19, EncoderRole::NavHorizontal, 0, 'B',   0},
-    {20, 21, EncoderRole::Pot,           0, 'C', 100},  // volume
-    {22, 26, EncoderRole::Pot,           1, 'D',   0},  // reverb
-};
-```
-
-Le reste du firmware s'adapte tout seul (nombre d'encodeurs, canaux de mux,
-interruptions, annonce au boot).
-
-## Combien d'encodeurs peut-on mettre ?
-
-Un encodeur coûte **2 broches** (la quadrature doit rester sur de vraies
-GPIO ; un mux lui ferait rater des crans). Le bouton, lui, est lent et ne
-coûte rien — il va sur le mux.
-
-| Encodeurs | Tient sur un Pico ? | Comment |
-|---:|---|---|
-| 4 | ✅ **2 broches de marge** | brochage ci-dessus, tel quel |
-| 5 | ✅ 0 de marge | utiliser GPIO 27, 28 |
-| 6-7 | ✅ 0 de marge | déporter **en plus** les 4 lignes de matrice sur le mux IN (canaux 4-7), ce qui libère GPIO 6-9 |
-| **8+** | ❌ **28 broches nécessaires, 26 disponibles** | carte RP2350**B** (Pico Plus 2, 48 GPIO) |
-
-⚠ **Piège d'achat** : un « Pico 2 » standard embarque un RP2350**A** et a
-exactement les mêmes 26 GPIO qu'un Pico 1. Il ne résout rien. Seul le
-RP2350**B** (boîtier QFN-80, 48 GPIO) apporte des broches.
-
-## Côté Teensy
-
-### 17 broches libérées
-
-Le retrait des commandes locales libère les GPIO **2-6, 8, 9, 14-19, 22-25**
-— et c'est le but : le rack AZ-BUS a besoin de broches (un UART par slot,
-RESET/BOOT, SLOT_PRESENT, entrée I2S). Voir
-[AZ2_BUS_RACK_MOTEURS.md](AZ2_BUS_RACK_MOTEURS.md).
-
-### Liaison vers le Pico : `Serial7`, pins 28/29
-
-Pourquoi pas `Serial3` (pins 14/15), l'ancien lien Pico : ces broches
-avaient été réaffectées à l'encodeur 1 en AZ-2. `Serial2` (7/8) et `Serial5`
-(20/21) touchent l'I2S ou d'anciens boutons. `Serial7` est libre et le
-reste.
-
-| Pico | Teensy 4.1 |
+| Message | Source |
 |---|---|
-| GPIO 0 (TX) | pin 28 (RX7) |
-| GPIO 1 (RX) | pin 29 (TX7) |
-| GND | GND |
+| `PAD:NN:DOWN/UP` · `PAD:NN:HOLD` | pads, mode musique |
+| `NAV:<DIR>:DOWN/UP` | encodeurs 1-2 (impulsion) ou pads (mode manette, maintenu) |
+| `BTN:<A-D>:DOWN/UP` | clics d'encodeur 1-4, ou pads en mode manette |
+| `ENC:<n>:DOWN/UP` | clics d'encodeur 5-6, ou SELECT/START en mode manette |
+| `POT:<0-2>:<0-127>` | encodeurs 3-5, valeur absolue, débit limité |
+| `MACRO:<n>:±N` | encodeur 6, delta brut |
+| `PLAY` · `STOP` · `REC:START` · `REC:STOP` | boutons de transport |
+| `HELLO:PICO_KEYPAD` | au démarrage |
 
-Débit : `az2::kControlBaud` (921600). Les deux firmwares utilisent la
-constante partagée, les deux bouts restent donc d'accord automatiquement.
-**La masse commune est obligatoire.**
+### Reçu par le Pico
 
-### Traitement des messages entrants
-
-| Message | Ce que fait le Teensy |
+| Message | Effet |
 |---|---|
-| `PAD:NN:DOWN/UP/HOLD` | joue la voix live *(handler existant)* |
-| `MACRO:<n>:±N` | transpose *(handler existant)* + relaie |
-| `POT:<0-2>:<0-127>` | **applique** volume / reverb / delay + relaie |
-| `NAV:`, `BTN:`, `ENC:` | relaie tel quel vers l'ESP32 |
-| `HELLO:PICO_KEYPAD` | répond `HELLO:TEENSY_AUDIO` sur `Serial7` |
+| `LED:NN:ON` / `LED:NN:OFF` | forme historique — `ON` allume les trois couleurs (blanc) |
+| `LED:NN:C:<0-7>` | forme étendue — un bit par couleur (1 rouge, 2 vert, 4 bleu) |
+| `PANEL:MODE:GAME` / `PANEL:MODE:MUSIC` | bascule le rôle des pads |
 
-## Procédure de test au rebranchement
+Les deux formes de `LED:` coexistent : le Teensy actuel n'émet que la
+première, et n'a donc pas besoin de changer.
 
-À faire **dans cet ordre**. Les étapes 1 à 3 ne demandent pas le Teensy.
+---
 
-1. **Flasher** : `pio run -e ctrl_pico -t upload`.
-2. **Moniteur série USB** (921600) : attendre
-   `AZ2:ROLE:PICO_KEYPAD`, `AZ2:FEATURE:SPARKFUN_4X4_MATRIX`,
-   `AZ2:FEATURE:ENCODERS_4`, `AZ2:FEATURE:NAV_FROM_ENCODERS`, puis le
-   heartbeat `STATUS:PICO_KEYPAD:READY` une fois par seconde. La LED
-   embarquée doit clignoter 2×/s.
-3. **Matrice** : chaque pad doit produire `PAD:00` à `PAD:15` en `DOWN` /
-   `UP`, et `HOLD` après 600 ms. *(Confirmé fonctionnel le 2026-09-13 sur le
-   firmware d'origine.)*
-4. **Mux d'entrée** : commande `MUXTEST` → affiche l'état des 16 canaux.
-   Les canaux 0-3 doivent passer à `1` quand on clique l'encodeur
-   correspondant. **Si les 16 canaux restent figés, vérifier EN → GND.**
-5. **Mux LED** : commande `LEDTEST` (défilement ~0,7 s par canal, une LED
-   doit rester allumée en continu à chaque étape) ou `LEDTEST:ALL` (les 4
-   colonnes ensemble, jusqu'à 4 LED à la fois — pratique si une seule LED
-   est HS). `LEDTEST:STOP` pour revenir au scan normal.
-   **C'est le test décisif : il tranche la panne de 2026-09.**
-   Les encodeurs sont volontairement inertes pendant `LEDTEST` — lire le mux
-   d'entrée changerait l'adresse partagée et déplacerait la LED que le
-   diagnostic doit maintenir figée.
-6. **Encodeurs** : rotation → `NAV:UP`/`DOWN`, `NAV:LEFT`/`RIGHT`,
-   `POT:0:<v>`, `POT:1:<v>`. Clic → `BTN:A` à `BTN:D`.
-7. **Lien Teensy** : câbler GPIO 0/1 → pins 28/29 + GND, flasher le Teensy,
-   vérifier `HELLO:TEENSY_AUDIO` en retour (le Pico le réaffiche préfixé
-   `TEENSY:`).
-8. **Chaîne complète** : tourner l'encodeur 3 doit changer le volume audible
-   *et* la valeur affichée à l'écran.
+## 5. Diagnostics
 
-## État de vérification
+Tous pilotables au moniteur série USB (921600 bauds), **sans Teensy branché**.
+C'est délibérément fourni : la panne LED de 2026-09 a coûté le projet faute de
+pouvoir isoler le bloc fautif.
 
-| Élément | État |
+| Commande | Rôle |
 |---|---|
-| Scan matrice 4×4 (`PAD:`) | ✅ confirmé sur matériel le 2026-09-13 |
-| Encodeurs, rotation et clic | ✅ confirmés le 2026-09-13 (3 encodeurs, câblage direct) |
-| Heartbeat, boot, LED embarquée | ✅ confirmés le 2026-09-13 |
-| Retour LED via mux | ❌ **jamais fonctionné**, correction EN → GND jamais retestée |
-| Mux d'entrée (boutons encodeurs) | ❌ nouveau, jamais câblé |
-| Quadrature par sondage fréquent | ❌ nouveau, jamais testé |
-| Synthèse `NAV:`/`BTN:` depuis les encodeurs | ❌ nouveau, jamais testé |
-| Teensy sans commandes locales | ❌ nouveau, compile seulement |
-| Lien `Serial7` | ❌ nouveau, jamais câblé |
-| Directions Game Boy sur les pads | ❌ **pas fait** — le mode Jeux n'a plus de croix |
+| `SELFTEST` | enchaîne identité, scan I2C, mux, encodeurs, pads |
+| `LEDSCAN` | quelles adresses I2C répondent |
+| `MUXTEST` | les 16 canaux du mux boutons |
+| `ENCTEST` | A/B bruts + compteur de crans, sans passer par les rôles |
+| `PADTEST` | état de la matrice, ligne par ligne |
+| `LEDTEST` / `LEDTEST:STOP` | les 48 LED une par une, ~0,3 s chacune |
+| `VERSION` | identité et fonctions |
+
+Chacune nomme la cause probable quand le résultat est vide — `MUXTEST` qui
+renvoie 16 zéros figés pointe la broche EN, `LEDSCAN` sans réponse pointe
+l'alimentation ou la broche AD.
+
+---
+
+## 6. Étendre
+
+| Envie | Où |
+|---|---|
+| Changer le rôle d'un encodeur | table `kEncoders`, une ligne |
+| Ajouter un bouton de façade | un canal libre du mux + un `case` dans `onButtonEdge()` |
+| Changer le mapping manette | table `kGamepadMap` |
+| Changer un fil | `az3_panel_config.h`, nulle part ailleurs |
+| Changer de puce LED | `az3_led_driver.h`, l'interface ne bouge pas |
+| Passer à 8 encodeurs | 2× 74HC165 (~0,60 €) — ils capturent 16 entrées d'un coup, ce que ni les GPIO restantes ni un mux ne savent faire |
+
+---
+
+## 7. Limites assumées
+
+- **Le mode Jeux n'a plus de croix physique.** Les pads la remplacent
+  (`kGamepadMap`), mais le confort d'une vraie croix est perdu.
+- **6 encodeurs est un plafond dur** sur RP2040 : la quadrature coûte 2 GPIO
+  chacun et il n'en reste aucune.
+- **La géométrie du driver LED n'est pas tranchée** — il faut lire la
+  datasheet pour savoir de quel côté sont les anodes. Les deux cas compilent
+  (`kAnodeSide`), voir [AZ3_CABLAGE_PANNEAU.md §5.1](AZ3_CABLAGE_PANNEAU.md).
+- **Rien n'est vérifié en réel.** Le Pico n'a jamais été détecté sur la
+  machine de développement : aucun VID `2e8a`, aucun `/dev/ttyACM*`, aucun
+  volume `RPI-RP2`, sur toute la durée de la session.

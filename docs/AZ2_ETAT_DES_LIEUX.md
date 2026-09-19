@@ -1,5 +1,66 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-19 -- AZ-3, 2e passe : panneau Pico refait a zero, LED sur
+IS31FL3731 en I2C, 6 encodeurs. Compile, RIEN teste en reel]**
+
+Le cablage est repris integralement a la demande de l'utilisateur ("on
+peut aussi refaire integralement le plan de cablage tout reprendre a 0"),
+maintenant qu'on sait qu'il a plusieurs mux sous la main.
+
+- **La regle qui a decide de tout le brochage** : un CD74HC4067 relie UN
+  canal a la fois a un seul fil. Donc oui pour les boutons (lents) et
+  les lignes de matrice ; non pour la quadrature (A et B doivent etre
+  lus au meme instant) ; non pour les LED (2 % de rapport cyclique,
+  aucune regulation de courant).
+- **Les LED passent sur un IS31FL3731 en I2C.** Il balaye EN MATERIEL a
+  courant constant, PWM 8 bits par LED : plus aucune contrainte temps
+  reel cote firmware, et 2 broches au lieu de 5. C'est la vraie reponse
+  a l'echec de 2026-09 -- la broche EN en l'air n'en etait que la cause
+  immediate, le mux etait de toute facon le mauvais composant.
+- **Module retenu** : "IS31FL3731 2946", c'est-a-dire le DRIVER NU avec
+  ses broches sorties. Piege signale a l'utilisateur : la plupart des
+  annonces de ce composant sont des matrices LED deja peuplees, inutiles
+  ici puisque les LED sont dans le pad SparkFun.
+- **Point non tranche, assume** : le pad demande 12 anodes x 4 cathodes,
+  l'IS31FL3731 est une matrice 16x9 -- reste a savoir de quel cote sont
+  les anodes. Si c'est le cote 16, un module suffit ; si c'est le cote
+  9, il en faut deux (6 anodes chacun). LES DEUX CAS SONT GERES par la
+  constante `kAnodeSide` et LES DEUX COMPILENT. Conseil donne : en
+  commander deux, c'est la decision qui ne peut pas etre fausse.
+- **Le 6e encodeur** n'existe que parce que les 4 lignes de matrice ont
+  ete deportees sur un mux : 4 GPIO liberees pour 1 broche de SIG. Bilan
+  final 26 broches sur 26, tout est affecte.
+- **Firmware restructure en 4 fichiers** : `az3_panel_config.h` (tout le
+  brochage et les roles, aucune logique), `az3_panel_io.h` (acces
+  materiel), `az3_led_driver.h` (pilote I2C ecrit a la main plutot que
+  de tirer Adafruit_GFX + BusIO pour une poignee de registres -- meme
+  raison que le retrait de lvgl a l'audit du 2026-09-17), `main.cpp`
+  (logique, protocole, modes, diagnostics, aucun numero de broche).
+- **Ajouts fonctionnels** : boutons PLAY/STOP/REC/SHIFT sur le mux, mode
+  manette (`PANEL:MODE:GAME`) qui met la croix Game Boy sur les pads --
+  un encodeur emet une impulsion et ne peut pas MAINTENIR une direction,
+  les pads si -- et forme etendue `LED:NN:C:<0-7>` pour la couleur, qui
+  coexiste avec l'ancienne `LED:NN:ON/OFF`.
+- **Diagnostics** SELFTEST / LEDSCAN / MUXTEST / ENCTEST / PADTEST /
+  LEDTEST / VERSION, tous utilisables sans Teensy branche. Chacun nomme
+  la cause probable quand le resultat est vide. C'est delibere : la
+  panne de 2026-09 a coute le projet faute de pouvoir isoler le bloc
+  fautif.
+- **Deux bugs trouves pendant l'ecriture** : le coeur Arduino-mbed n'a
+  pas `Wire.setSDA()` (les broches I2C vont au constructeur de
+  `MbedI2C`), et ma premiere assertion de geometrie etait fausse -- en
+  topologie C16 ce sont les COLONNES qui vont sur le cote a 9 sorties,
+  pas les anodes.
+- **Builds** : `ctrl_pico`, `master_teensy`, `screen_esp` SUCCESS ;
+  tests natifs 9/9 PASSED. Les deux topologies LED compilent.
+- **Limite honnete, inchangee** : le Pico n'a JAMAIS ete detecte sur
+  cette machine (aucun VID 2e8a, aucun `/dev/ttyACM*`, aucun volume
+  RPI-RP2) malgre une veille de 40 minutes en tache de fond. Rien de ce
+  chantier n'est verifie en reel.
+
+Cablage : [AZ3_CABLAGE_PANNEAU.md](AZ3_CABLAGE_PANNEAU.md).
+Firmware : [AZ3_PANNEAU_PICO.md](AZ3_PANNEAU_PICO.md).
+
 **[2026-09-19 -- branche `az3` : demarrage de l'AZ-3, TOUTES les commandes
 du Teensy deportees sur un Pico. Compile, RIEN teste sur le vrai
 materiel -- le Pico n'etait pas branche]**

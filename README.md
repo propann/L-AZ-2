@@ -3,7 +3,8 @@
 > **Branche `az3` — developpement en cours.** L'AZ-3 passe a **3 cerveaux**
 > en deportant TOUTES les commandes du Teensy vers un Pico dedie, et
 > ajoute un rack physique de moteurs audio. Voir
-> [docs/AZ3_PANNEAU_PICO.md](docs/AZ3_PANNEAU_PICO.md) (facade) et
+> [docs/AZ3_CABLAGE_PANNEAU.md](docs/AZ3_CABLAGE_PANNEAU.md) (cablage de la
+> facade), [docs/AZ3_PANNEAU_PICO.md](docs/AZ3_PANNEAU_PICO.md) (firmware) et
 > [docs/AZ2_BUS_RACK_MOTEURS.md](docs/AZ2_BUS_RACK_MOTEURS.md) (rack).
 > **Rien n'est encore verifie sur le vrai materiel.** La description
 > ci-dessous reste celle de l'AZ-2 (branche `main`), qui fonctionne.
@@ -86,7 +87,8 @@ Detail complet : [docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md](docs/AZ2_ARCHITECTUR
 - [Portage MicroDexed-touch](docs/AZ2_PORTAGE_MICRODEXED_TOUCH.md)
 - [Feuille de route du moteur audio](docs/AZ2_FEUILLE_DE_ROUTE_MOTEUR.md)
 - [Architecture multi-moteurs et sampler](docs/AZ2_ARCHITECTURE_MULTI_MOTEURS.md)
-- [AZ-3 — panneau de contrôle Pico (matrice, encodeurs, LED)](docs/AZ3_PANNEAU_PICO.md)
+- [AZ-3 — câblage du panneau de contrôle](docs/AZ3_CABLAGE_PANNEAU.md)
+- [AZ-3 — firmware du panneau Pico](docs/AZ3_PANNEAU_PICO.md)
 - [Étude AZ-3 — rack de moteurs interchangeables](docs/AZ2_BUS_RACK_MOTEURS.md)
 - [Étude AZ-3 — flash des modules moteurs](docs/AZ2_FLASH_MODULES.md)
 - [Étude AZ-3 — module ESP32 AZ-VA1](docs/AZ2_MODULE_ESP32_AZ_VA1.md)
@@ -122,7 +124,8 @@ L-AZ-2/
   reference/tests isoles (pas dans `default_envs`) -- sources
   `src_esp32/az2_control/`.
 - `ctrl_pico` : **AZ-3**, Pico RP2040, panneau de controle complet
-  (matrice SparkFun 4x4, encodeurs, LED via mux) -- sources `src_pico/`.
+  (matrice SparkFun 4x4, 6 encodeurs, boutons via mux CD74HC4067, LED via
+  driver I2C IS31FL3731) -- sources `src_pico/`.
   Hors `default_envs` tant que le materiel AZ-3 n'est pas cable.
 
 ```
