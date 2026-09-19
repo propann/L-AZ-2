@@ -66,6 +66,7 @@ uint8_t *romData = nullptr;
 uint32_t romSize = 0;
 uint8_t *cartRam = nullptr;
 uint32_t cartRamSize = 0;
+bool cartRamDirty = false;
 // Sauvegarde periodique (2026-09-19, voir gbRunFrame()) -- remis a
 // zero a chaque chargement de ROM (voir gbLoadRom()) pour que le
 // premier autosave d'une nouvelle partie tombe bien kGbAutosaveIntervalMs
@@ -78,7 +79,8 @@ char romTitle[17] = {0};
 // ROM avec l'extension remplacee par .sav, a cote d'elle dans /games --
 // convention classique d'emulateur (rom.gb + rom.sav). Vide si aucune
 // ROM chargee ou si la cartouche n'a pas de RAM (cartRamSize==0).
-char saveRamPath[64] = {0};
+constexpr size_t kSavePathCapacity = 96;
+char saveRamPath[kSavePathCapacity] = {0};
 
 uint8_t romRead(struct gb_s *, const uint_fast32_t addr) {
   return (addr < romSize) ? romData[addr] : 0xFF;
@@ -101,7 +103,10 @@ uint8_t cartRamRead(struct gb_s *, const uint_fast32_t addr) {
 
 void cartRamWrite(struct gb_s *, const uint_fast32_t addr, const uint8_t val) {
   if (addr < cartRamSize) {
-    cartRam[addr] = val;
+    if (cartRam[addr] != val) {
+      cartRam[addr] = val;
+      cartRamDirty = true;
+    }
   }
 }
 
@@ -134,10 +139,15 @@ constexpr uint16_t kDmgPalette[4] = {
 // "<path>.bak", renomme le tmp vers le nom final -- a aucun moment le
 // fichier final n'est absent ou tronque.
 bool atomicSaveRaw(const char *path, const uint8_t *data, size_t len) {
-  char tmpPath[40];
-  char bakPath[40];
-  snprintf(tmpPath, sizeof(tmpPath), "%s.tmp", path);
-  snprintf(bakPath, sizeof(bakPath), "%s.bak", path);
+  char tmpPath[kSavePathCapacity + 5];
+  char bakPath[kSavePathCapacity + 5];
+  const int tmpLen = snprintf(tmpPath, sizeof(tmpPath), "%s.tmp", path);
+  const int bakLen = snprintf(bakPath, sizeof(bakPath), "%s.bak", path);
+  if (tmpLen < 0 || static_cast<size_t>(tmpLen) >= sizeof(tmpPath) ||
+      bakLen < 0 || static_cast<size_t>(bakLen) >= sizeof(bakPath)) {
+    Serial.println("GB:SAVE_PATH_TOO_LONG");
+    return false;
+  }
 
   SD.remove(tmpPath);
   File f = SD.open(tmpPath, FILE_WRITE);
@@ -179,7 +189,11 @@ void gbSaveCartRam() {
   if (cartRam == nullptr || cartRamSize == 0 || saveRamPath[0] == '\0') {
     return;
   }
+  if (!cartRamDirty) {
+    return;
+  }
   if (atomicSaveRaw(saveRamPath, cartRam, cartRamSize)) {
+    cartRamDirty = false;
     Serial.print("GB:SAVED:");
     Serial.println(saveRamPath);
   } else {
@@ -188,25 +202,65 @@ void gbSaveCartRam() {
   }
 }
 
+bool gbLoadCartRamFile(const char *path) {
+  if (!SD.exists(path)) {
+    return false;
+  }
+  File f = SD.open(path);
+  if (!f) {
+    Serial.print("GB:SAVE_READ_OPEN_ERROR:");
+    Serial.println(path);
+    return false;
+  }
+  const size_t fileSize = f.size();
+  if (fileSize != cartRamSize) {
+    f.close();
+    Serial.print("GB:SAVE_SIZE_ERROR:");
+    Serial.print(path);
+    Serial.print(":expected=");
+    Serial.print(cartRamSize);
+    Serial.print(":actual=");
+    Serial.println(fileSize);
+    return false;
+  }
+  const size_t readBytes = f.read(cartRam, cartRamSize);
+  f.close();
+  if (readBytes != cartRamSize) {
+    Serial.print("GB:SAVE_READ_ERROR:");
+    Serial.print(path);
+    Serial.print(":expected=");
+    Serial.print(cartRamSize);
+    Serial.print(":actual=");
+    Serial.println(readBytes);
+    return false;
+  }
+  Serial.print("GB:SAVE_LOADED:");
+  Serial.print(path);
+  Serial.print(":bytes=");
+  Serial.println(readBytes);
+  return true;
+}
+
 void gbLoadCartRamIfPresent() {
   if (cartRam == nullptr || cartRamSize == 0 || saveRamPath[0] == '\0') {
     return;
   }
-  if (!SD.exists(saveRamPath)) {
-    return;  // pas de sauvegarde existante -- cartRam reste a 0xFF (deja initialise), rien d'anormal
-  }
-  File f = SD.open(saveRamPath);
-  if (!f) {
-    Serial.print("GB:SAVE_READ_OPEN_ERROR:");
-    Serial.println(saveRamPath);
+  if (gbLoadCartRamFile(saveRamPath)) {
+    cartRamDirty = false;
     return;
   }
-  const size_t readBytes = f.read(cartRam, cartRamSize);
-  f.close();
-  Serial.print("GB:SAVE_LOADED:");
-  Serial.print(saveRamPath);
-  Serial.print(":bytes=");
-  Serial.println(readBytes);
+
+  // Une sauvegarde finale absente ou tronquee peut etre recuperee depuis
+  // le backup conserve par atomicSaveRaw(). Ne jamais accepter un fichier
+  // partiel : LSDJ manipule une SRAM importante et une lecture courte peut
+  // ressembler a une sauvegarde valide tout en ayant perdu des morceaux.
+  char backupPath[kSavePathCapacity + 5];
+  const int backupLen = snprintf(backupPath, sizeof(backupPath), "%s.bak", saveRamPath);
+  if (backupLen >= 0 && static_cast<size_t>(backupLen) < sizeof(backupPath) &&
+      gbLoadCartRamFile(backupPath)) {
+    cartRamDirty = false;
+    Serial.println("GB:SAVE_RECOVERED_FROM_BACKUP");
+  }
 }
 
 // lcd_draw_line du coeur : convertit les 160 pixels de la ligne en RGB565
@@ -284,6 +338,7 @@ void gbUnload() {
   romLoaded = false;
   romTitle[0] = '\0';
   saveRamPath[0] = '\0';
+  cartRamDirty = false;
 }
 
 uint8_t gbScanRoms(char names[][kGbRomNameLen]) {
@@ -359,7 +414,16 @@ bool gbLoadRom(const char *filename) {
     return false;
   }
 
-  cartRamSize = static_cast<uint32_t>(gb.num_ram_banks) * CRAM_BANK_SIZE;
+  // Ne pas deduire la taille depuis num_ram_banks : MBC2 expose 512
+  // demi-octets de RAM alors que ce compteur vaut zero. Le coeur connait
+  // deja les tailles exactes de tous les types de cartouche supportes.
+  size_t detectedSaveSize = 0;
+  if (gb_get_save_size_s(&gb, &detectedSaveSize) != 0 || detectedSaveSize > UINT32_MAX) {
+    Serial.println("GB:SAVE_SIZE_UNSUPPORTED");
+    detectedSaveSize = 0;
+  }
+  cartRamSize = static_cast<uint32_t>(detectedSaveSize);
+  cartRamDirty = false;
   gbLastAutosaveMs = millis();  // reparti a zero pour cette partie, voir gbRunFrame()
   if (cartRamSize > 0) {
     cartRam = static_cast<uint8_t *>(heap_caps_malloc(cartRamSize, MALLOC_CAP_SPIRAM));
@@ -368,7 +432,11 @@ bool gbLoadRom(const char *filename) {
       // Chemin de sauvegarde = meme nom que la ROM, extension .sav (voir
       // saveRamPath) -- tronque a la premiere extension trouvee, gere
       // .gb comme .gbc.
-      snprintf(saveRamPath, sizeof(saveRamPath), "/games/%s", filename);
+      const int savePathLen = snprintf(saveRamPath, sizeof(saveRamPath), "/games/%s", filename);
+      if (savePathLen < 0 || static_cast<size_t>(savePathLen) >= sizeof(saveRamPath)) {
+        Serial.println("GB:SAVE_PATH_TOO_LONG");
+        saveRamPath[0] = '\0';
+      }
       char *dot = strrchr(saveRamPath, '.');
       if (dot != nullptr) {
         strcpy(dot, ".sav");
@@ -382,14 +450,11 @@ bool gbLoadRom(const char *filename) {
   gb_init_lcd(&gb, lcdDrawLine);
   minigb_apu_audio_init(&apuCtx);  // etat APU frais -- pas de bruit/note residuelle de la ROM precedente
   gb.direct.joypad = 0xFF;  // rien de presse (voir gbSetButton() -- 0=presse, 1=relache)
-  // frame_skip=true : le coeur continue d'emuler CHAQUE frame a vitesse
-  // normale (logique/timing du jeu corrects), mais n'appelle
-  // lcd_draw_line() qu'une frame sur deux -- demande le 2026-09-15
-  // ("on a des sauts d'images, on peut stabiliser") : le rendu (appels
-  // vers le bus RGB parallele, voir gbBlitLine() dans main.cpp) est le
-  // gros cout, pas l'emulation CPU -- diviser son volume par 2 stabilise
-  // la cadence sans ralentir le jeu.
-  gb.direct.frame_skip = true;
+  // Le mode normal AZ-2 affiche chaque image. gbBlitLine() regroupe les
+  // lignes en bandes pour supprimer l'ancien cout de 144 transactions par
+  // frame. Un mode economie pourra etre ajoute plus tard, mais ne doit pas
+  // etre le comportement par defaut d'une machine visant l'emulation native.
+  gb.direct.frame_skip = false;
 
   gb_get_rom_name(&gb, romTitle);
   romLoaded = true;
@@ -417,7 +482,11 @@ constexpr uint32_t kGbAutosaveIntervalMs = 30000;
 
 void gbRunFrame() {
   if (romLoaded) {
-    gb_run_frame(&gb);
+    // Walnut-CGB recommande ce chemin : deux opcodes sont recuperes par
+    // chaine de dispatch et les transferts DMA 32 bits restent actifs. Les
+    // optimisations 16 bits experimentales connues pour casser des jeux
+    // restent, elles, desactivees dans walnut_cgb.h.
+    gb_run_frame_dualfetch(&gb);
     sendGbAudioPacket();
 
     const uint32_t now = millis();
