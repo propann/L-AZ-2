@@ -1,6 +1,6 @@
 # AZ-2 — Protocole audio Game Boy V2
 
-**Statut : préparé dans le code partagé, non activé sur le fil.**  
+**Statut : émetteur ESP32 + récepteur Teensy implémentés pour un pilote mono PCM8/14 kHz ; désactivés par défaut.**  
 Le transport utilisé aujourd'hui reste V1 : mono PCM8 / 14 kHz, paquet `0x01 + len8 + payload`.
 
 Le but du V2 est de permettre une évolution coordonnée vers une meilleure qualité audio sans casser les commandes texte ni flasher une seule carte avec un format incompatible.
@@ -33,11 +33,11 @@ offset  taille  champ
 
 Le CRC couvre les octets **version jusqu'à la fin du payload**. Le magic et les deux octets du CRC sont exclus.
 
-Les constantes et helpers sont déjà définis dans `lib/AZ2_Protocol/AZ2_Protocol.h` et couverts par les tests natifs. Aucun émetteur ou récepteur V2 n'est encore activé.
+Les constantes, l'encodeur et le décodeur à CRC sont définis dans `lib/AZ2_Protocol/AZ2_Protocol.h` et couverts par les tests natifs. L'ESP32 possède un émetteur V2 pilote, le Teensy possède un récepteur avec détection de CRC et des sauts de séquence. Le pilote reste inactif tant que `kGbAudioV2PilotEnabled` vaut `false` (valeur par défaut). Le Teensy répond à `GBV2:QUERY` par `GBV2:READY` uniquement si le pilote est activé ; l'ESP32 continue d'envoyer V1 sans cette réponse.
 
 ## Profil recommandé pour le premier essai
 
-Premier palier envisagé :
+Premier palier haute qualité envisagé **après validation du pilote mono V2** :
 
 - PCM8,
 - stéréo,
@@ -49,14 +49,13 @@ Ce profil laisse de la marge aux commandes. Le PCM16 stéréo 44,1 kHz brut est 
 
 ## Migration sûre
 
-1. Implémenter le parser V2 côté Teensy **sans retirer V1**.
-2. Tester le parser sur trames synthétiques, CRC faux, longueur fausse, séquence manquante et timeout.
-3. Implémenter l'émetteur V2 côté ESP32 derrière une option compile-time désactivée par défaut.
-4. Compiler les deux firmwares et vérifier le protocole natif.
-5. Tester sur câble réel à 921600 bauds.
-6. Ajouter une négociation explicite de capacité.
-7. Basculer uniquement lorsque les deux côtés confirment V2.
-8. Conserver V1 comme fallback pendant la phase beta.
+1. [x] Décodeur V2 Teensy et émetteur ESP32 présents, avec V1 conservé.
+2. [x] Tests natifs du roundtrip, CRC et longueurs invalides ; [ ] injection de pertes/timeout et mesure matérielle.
+3. [x] Option compile-time partagée désactivée par défaut et échange `GBV2:QUERY` / `GBV2:READY`.
+4. [ ] Confirmer la compilation CI **des deux firmwares pour le SHA de livraison**, puis tester sur câble réel à 921600 bauds.
+5. [ ] Valider 30 min le pilote V2 mono 14 kHz avant toute activation par défaut.
+6. [ ] Étendre réception, mixage et capture audio à stéréo/32 kHz ; le Teensy actuel utilise encore un bus GB mono.
+7. [ ] Déployer profil supérieur uniquement après négociation et tests, en gardant V1 comme fallback.
 
 ## Télémétrie nécessaire
 
