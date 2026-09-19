@@ -24,6 +24,20 @@ Cependant, le niveau actuel est encore celui d’un **émulateur intégré fonct
 - Tetris DX / Super Mario Bros. Deluxe GBC : plausibles, mais doivent être qualifiés sur le vrai écran.
 - LSDJ : devrait démarrer et sauvegarder, mais la qualité audio actuelle n’est pas acceptable pour prétendre à une intégration musicale haut de gamme.
 
+## Niveau visé : émulation de référence
+
+Dans AZ-2, « au top » devient une exigence mesurable et non une simple impression :
+
+- fidélité CPU, interruptions, timers, DMA et MBC validée par ROMs de test ;
+- cadence logique et affichée native de 59,7275 Hz en mode normal ;
+- audio APU stéréo à timing précis, sans réduction mono et sans dérive de hauteur ;
+- latence totale commande → jeu inférieure à une image ;
+- zéro frame logique perdue, zéro underrun audio et zéro corruption de sauvegarde ;
+- compatibilité déclarée uniquement après essai prolongé sur le vrai AZ-2 ;
+- le mode 30 FPS reste éventuellement disponible comme mode économie, jamais comme mode normal.
+
+Tant que tous ces seuils ne sont pas validés, le projet doit parler d’« émulation expérimentale » et non d’émulation certifiée.
+
 ## Cibles de référence
 
 Pour couvrir les chemins réellement importants, la qualification doit utiliser au minimum :
@@ -344,7 +358,7 @@ Les ROMs de test ne doivent pas forcément être commitées si leur licence ne l
 
 - cadence moyenne : 59,72–59,74 Hz ;
 - aucune frame logique perdue pendant 30 minutes ;
-- 60 images affichées si possible, sinon mode 30 FPS explicitement nommé « économie » ;
+- 59,72–59,74 images affichées par seconde en mode normal ; le 30 FPS n’est admis que dans un mode « économie » explicitement choisi ;
 - aucune erreur UART ;
 - aucun underrun audio ;
 - sauvegarde restaurée bit à bit ;
