@@ -29,10 +29,12 @@ class AudioPlaySampler : public AudioStream {
   // sampleData/sampleLen : buffer PCM 16 bits mono 44.1kHz (flash
   // PROGMEM OU PSRAM). rootNote : note MIDI a laquelle ce sample doit
   // jouer a sa vitesse d'origine (pas de resampling, step=1.0).
-  void setSample(const int16_t *data, uint32_t len, uint8_t rootNote) {
+  void setSample(const int16_t *data, uint32_t len, uint8_t rootNote,
+                 uint32_t sampleRate = 44100) {
     sampleData_ = data;
     sampleLen_ = len;
     rootNote_ = rootNote;
+    sampleRate_ = sampleRate > 0 ? sampleRate : 44100;
   }
 
   bool hasSample() const { return sampleData_ != nullptr && sampleLen_ > 1; }
@@ -42,7 +44,8 @@ class AudioPlaySampler : public AudioStream {
       return;
     }
     pos_ = 0.0f;
-    step_ = midiNoteToFreq(note) / midiNoteToFreq(rootNote_);
+    step_ = (static_cast<float>(sampleRate_) / 44100.0f) *
+            (midiNoteToFreq(note) / midiNoteToFreq(rootNote_));
     amp_ = static_cast<float>(velocity) / 127.0f;
     playing_ = true;
   }
@@ -92,6 +95,7 @@ class AudioPlaySampler : public AudioStream {
   const int16_t *sampleData_ = nullptr;
   uint32_t sampleLen_ = 0;
   uint8_t rootNote_ = 60;
+  uint32_t sampleRate_ = 44100;
   float pos_ = 0.0f;
   float step_ = 1.0f;
   float amp_ = 1.0f;
