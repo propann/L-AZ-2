@@ -4586,10 +4586,11 @@ constexpr int16_t kGbScaledW = 160 * 3;
 constexpr int16_t kGbScaledH = 144 * 3;
 constexpr int16_t kGbScreenTop = (kScreenSize - kGbScaledH) / 2;
 
-// Un SEUL draw16bitRGBBitmap() par ligne source (480x3 d'un coup) au
-// lieu de 3 -- demande le 2026-09-15 ("on a des sauts d'images, on peut
-// stabiliser"), moins d'appels = moins de surcharge par appel vers le
-// bus RGB parallele.
+// Le rendu est regroupe par bandes de 8 lignes GB : 160x8 pixels deviennent
+// un bloc 480x24. Cela ramene une image de 144 a 18 appels au pilote RGB,
+// sans recreer le grand framebuffer PSRAM 480x432 qui avait scintille sur
+// le vrai materiel. Le tampon de bande (~23 Kio) reste stable pendant
+// l'appel et n'exige aucune synchronisation de deux grands framebuffers.
 // [2026-09-18] Tentative de rendu "1 bloc PSRAM entier envoye a la fin
 // de l'image" essayee par une autre session IA le meme jour -- ANNULEE
 // : premier retour utilisateur sur le vrai materiel = "l'ecran
@@ -4602,20 +4603,30 @@ constexpr int16_t kGbScreenTop = (kScreenSize - kGbScaledH) / 2;
 // ("certaines animations ne s'affichent pas correctement, ex.
 // Prehistorik Man") -- accepte comme compromis connu, pas un bug AZ-2.
 void gbBlitLine(int line, const uint16_t *row) {
-  static uint16_t scaledBlock[kGbScaledW * 3];
+  constexpr int16_t kGbSourceRowsPerBand = 8;
+  constexpr int16_t kGbScaledRowsPerBand = kGbSourceRowsPerBand * 3;
+  static uint16_t scaledBand[kGbScaledW * kGbScaledRowsPerBand];
+  const int16_t sourceRowInBand = static_cast<int16_t>(line % kGbSourceRowsPerBand);
+  uint16_t *scaledRow = scaledBand + sourceRowInBand * 3 * kGbScaledW;
+
   for (int x = 0; x < 160; ++x) {
     const uint16_t c = row[x];
     const int16_t base = static_cast<int16_t>(x * 3);
-    scaledBlock[base] = c;
-    scaledBlock[base + 1] = c;
-    scaledBlock[base + 2] = c;
+    scaledRow[base] = c;
+    scaledRow[base + 1] = c;
+    scaledRow[base + 2] = c;
   }
   // Les 2 autres rangees de sortie sont identiques a la premiere.
-  memcpy(scaledBlock + kGbScaledW, scaledBlock, kGbScaledW * sizeof(uint16_t));
-  memcpy(scaledBlock + kGbScaledW * 2, scaledBlock, kGbScaledW * sizeof(uint16_t));
+  memcpy(scaledRow + kGbScaledW, scaledRow, kGbScaledW * sizeof(uint16_t));
+  memcpy(scaledRow + kGbScaledW * 2, scaledRow, kGbScaledW * sizeof(uint16_t));
 
-  const int16_t y = static_cast<int16_t>(kGbScreenTop + line * 3);
-  gfx->draw16bitRGBBitmap(0, y, scaledBlock, kGbScaledW, 3);
+  const bool bandComplete = sourceRowInBand == (kGbSourceRowsPerBand - 1) || line == 143;
+  if (bandComplete) {
+    const int16_t sourceBandStart = static_cast<int16_t>(line - sourceRowInBand);
+    const int16_t sourceRows = static_cast<int16_t>(sourceRowInBand + 1);
+    const int16_t y = static_cast<int16_t>(kGbScreenTop + sourceBandStart * 3);
+    gfx->draw16bitRGBBitmap(0, y, scaledBand, kGbScaledW, sourceRows * 3);
+  }
 }
 
 void setup() {
@@ -5113,22 +5124,19 @@ void loop() {
     }
   }
 
-  // Emulateur Game Boy (page JEUX, voir gb_emulator.h) : cadence CIBLE
-  // ~59,7 images/s (periode Game Boy reelle) tant qu'une ROM est chargee
-  // et que cette page est affichee. Le "if >= 17" est un LIMITEUR, pas
-  // un ordonnanceur -- il ne fait que plafonner la cadence, il ne
-  // rattrape jamais un retard. Si l'ESP32-S3 met plus de 17ms pour
-  // finir un tour de loop() (rendu + emulation + reseau), la cadence
-  // REELLE tombe sous 59,7 im/s -- le jeu ET sa musique (meme horloge
-  // interne) tournent alors au ralenti. Compteur ajoute le 2026-09-17
-  // (retour utilisateur : "c'est cote vitesse qu'on est pas bon" sur
-  // les jeux GBC) pour MESURER la cadence reelle au lieu de deviner --
-  // imprime "GB:FPS:<n>" une fois par seconde pendant une partie.
-  // Frequence GB reelle : ~59,7275 Hz, soit 16 742 us. L'ancien
-  // intervalle entier de 17 ms plafonnait deja la machine a 58,8 FPS.
+  // Emulateur Game Boy : une frame dure exactement 70224 cycles a
+  // 4 194 304 Hz, soit 16 742,706298 us. Garder seulement 16 742 us
+  // cree une petite derive permanente ; l'accumulateur de reste ci-dessous
+  // alterne 16 742/16 743 us et conserve la cadence native sur la duree.
   constexpr uint32_t kGbFramePeriodUs = 16742;
+  constexpr uint32_t kGbFrameRemainder = 2962432;
+  constexpr uint32_t kGbClockHz = 4194304;
   static uint32_t nextGbFrameUs = 0;
+  static uint32_t gbFrameFraction = 0;
   static uint32_t gbFrameCount = 0;
+  static uint32_t gbFrameTimeTotalUs = 0;
+  static uint32_t gbFrameTimeMaxUs = 0;
+  static uint32_t gbMissedFrames = 0;
   static uint32_t gbFpsWindowStartMs = 0;
   if (currentScreen == Screen::Retro && gbIsLoaded() && !screensaverActive) {
     const uint32_t nowUs = micros();
@@ -5136,24 +5144,61 @@ void loop() {
       nextGbFrameUs = nowUs;
     }
     if (static_cast<int32_t>(nowUs - nextGbFrameUs) >= 0) {
+      const uint32_t frameStartUs = micros();
       gbRunFrame();
+      const uint32_t frameDurationUs = micros() - frameStartUs;
       ++gbFrameCount;
+      gbFrameTimeTotalUs += frameDurationUs;
+      if (frameDurationUs > gbFrameTimeMaxUs) {
+        gbFrameTimeMaxUs = frameDurationUs;
+      }
+
       nextGbFrameUs += kGbFramePeriodUs;
-      // Ne pas lancer une rafale pour rattraper un gros retard : UI et
-      // commandes doivent rester reactives.
-      if (static_cast<int32_t>(nowUs - nextGbFrameUs) > static_cast<int32_t>(kGbFramePeriodUs * 2)) {
-        nextGbFrameUs = nowUs + kGbFramePeriodUs;
+      gbFrameFraction += kGbFrameRemainder;
+      if (gbFrameFraction >= kGbClockHz) {
+        ++nextGbFrameUs;
+        gbFrameFraction -= kGbClockHz;
+      }
+
+      // Un retard superieur a deux frames n'est pas cache : on le compte,
+      // puis on resynchronise pour conserver les commandes/UI reactives.
+      // La cible de qualification impose que ce compteur reste a zero.
+      const uint32_t afterFrameUs = micros();
+      const int32_t lateUs = static_cast<int32_t>(afterFrameUs - nextGbFrameUs);
+      if (lateUs > static_cast<int32_t>(kGbFramePeriodUs * 2)) {
+        gbMissedFrames += static_cast<uint32_t>(lateUs) / 16743U;
+        nextGbFrameUs = afterFrameUs + kGbFramePeriodUs;
+        gbFrameFraction = kGbFrameRemainder;
       }
     }
-    if (now - gbFpsWindowStartMs >= 1000) {
-      Serial.print("GB:FPS:");
-      Serial.println(gbFrameCount);
+    const uint32_t fpsElapsedMs = now - gbFpsWindowStartMs;
+    if (fpsElapsedMs >= 1000) {
+      const uint32_t fpsX100 = (fpsElapsedMs > 0)
+                                   ? static_cast<uint32_t>((static_cast<uint64_t>(gbFrameCount) * 100000ULL) /
+                                                           fpsElapsedMs)
+                                   : 0;
+      const uint32_t frameAvgUs = (gbFrameCount > 0) ? gbFrameTimeTotalUs / gbFrameCount : 0;
+      Serial.print("GB:PERF:fps_x100=");
+      Serial.print(fpsX100);
+      Serial.print(":frame_us_avg=");
+      Serial.print(frameAvgUs);
+      Serial.print(":frame_us_max=");
+      Serial.print(gbFrameTimeMaxUs);
+      Serial.print(":missed=");
+      Serial.println(gbMissedFrames);
       gbFrameCount = 0;
+      gbFrameTimeTotalUs = 0;
+      gbFrameTimeMaxUs = 0;
+      gbMissedFrames = 0;
       gbFpsWindowStartMs = now;
     }
   } else {
     nextGbFrameUs = 0;
+    gbFrameFraction = 0;
     gbFrameCount = 0;
+    gbFrameTimeTotalUs = 0;
+    gbFrameTimeMaxUs = 0;
+    gbMissedFrames = 0;
     gbFpsWindowStartMs = now;
   }
 

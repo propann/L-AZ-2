@@ -24,6 +24,21 @@ Cependant, le niveau actuel est encore celui d’un **émulateur intégré fonct
 - Tetris DX / Super Mario Bros. Deluxe GBC : plausibles, mais doivent être qualifiés sur le vrai écran.
 - LSDJ : devrait démarrer et sauvegarder, mais la qualité audio actuelle n’est pas acceptable pour prétendre à une intégration musicale haut de gamme.
 
+### Avancement du correctif
+
+Le premier lot logiciel a été intégré sur la branche d'amélioration :
+
+- cœur `gb_run_frame_dualfetch()` activé ;
+- frame-skip retiré du mode normal ;
+- rendu groupé en 18 bandes par image au lieu de 144 appels écran ;
+- cadence fractionnaire exacte et télémétrie `GB:PERF` ;
+- taille SRAM MBC2, chemins longs, contrôle strict des `.sav`, récupération
+  `.bak` et dirty flag corrigés.
+
+Ces points restent à qualifier sur le vrai AZ-2. L'APU et le transport audio
+stéréo constituent le deuxième lot ; le détail des moteurs étudiés est dans
+[l'étude des cœurs d'émulation](AZ2_ETUDE_COEURS_EMULATION_GB.md).
+
 ## Niveau visé : émulation de référence
 
 Dans AZ-2, « au top » devient une exigence mesurable et non une simple impression :
