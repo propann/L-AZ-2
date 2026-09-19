@@ -33,6 +33,10 @@ extern "C" uint8_t external_psram_size;
 // Zone reservee en PSRAM pour de futurs samples -- pour l'instant juste un
 // test de detection/continuite, pas encore utilisee par un lecteur audio.
 EXTMEM uint8_t psramTestBuffer[1024];
+// Slot utilisateur persistant en PSRAM : contient le dernier WAV GB charge
+// depuis /samples. 30 s a 14 kHz mono 16 bits = ~840 Ko.
+constexpr uint32_t kGbCapturedSampleCapacity = az2::kGbAudioSampleRate * 30U;
+EXTMEM int16_t gbCapturedSampleBuffer[kGbCapturedSampleCapacity];
 
 namespace {
 
@@ -476,11 +480,97 @@ struct SamplerBankEntry {
   const int16_t *data;
   uint32_t len;
   uint8_t rootNote;
+  uint32_t sampleRate;
 };
-const SamplerBankEntry kSamplerBank[az2::kSamplerPatchCount] = {
-    {kSampleKick, kSampleKickLen, kSampleKickRoot},
-    {kSampleSnare, kSampleSnareLen, kSampleSnareRoot},
+SamplerBankEntry kSamplerBank[az2::kSamplerPatchCount] = {
+    {kSampleKick, kSampleKickLen, kSampleKickRoot, 44100},
+    {kSampleSnare, kSampleSnareLen, kSampleSnareRoot, 44100},
+    {nullptr, 0, 60, az2::kGbAudioSampleRate},
 };
+
+uint16_t wavLe16(const uint8_t *p) {
+  return static_cast<uint16_t>(p[0]) | (static_cast<uint16_t>(p[1]) << 8);
+}
+uint32_t wavLe32(const uint8_t *p) {
+  return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
+         (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
+}
+
+bool loadCapturedWavIntoSampler(const char *path) {
+  if (external_psram_size == 0) {
+    Serial.println("SAMPLER:GB_CAPTURE:NO_PSRAM");
+    Serial1.println("SAMPLER:GB_CAPTURE:NO_PSRAM");
+    return false;
+  }
+  File f = SD.open(path);
+  if (!f) {
+    Serial.println("SAMPLER:GB_CAPTURE:OPEN_ERROR");
+    return false;
+  }
+  uint8_t h[44];
+  if (f.read(h, sizeof(h)) != sizeof(h) ||
+      memcmp(h, "RIFF", 4) != 0 || memcmp(h + 8, "WAVE", 4) != 0 ||
+      memcmp(h + 12, "fmt ", 4) != 0 || memcmp(h + 36, "data", 4) != 0 ||
+      wavLe16(h + 20) != 1 || wavLe16(h + 22) != 1 || wavLe16(h + 34) != 16) {
+    f.close();
+    Serial.println("SAMPLER:GB_CAPTURE:WAV_UNSUPPORTED");
+    return false;
+  }
+  const uint32_t sampleRate = wavLe32(h + 24);
+  const uint32_t dataBytes = wavLe32(h + 40);
+  const uint32_t sampleCount = dataBytes / sizeof(int16_t);
+  if (sampleRate < 8000 || sampleRate > 48000 || (dataBytes & 1U) != 0 ||
+      sampleCount < 2 || sampleCount > kGbCapturedSampleCapacity ||
+      f.size() < 44ULL + dataBytes) {
+    f.close();
+    Serial.println("SAMPLER:GB_CAPTURE:WAV_SIZE_ERROR");
+    return false;
+  }
+
+  uint8_t *dst = reinterpret_cast<uint8_t *>(gbCapturedSampleBuffer);
+  size_t remaining = dataBytes;
+  size_t offset = 0;
+  while (remaining > 0) {
+    const size_t chunk = remaining > 4096 ? 4096 : remaining;
+    const size_t got = f.read(dst + offset, chunk);
+    if (got != chunk) {
+      f.close();
+      Serial.println("SAMPLER:GB_CAPTURE:READ_ERROR");
+      return false;
+    }
+    offset += got;
+    remaining -= got;
+  }
+  f.close();
+
+  SamplerBankEntry &entry = kSamplerBank[az2::kSamplerGbCapturePatch];
+  entry.data = gbCapturedSampleBuffer;
+  entry.len = sampleCount;
+  entry.rootNote = 60;
+  entry.sampleRate = sampleRate;
+  Serial.print("SAMPLER:GB_CAPTURE:READY:path=");
+  Serial.print(path);
+  Serial.print(":samples=");
+  Serial.print(sampleCount);
+  Serial.print(":rate=");
+  Serial.println(sampleRate);
+  Serial1.print("SAMPLER:GB_CAPTURE:READY:path=");
+  Serial1.print(path);
+  Serial1.print(":samples=");
+  Serial1.print(sampleCount);
+  Serial1.print(":rate=");
+  Serial1.println(sampleRate);
+  return true;
+}
+
+bool loadLatestCapturedSample() {
+  for (int n = 999; n >= 1; --n) {
+    char path[24];
+    snprintf(path, sizeof(path), "/samples/SAMPLE_%03d.wav", n);
+    if (SD.exists(path)) return loadCapturedWavIntoSampler(path);
+  }
+  return false;
+}
 
 void applyTrackPatch(uint8_t track) {
   const uint8_t patch = trackPatch[track];
@@ -502,8 +592,17 @@ void applyTrackPatch(uint8_t track) {
       break;
     case az2::kEngineSampler: {
       const SamplerBankEntry &entry = kSamplerBank[patch % az2::kSamplerPatchCount];
-      trackSamplerEngine[track].setSample(entry.data, entry.len, entry.rootNote);
+      trackSamplerEngine[track].setSample(entry.data, entry.len, entry.rootNote, entry.sampleRate);
       break;
+    }
+  }
+}
+
+void refreshGbCaptureSamplerTracks() {
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    if (trackEngine[t] == az2::kEngineSampler &&
+        trackPatch[t] == az2::kSamplerGbCapturePatch) {
+      applyTrackPatch(t);
     }
   }
 }
@@ -2698,6 +2797,7 @@ bool gbRecording = false;
 File gbRecFile;
 uint32_t gbRecSampleCount = 0;
 bool gbRecWriteError = false;
+String gbRecPath;
 int16_t gbRecBuf[512];
 size_t gbRecBufLen = 0;
 // Garde-fou phase 1 -- arrete tout seul plutot que de remplir la carte
@@ -2814,6 +2914,7 @@ void gbRecStart() {
   gbRecSampleCount = 0;
   gbRecBufLen = 0;
   gbRecWriteError = false;
+  gbRecPath = path;
   gbRecording = true;
   Serial.print("REC:STARTED:");
   Serial.println(path);
@@ -2834,10 +2935,22 @@ void gbRecStop() {
     Serial1.println("REC:ERROR:WAV_INCOMPLETE");
     return; // conserver le fichier pour diagnostic, jamais signaler un succes
   }
+  const bool samplerReady = gbRecPath.length() > 0 &&
+      loadCapturedWavIntoSampler(gbRecPath.c_str());
+  if (samplerReady) refreshGbCaptureSamplerTracks();
+
   Serial.print("REC:STOPPED:samples=");
-  Serial.println(gbRecSampleCount);
+  Serial.print(gbRecSampleCount);
+  Serial.print(":path=");
+  Serial.print(gbRecPath);
+  Serial.print(":sampler_patch=");
+  Serial.println(samplerReady ? az2::kSamplerGbCapturePatch : 255);
   Serial1.print("REC:STOPPED:samples=");
-  Serial1.println(gbRecSampleCount);
+  Serial1.print(gbRecSampleCount);
+  Serial1.print(":path=");
+  Serial1.print(gbRecPath);
+  Serial1.print(":sampler_patch=");
+  Serial1.println(samplerReady ? az2::kSamplerGbCapturePatch : 255);
 }
 
 void handleRecCommand(const String &line) {
@@ -3353,6 +3466,7 @@ void setup() {
   setupSampleSd();
 
   checkPsram();
+  loadLatestCapturedSample();  // restaure automatiquement le dernier GB Capture depuis la SD
   checkHeap();  // 2026-09-18 -- piste sur le souffle DEXED, voir le commentaire de checkHeap()
 
   delay(300);
