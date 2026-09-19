@@ -4,6 +4,8 @@
 
 # AZ-2 · Build a song. Play a world.
 
+**🌐 Documentation : [Français](docs/i18n/README.fr.md) · [English](docs/i18n/README.en.md) · [Español](docs/i18n/README.es.md)**
+
 **Une groovebox DIY à deux cerveaux : tracker 8 pistes, six moteurs audio et Game Boy / Game Boy Color intégrée.**
 
 [![CI](https://github.com/propann/L-AZ-2/actions/workflows/ci.yml/badge.svg)](https://github.com/propann/L-AZ-2/actions/workflows/ci.yml)
@@ -78,8 +80,9 @@ Le matériel Teensy et l'écran ESP32 disposent de configurations de compilation
 | Audio V2 séquencé + CRC + L/R PCM8 stéréo | Intégré derrière un pilote désactivé ; sortie Teensy encore downmixée sur le bus mono actuel |
 | Sauvegarde SRAM périodique, SAVE NOW sur D, `.sav/.bak` et RTC MBC3 séparé | Intégré ; qualification coupure/RTC sur matériel encore nécessaire |
 | Audio GB vers Teensy | Intégré, actuellement **mono 8 bits / 14 kHz** |
-| Audio stéréo haute fidélité, APU horodatée, protocole V2 | **Non livré** |
-| Synchronisation LSDJ, capture → banque de samples utilisateur | **Non livré** |
+| Audio haute fidélité, APU horodatée et sortie DAC réellement stéréo | **Non livré** ; le transport V2 stéréo est présent mais désactivé par défaut |
+| Capture GB → patch SAMPLER / GB Capture | **Intégré** (un slot dynamique PSRAM) ; qualification matérielle et bibliothèque multi-captures restantes |
+| Synchronisation musicale LSDJ ↔ tracker | **Non livré** |
 
 Pour le chantier en cours : [roadmap Game Boy / LSDJ détaillée](docs/AZ2_GB_ROADMAP_IMPLEMENTATION.md). Pour les limites de compatibilité : [audit émulation](docs/AZ2_AUDIT_EMULATION_LSDJ_TETRIS_MARIO.md). Pour comprendre pourquoi Walnut-CGB a été retenu : [étude des cœurs](docs/AZ2_ETUDE_COEURS_EMULATION_GB.md).
 
@@ -97,11 +100,13 @@ Les cases d'implémentation et les tests d'acceptation figurent dans la [roadmap
 
 | Commencer par… | Pour… |
 | :-- | :-- |
+| [Guide en français](docs/i18n/README.fr.md) · [English guide](docs/i18n/README.en.md) · [Guía en español](docs/i18n/README.es.md) | Découvrir le projet, compiler les deux firmwares, comprendre les fonctions livrées et leurs limites |
 | [Manuel d'utilisation](docs/AZ2_MANUEL_UTILISATEUR.md) | Jouer avec la machine : pages, contrôles, sauvegarde, premier beat |
 | [Premier démarrage](docs/AZ2_DEMARRAGE.md) | Préparer les deux cartes, les SD et les compilations |
 | [Architecture double firmware](docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md) | Comprendre les responsabilités de chaque cerveau |
 | [Câblage maître](docs/AZ2_CABLAGE_MASTER.md) | Relier commandes, Teensy, écran et DAC |
 | [État des lieux](docs/AZ2_ETAT_DES_LIEUX.md) | Séparer observations matérielles et code théorique |
+| [Travail livré / journal trilingue](docs/i18n/README.fr.md#travail-réalisé-et-traçabilité--19-septembre-2026) | RTC MBC3, transport V2 stéréo, capture → sampleur et preuve CI |
 | [Roadmap Game Boy](docs/AZ2_GB_ROADMAP_IMPLEMENTATION.md) | Suivre les étapes de stabilisation et LSDJ |
 | [Validation GB/LSDJ](docs/AZ2_GB_VALIDATION.md) | Tester cadence, sauvegardes, jeux et capture sur le prototype |
 | [Roadmap générale](docs/AZ2_FEUILLE_DE_ROUTE.md) | Tracker, moteurs, interface et produit |
