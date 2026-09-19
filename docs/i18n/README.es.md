@@ -59,3 +59,11 @@ Validar guardados y RTC frente a cortes eléctricos, medir FPS/audio reales en e
 ## Contribuciones y licencias
 
 Un informe de error útil incluye el SHA del commit, la placa, pasos de reproducción, registros y ROMs de prueba de distribución libre. No publiques ROMs comerciales, partidas personales ni secretos. Consulta [CONTRIBUTING.md](../../CONTRIBUTING.md), [LICENSE](../../LICENSE) y [licencias de terceros (francés)](../AZ2_LICENCES.md).
+
+## Salvapantallas — estilos y controles
+
+En **CONFIGURATION**, elige **Matrix** (caracteres clásicos), **Lluvia de notas** (notas de los pasos del patrón actual), **8 pistas** (una columna por pista del tracker) o **Dashboard** (BPM, patrón, paso, estado PLAY/STOP, motores y notas de las ocho pistas). Los eventos proceden del estado del tracker que ya conserva el ESP32, sin añadir tráfico UART a la animación.
+
+**Cruceta:** ARRIBA/ABAJO selecciona la fila; IZQUIERDA/DERECHA cambia el estilo, el tiempo de espera, la escala o el swing. **A:** confirma pasando al siguiente valor. **Pantalla táctil:** toca las flechas de la misma fila para realizar la misma operación. Un botón despierta la pantalla. El estilo y el tiempo de espera se guardan en la memoria NVS del ESP32; un tiempo de cero desactiva el salvapantallas.
+
+El salvapantallas no detiene el tracker ni el audio. Queda pendiente comprobar en la pantalla real la fluidez, la legibilidad y la ausencia de interferencias con Game Boy.
