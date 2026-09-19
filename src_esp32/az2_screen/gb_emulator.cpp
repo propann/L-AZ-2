@@ -600,6 +600,9 @@ namespace {
 // AZ2_Protocol.h, kGbAudioPacketMagic) pour tenir dans le budget serie.
 int16_t gbAudioStereoBuf[AUDIO_SAMPLES_TOTAL];
 uint8_t gbAudioMonoBuf[AUDIO_SAMPLES];
+uint8_t gbAudioStereo8Buf[AUDIO_SAMPLES * 2];
+static_assert(AUDIO_SAMPLES * 2 <= az2::kGbAudioV2MaxPayload,
+              "GB: V2 stereo payload exceeds shared protocol capacity");
 bool gbAudioV2Ready = false;
 uint16_t gbAudioV2Sequence = 0;
 az2::GbAudioV2Frame gbAudioV2Tx;
@@ -627,15 +630,19 @@ void sendGbAudioPacket() {
     // 16 bits signe -> 8 bits non signe (PCM8 standard, offset binaire
     // +128 -- meme convention que la plupart des lecteurs WAV 8 bits).
     gbAudioMonoBuf[i] = static_cast<uint8_t>((mono >> 8) + 128);
+    gbAudioStereo8Buf[i * 2] =
+        static_cast<uint8_t>((gbAudioStereoBuf[i * 2] >> 8) + 128);
+    gbAudioStereo8Buf[i * 2 + 1] =
+        static_cast<uint8_t>((gbAudioStereoBuf[i * 2 + 1] >> 8) + 128);
   }
 
   if (az2::kGbAudioV2PilotEnabled && gbAudioV2Ready) {
     gbAudioV2Tx.sequence = gbAudioV2Sequence++;
     gbAudioV2Tx.sampleRate = az2::kGbAudioSampleRate;
     gbAudioV2Tx.format = az2::kGbAudioV2FormatPcmU8;
-    gbAudioV2Tx.flags = 0;  // first pilot: existing mono 14 kHz path
-    gbAudioV2Tx.payloadLen = AUDIO_SAMPLES;
-    memcpy(gbAudioV2Tx.payload, gbAudioMonoBuf, AUDIO_SAMPLES);
+    gbAudioV2Tx.flags = az2::kGbAudioV2FlagStereo;
+    gbAudioV2Tx.payloadLen = static_cast<uint16_t>(AUDIO_SAMPLES * 2);
+    memcpy(gbAudioV2Tx.payload, gbAudioStereo8Buf, AUDIO_SAMPLES * 2);
     const size_t packetBytes = az2::encodeGbAudioV2(
         gbAudioV2Wire, sizeof(gbAudioV2Wire), gbAudioV2Tx);
     if (packetBytes != 0) {
