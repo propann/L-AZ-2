@@ -568,8 +568,9 @@ constexpr const char *kAnalogPatchNames[kAnalogPatchCount] = {
 // sans que cette table grandisse necessairement au meme rythme (un
 // index au-dela de kSamplerPatchCount reste gere -- voir
 // applyTrackPatch() cote Teensy).
-constexpr uint8_t kSamplerPatchCount = 2;
-constexpr const char *kSamplerPatchNames[kSamplerPatchCount] = {"Kick", "Snare"};
+constexpr uint8_t kSamplerPatchCount = 3;
+constexpr uint8_t kSamplerGbCapturePatch = 2;
+constexpr const char *kSamplerPatchNames[kSamplerPatchCount] = {"Kick", "Snare", "GB Capture"};
 
 // uint16_t (pas uint8_t) depuis le passage de DEXED a 256 patches
 // (2026-09-18, voir kDexedPatchCount plus haut) -- un uint8_t aurait
