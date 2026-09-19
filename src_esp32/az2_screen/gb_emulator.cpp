@@ -57,6 +57,7 @@ extern "C" {
 #include <esp_heap_caps.h>
 #include <cstring>
 #include <cctype>
+#include <ctime>
 
 namespace {
 
@@ -70,6 +71,16 @@ uint32_t cartRamSize = 0;
 bool cartRamDirty = false;
 // La copie .bak est l'unique sauvegarde valide apres recuperation.
 bool cartRamRecoveredFromBackup = false;
+
+// RTC MBC3 (cartouches 0x0F/0x10) : etat separe de la SRAM. Walnut-CGB
+// fait avancer le RTC pendant l'emulation ; AZ-2 persiste les 5 registres
+// et, si l'horloge systeme ESP32 est valide, rattrape aussi le temps
+// ecoule machine eteinte.
+bool cartHasRtc = false;
+bool rtcRecoveredFromBackup = false;
+uint8_t rtcLastSaved[5] = {0};
+char rtcPath[96] = {0};
+
 // Sauvegarde periodique (2026-09-19, voir gbRunFrame()) -- remis a
 // zero a chaque chargement de ROM (voir gbLoadRom()) pour que le
 // premier autosave d'une nouvelle partie tombe bien kGbAutosaveIntervalMs
@@ -94,6 +105,8 @@ constexpr size_t kSavePathCapacity = 96;
 static_assert(kGbRomNameLen + sizeof("/games/") <= kSavePathCapacity,
               "GB: ROM filename capacity exceeds save path capacity");
 char saveRamPath[kSavePathCapacity] = {0};
+static_assert(sizeof(rtcPath) == kSavePathCapacity,
+              "GB: RTC/save path capacities must match");
 
 uint8_t romRead(struct gb_s *, const uint_fast32_t addr) {
   return (addr < romSize) ? romData[addr] : 0xFF;
@@ -298,6 +311,182 @@ bool gbSaveCartRam() {
   return false;
 }
 
+
+constexpr size_t kRtcRecordBytes = 22;
+constexpr uint8_t kRtcRecordVersion = 1;
+constexpr int64_t kUnixTimeFloor = 1577836800LL;  // 2020-01-01
+
+int64_t validUnixTimeNow() {
+  const time_t now = time(nullptr);
+  return static_cast<int64_t>(now) >= kUnixTimeFloor ? static_cast<int64_t>(now) : 0;
+}
+
+void writeLe64(uint8_t *dst, uint64_t value) {
+  for (uint8_t i = 0; i < 8; ++i) dst[i] = static_cast<uint8_t>(value >> (8 * i));
+}
+
+uint64_t readLe64(const uint8_t *src) {
+  uint64_t value = 0;
+  for (uint8_t i = 0; i < 8; ++i) value |= static_cast<uint64_t>(src[i]) << (8 * i);
+  return value;
+}
+
+void advanceRtcBySeconds(uint64_t elapsed) {
+  if (!cartHasRtc || elapsed == 0 || (gb.rtc_real.reg.high & 0x40)) return; // halted
+  const uint16_t day = static_cast<uint16_t>(gb.rtc_real.reg.yday) |
+                       (static_cast<uint16_t>(gb.rtc_real.reg.high & 0x01) << 8);
+  uint64_t total = static_cast<uint64_t>(gb.rtc_real.reg.sec) +
+                   static_cast<uint64_t>(gb.rtc_real.reg.min) * 60ULL +
+                   static_cast<uint64_t>(gb.rtc_real.reg.hour) * 3600ULL +
+                   static_cast<uint64_t>(day) * 86400ULL + elapsed;
+  const uint64_t daysTotal = total / 86400ULL;
+  const uint32_t secOfDay = static_cast<uint32_t>(total % 86400ULL);
+  const uint16_t newDay = static_cast<uint16_t>(daysTotal & 0x1FFULL);
+  const bool overflow = daysTotal > 0x1FFULL;
+
+  gb.rtc_real.reg.hour = static_cast<uint8_t>(secOfDay / 3600U);
+  gb.rtc_real.reg.min = static_cast<uint8_t>((secOfDay % 3600U) / 60U);
+  gb.rtc_real.reg.sec = static_cast<uint8_t>(secOfDay % 60U);
+  gb.rtc_real.reg.yday = static_cast<uint8_t>(newDay & 0xFFU);
+  uint8_t high = static_cast<uint8_t>(gb.rtc_real.reg.high & 0xC0U); // halt/carry
+  high = static_cast<uint8_t>(high | ((newDay >> 8) & 0x01U));
+  if (overflow) high |= 0x80U;
+  gb.rtc_real.reg.high = high;
+  memcpy(gb.rtc_latched.bytes, gb.rtc_real.bytes, sizeof(gb.rtc_real.bytes));
+}
+
+bool encodeRtcRecord(uint8_t out[kRtcRecordBytes]) {
+  if (!cartHasRtc) return false;
+  memset(out, 0, kRtcRecordBytes);
+  out[0] = 'A'; out[1] = 'Z'; out[2] = 'R'; out[3] = 'T';
+  out[4] = kRtcRecordVersion;
+  memcpy(out + 5, gb.rtc_real.bytes, 5);
+  const int64_t unixNow = validUnixTimeNow();
+  writeLe64(out + 10, unixNow > 0 ? static_cast<uint64_t>(unixNow) : 0ULL);
+  const uint32_t crc = crc32Buffer(out, 18);
+  out[18] = static_cast<uint8_t>(crc);
+  out[19] = static_cast<uint8_t>(crc >> 8);
+  out[20] = static_cast<uint8_t>(crc >> 16);
+  out[21] = static_cast<uint8_t>(crc >> 24);
+  return true;
+}
+
+bool decodeRtcRecord(const uint8_t in[kRtcRecordBytes], uint8_t rtcBytes[5], uint64_t &savedUnix) {
+  if (in[0] != 'A' || in[1] != 'Z' || in[2] != 'R' || in[3] != 'T' ||
+      in[4] != kRtcRecordVersion) return false;
+  const uint32_t expected = static_cast<uint32_t>(in[18]) |
+      (static_cast<uint32_t>(in[19]) << 8) |
+      (static_cast<uint32_t>(in[20]) << 16) |
+      (static_cast<uint32_t>(in[21]) << 24);
+  if (crc32Buffer(in, 18) != expected) return false;
+  memcpy(rtcBytes, in + 5, 5);
+  // Defensive masks matching Walnut-CGB's register write masks.
+  rtcBytes[0] &= 0x3F; rtcBytes[1] &= 0x3F; rtcBytes[2] &= 0x1F;
+  rtcBytes[4] &= 0xC1;
+  savedUnix = readLe64(in + 10);
+  return true;
+}
+
+bool readRtcFile(const char *path, uint8_t rtcBytes[5], uint64_t &savedUnix) {
+  if (!SD.exists(path)) return false;
+  File f = SD.open(path);
+  if (!f || f.size() != kRtcRecordBytes) {
+    if (f) f.close();
+    return false;
+  }
+  uint8_t record[kRtcRecordBytes];
+  const size_t got = f.read(record, sizeof(record));
+  f.close();
+  return got == sizeof(record) && decodeRtcRecord(record, rtcBytes, savedUnix);
+}
+
+bool atomicSaveRtcRaw(const uint8_t *record) {
+  char tmpPath[kSavePathCapacity + 5];
+  char bakPath[kSavePathCapacity + 5];
+  if (snprintf(tmpPath, sizeof(tmpPath), "%s.tmp", rtcPath) < 0 ||
+      snprintf(bakPath, sizeof(bakPath), "%s.bak", rtcPath) < 0) return false;
+  if (SD.exists(tmpPath) && !SD.remove(tmpPath)) return false;
+  File f = SD.open(tmpPath, FILE_WRITE);
+  if (!f) return false;
+  const size_t written = f.write(record, kRtcRecordBytes);
+  f.close();
+  if (written != kRtcRecordBytes || !verifyFileMatchesBuffer(tmpPath, record, kRtcRecordBytes)) {
+    SD.remove(tmpPath);
+    return false;
+  }
+
+  const bool hadPrimary = SD.exists(rtcPath);
+  if (rtcRecoveredFromBackup) {
+    if (hadPrimary && !SD.remove(rtcPath)) { SD.remove(tmpPath); return false; }
+    if (!SD.rename(tmpPath, rtcPath)) { SD.remove(tmpPath); return false; }
+    return true; // keep valid .bak until next normal rotation
+  }
+  if (hadPrimary) {
+    if (SD.exists(bakPath) && !SD.remove(bakPath)) { SD.remove(tmpPath); return false; }
+    if (!SD.rename(rtcPath, bakPath)) { SD.remove(tmpPath); return false; }
+  }
+  if (!SD.rename(tmpPath, rtcPath)) {
+    if (hadPrimary) SD.rename(bakPath, rtcPath);
+    SD.remove(tmpPath);
+    return false;
+  }
+  return true;
+}
+
+bool gbSaveRtc() {
+  if (!cartHasRtc || rtcPath[0] == '\0') return true;
+  if (!rtcRecoveredFromBackup && memcmp(rtcLastSaved, gb.rtc_real.bytes, 5) == 0) return true;
+  uint8_t record[kRtcRecordBytes];
+  if (!encodeRtcRecord(record) || !atomicSaveRtcRaw(record)) {
+    Serial.println("GB:RTC_SAVE_ERROR");
+    return false;
+  }
+  memcpy(rtcLastSaved, gb.rtc_real.bytes, 5);
+  rtcRecoveredFromBackup = false;
+  Serial.print("GB:RTC_SAVED:");
+  Serial.println(rtcPath);
+  return true;
+}
+
+bool gbLoadRtcIfPresent() {
+  if (!cartHasRtc || rtcPath[0] == '\0') return true;
+  const bool primaryExists = SD.exists(rtcPath);
+  uint8_t rtcBytes[5];
+  uint64_t savedUnix = 0;
+  bool loaded = readRtcFile(rtcPath, rtcBytes, savedUnix);
+
+  char bakPath[kSavePathCapacity + 5];
+  const int bakLen = snprintf(bakPath, sizeof(bakPath), "%s.bak", rtcPath);
+  const bool bakValid = bakLen >= 0 && static_cast<size_t>(bakLen) < sizeof(bakPath);
+  const bool backupExists = bakValid && SD.exists(bakPath);
+  if (!loaded && backupExists) {
+    loaded = readRtcFile(bakPath, rtcBytes, savedUnix);
+    if (loaded) {
+      rtcRecoveredFromBackup = true;
+      Serial.println("GB:RTC_RECOVERED_FROM_BACKUP");
+    }
+  }
+  if (!loaded) {
+    if (primaryExists || backupExists || !bakValid) {
+      Serial.println("GB:RTC_EXISTING_FILES_INVALID");
+      return false;
+    }
+    memset(rtcLastSaved, 0, sizeof(rtcLastSaved));
+    return true;
+  }
+
+  memcpy(gb.rtc_real.bytes, rtcBytes, 5);
+  memcpy(gb.rtc_latched.bytes, rtcBytes, 5);
+  const int64_t now = validUnixTimeNow();
+  if (savedUnix >= static_cast<uint64_t>(kUnixTimeFloor) && now > static_cast<int64_t>(savedUnix)) {
+    advanceRtcBySeconds(static_cast<uint64_t>(now) - savedUnix);
+  }
+  memcpy(rtcLastSaved, gb.rtc_real.bytes, 5);
+  Serial.print("GB:RTC_LOADED:");
+  Serial.println(rtcPath);
+  return true;
+}
+
 bool gbLoadCartRamFile(const char *path) {
   if (!SD.exists(path)) {
     return false;
@@ -467,12 +656,16 @@ bool gbIsLoaded() {
 }
 
 bool gbUnload() {
-  // Ne jamais liberer une cartouche dont les modifications n'ont pas
-  // pu etre sauvegardees. Le joueur peut reessayer apres avoir retabli
-  // la carte SD, plutot que perdre silencieusement son morceau LSDJ.
-  if (romLoaded && !gbSaveCartRam()) {
-    Serial.println("GB:UNLOAD_BLOCKED_UNSAVED_RAM");
-    return false;
+  // SRAM et RTC sont deux donnees persistantes independantes. On tente
+  // les deux avant de liberer quoi que ce soit ; un seul echec bloque
+  // la sortie pour permettre un nouvel essai sans perdre l'etat.
+  if (romLoaded) {
+    const bool ramOk = gbSaveCartRam();
+    const bool rtcOk = gbSaveRtc();
+    if (!ramOk || !rtcOk) {
+      Serial.println("GB:UNLOAD_BLOCKED_UNSAVED_STATE");
+      return false;
+    }
   }
   if (romData != nullptr) {
     heap_caps_free(romData);
@@ -485,8 +678,12 @@ bool gbUnload() {
   romLoaded = false;
   romTitle[0] = '\0';
   saveRamPath[0] = '\0';
+  rtcPath[0] = '\0';
   cartRamDirty = false;
   cartRamRecoveredFromBackup = false;
+  cartHasRtc = false;
+  rtcRecoveredFromBackup = false;
+  memset(rtcLastSaved, 0, sizeof(rtcLastSaved));
   runtimeStats = GbRuntimeStats{};
   statsWindowStartUs = 0;
   statsWorkAccumUs = 0;
@@ -497,7 +694,9 @@ bool gbUnload() {
 
 bool gbSaveNow() {
   if (!romLoaded) return true;
-  return gbSaveCartRam();
+  const bool ramOk = gbSaveCartRam();
+  const bool rtcOk = gbSaveRtc();
+  return ramOk && rtcOk;
 }
 
 void gbSetAudioV2Ready(bool ready) {
@@ -650,6 +849,27 @@ bool gbLoadRom(const char *filename) {
   cartRamSize = static_cast<uint32_t>(detectedSaveSize);
   cartRamDirty = false;
   cartRamRecoveredFromBackup = false;
+
+  const uint8_t cartridgeType = romData[0x147];
+  cartHasRtc = (cartridgeType == 0x0F || cartridgeType == 0x10);
+  rtcRecoveredFromBackup = false;
+  rtcPath[0] = '\0';
+  memset(rtcLastSaved, 0, sizeof(rtcLastSaved));
+  if (cartHasRtc) {
+    const int rtcPathLen = snprintf(rtcPath, sizeof(rtcPath), "/games/%s", filename);
+    if (rtcPathLen < 0 || static_cast<size_t>(rtcPathLen) >= sizeof(rtcPath)) {
+      Serial.println("GB:RTC_PATH_TOO_LONG");
+      gbUnload();
+      return false;
+    }
+    char *rtcDot = strrchr(rtcPath, '.');
+    if (rtcDot == nullptr || static_cast<size_t>(rtcDot - rtcPath) + sizeof(".rtc") > sizeof(rtcPath)) {
+      Serial.println("GB:RTC_PATH_INVALID");
+      gbUnload();
+      return false;
+    }
+    strcpy(rtcDot, ".rtc");
+  }
   gbLastAutosaveMs = millis();  // reparti a zero pour cette partie, voir gbRunFrame()
   runtimeStats = GbRuntimeStats{};
   statsWindowStartUs = micros();
@@ -682,6 +902,11 @@ bool gbLoadRom(const char *filename) {
       gbUnload();
       return false;
     }
+  }
+
+  if (cartHasRtc && !gbLoadRtcIfPresent()) {
+    gbUnload();
+    return false;
   }
 
   gb_init_lcd(&gb, lcdDrawLine);
@@ -750,7 +975,9 @@ void gbRunFrame() {
   const uint32_t now = millis();
   if (now - gbLastAutosaveMs >= kGbAutosaveIntervalMs) {
     gbLastAutosaveMs = now;
-    if (!gbSaveCartRam()) {
+    const bool ramOk = gbSaveCartRam();
+    const bool rtcOk = gbSaveRtc();
+    if (!ramOk || !rtcOk) {
       ++runtimeStats.autosaveFailures;
     }
   }
