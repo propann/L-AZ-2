@@ -15,9 +15,12 @@ Ce document distingue **code intégré**, **à implémenter**, et **à valider s
 - [ ] Valider sur ESP32-S3 la compilation, puis une série de sauvegardes/restaurations, avec coupures simulées à chaque transition .sav/.tmp/.bak.
 - [x] Ne plus libérer une cartouche modifiée si son enregistrement échoue : gbUnload() retourne false, le changement de page et de ROM est bloqué, message SD SAVE ERROR et nouvel essai possible par C. À qualifier matériel.
 - [ ] Remplacer la rotation à deux noms .sav/.bak par un journal de génération vérifié (taille + CRC/version), récupération du fichier le plus récent valide ; éviter la perte de l'ancien backup avant confirmation de la nouvelle version.
-- [ ] Corriger les chemins des noms de ROM affichés tronqués (40 caractères) : stocker un identifiant/chemin non tronqué, afficher seulement un libellé raccourci, gérer pagination et homonymes.
-- [ ] Charger et valider une nouvelle ROM sans interrompre le jeu courant en cas d'ouverture/lecture/allocation échouée (staging et séparation état candidat/état actif).
+- [x] Ne plus tronquer silencieusement les noms du navigateur : les noms complets jusqu'à 87 octets sont conservés, les noms trop longs sont ignorés avec diagnostic. [ ] Ajouter un navigateur des noms longs au-delà de cette limite et une pagination de collections de plus de 40 ROMs.
+- [ ] Charger et valider une nouvelle ROM sans interrompre le jeu courant en cas de lecture/allocation échouée : l'ouverture et la taille sont validées avant déchargement, mais la nouvelle allocation et la lecture restent postérieures au déchargement.
 - [ ] Sauvegarder et restaurer le RTC MBC3 ; ne pas confondre sauvegarde SRAM et état complet de l'émulateur.
+
+- [x] Refuser de démarrer une cartouche dont les sauvegardes existantes sont invalides (au lieu de lancer une SRAM vierge). Après récupération .bak, le premier enregistrement conserve cette copie valide.
+- [x] Empêcher la capture Game Boy d'écraser SAMPLE_999.wav quand la banque est pleine ; contrôler les écritures WAV et signaler les fichiers incomplets.
 
 ### Lot 1 — Instrumenter et qualifier la cadence (à implémenter/valider)
 
