@@ -56,6 +56,7 @@ extern "C" {
 #include <SD.h>
 #include <esp_heap_caps.h>
 #include <cstring>
+#include <cctype>
 
 namespace {
 
@@ -479,6 +480,30 @@ bool gbSaveNow() {
   return gbSaveCartRam();
 }
 
+int compareRomNamesCaseInsensitive(const char *a, const char *b) {
+  while (*a != '\0' && *b != '\0') {
+    const int ca = std::tolower(static_cast<unsigned char>(*a));
+    const int cb = std::tolower(static_cast<unsigned char>(*b));
+    if (ca != cb) return ca - cb;
+    ++a;
+    ++b;
+  }
+  return static_cast<unsigned char>(*a) - static_cast<unsigned char>(*b);
+}
+
+void sortRomNames(char names[][kGbRomNameLen], uint8_t count) {
+  char tmp[kGbRomNameLen];
+  for (uint8_t i = 1; i < count; ++i) {
+    memcpy(tmp, names[i], kGbRomNameLen);
+    uint8_t j = i;
+    while (j > 0 && compareRomNamesCaseInsensitive(names[j - 1], tmp) > 0) {
+      memcpy(names[j], names[j - 1], kGbRomNameLen);
+      --j;
+    }
+    memcpy(names[j], tmp, kGbRomNameLen);
+  }
+}
+
 uint8_t gbScanRoms(char names[][kGbRomNameLen]) {
   uint8_t count = 0;
 
@@ -517,6 +542,8 @@ uint8_t gbScanRoms(char names[][kGbRomNameLen]) {
 
   if (count == 0) {
     Serial.println("GB:NO_ROM_FOUND");
+  } else {
+    sortRomNames(names, count);
   }
   return count;
 }
