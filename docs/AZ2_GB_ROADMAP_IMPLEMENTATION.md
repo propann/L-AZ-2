@@ -15,7 +15,7 @@ Ce document distingue **code intégré**, **à implémenter**, et **à valider s
 - [ ] Valider sur ESP32-S3 la compilation, puis une série de sauvegardes/restaurations, avec coupures simulées à chaque transition .sav/.tmp/.bak.
 - [x] Ne plus libérer une cartouche modifiée si son enregistrement échoue : gbUnload() retourne false, le changement de page et de ROM est bloqué, message SD SAVE ERROR et nouvel essai possible par C. À qualifier matériel.
 - [ ] Remplacer la rotation à deux noms .sav/.bak par un journal de génération vérifié (taille + CRC/version), récupération du fichier le plus récent valide ; éviter la perte de l'ancien backup avant confirmation de la nouvelle version.
-- [x] Ne plus tronquer silencieusement les noms du navigateur : les noms complets jusqu'à 87 octets sont conservés, les noms trop longs sont ignorés avec diagnostic. [ ] Ajouter un navigateur des noms longs au-delà de cette limite et une pagination de collections de plus de 40 ROMs.
+- [x] Ne plus tronquer silencieusement les noms du navigateur : les noms complets jusqu'à 87 octets sont conservés, les noms trop longs sont ignorés avec diagnostic. [x] Navigateur porté à 100 ROMs et tri alphabétique. [ ] Ajouter si besoin un stockage dynamique pour les noms >87 octets / collections >100.
 - [x] Charger la nouvelle ROM en staging : ouverture, taille, allocation PSRAM et lecture complète sont validées avant de sauvegarder/décharger le jeu courant. L'initialisation du cœur reste postérieure au basculement et doit encore être couverte par tests de cartouches invalides.
 - [ ] Sauvegarder et restaurer le RTC MBC3 ; ne pas confondre sauvegarde SRAM et état complet de l'émulateur.
 
