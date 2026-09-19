@@ -32,6 +32,7 @@
 #include <math.h>
 #include <SPI.h>
 #include <SD.h>
+#include <Preferences.h>
 #include "gb_emulator.h"
 
 namespace {
@@ -2981,6 +2982,28 @@ uint16_t screensaverTimeoutSec = 60;
 enum class SaverStyle : uint8_t { Matrix, NoteRain, EightTracks, Dashboard, Count };
 SaverStyle screensaverStyle = SaverStyle::NoteRain;
 uint8_t configSelectedRow = 0;
+Preferences saverPreferences;
+void persistSaverSettings() {
+  if (!saverPreferences.begin("az2-saver", false)) {
+    Serial.println("SAVER:NVS_OPEN_ERROR");
+    return;
+  }
+  saverPreferences.putUChar("style", static_cast<uint8_t>(screensaverStyle));
+  saverPreferences.putUShort("timeout", screensaverTimeoutSec);
+  saverPreferences.end();
+}
+void restoreSaverSettings() {
+  if (!saverPreferences.begin("az2-saver", true)) {
+    Serial.println("SAVER:NVS_READ_ERROR");
+    return;
+  }
+  const uint8_t storedStyle = saverPreferences.getUChar("style", static_cast<uint8_t>(SaverStyle::NoteRain));
+  const uint16_t storedTimeout = saverPreferences.getUShort("timeout", 60);
+  saverPreferences.end();
+  screensaverStyle = storedStyle < static_cast<uint8_t>(SaverStyle::Count) ?
+      static_cast<SaverStyle>(storedStyle) : SaverStyle::NoteRain;
+  screensaverTimeoutSec = storedTimeout <= 600 ? storedTimeout : 60;
+}
 constexpr int16_t kSaverStyleY = 76;
 constexpr int16_t kSaverStyleH = 46;
 constexpr const char *kSaverStyleNames[] = {"MATRIX", "PLUIE DE NOTES", "8 PISTES", "DASHBOARD"};
@@ -3173,6 +3196,7 @@ void configChangeRow(int8_t delta) {
       break;
     }
   }
+  if (configSelectedRow <= 1) persistSaverSettings();
   drawConfigPage();
 }
 
@@ -5163,6 +5187,7 @@ void setup() {
   Serial.begin(230400);
   delay(300);
   Serial.println("AZ2:ROLE:ESP32_SCREEN_TEST");
+  restoreSaverSettings();
 
   // Memes valeurs par defaut que seedDefaultNotes() cote Teensy (les 8
   // patterns, pas seulement celui affiche au boot -- voir currentPattern)
@@ -5554,12 +5579,10 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       configChangeRow(x < kScreenSize / 2 ? -1 : 1);
     } else if (hitTestCfgMinus(x, y)) {
       configSelectedRow = 1;
-      screensaverTimeoutSec = screensaverTimeoutSec >= kScreensaverStepSec ? screensaverTimeoutSec - kScreensaverStepSec : 0;
-      drawConfigPage();
+      configChangeRow(-1);
     } else if (hitTestCfgPlus(x, y)) {
       configSelectedRow = 1;
-      screensaverTimeoutSec = static_cast<uint16_t>(min<uint32_t>(screensaverTimeoutSec + kScreensaverStepSec, kScreensaverMaxSec));
-      drawConfigPage();
+      configChangeRow(1);
     } else if (hitTestScaleMinus(x, y)) {
       configSelectedRow = 2;
       currentScaleIndex = static_cast<uint8_t>((currentScaleIndex + kScaleCount - 1) % kScaleCount);
