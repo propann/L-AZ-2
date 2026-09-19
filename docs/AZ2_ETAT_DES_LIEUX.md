@@ -1,5 +1,85 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-19 -- bibliotheque de samples rangee sur la SD du Teensy +
+pads jouent l'instrument de la piste + kit de batterie de depart sur
+les pads + sauvegarde des pads dans le projet -- teste sur le vrai
+materiel]**
+
+Grosse suite de demandes enchainees le meme soir, une fois la carte SD
+du Teensy branchee sur l'ordinateur avec la carte SD de l'ESP32 :
+
+- **Bibliotheque de samples rangee** : demande "on met des dossiers
+  cool ... on garde les ensembles de percussion snare kick tout ca les
+  basses les voix les synths on met de cote les boucles". Collection
+  "Azothwave KO II" (2 archives Google Drive, 2,3 Go) deja parfaitement
+  organisee EXACTEMENT selon la demande (BASS/CYMBALS/KICKS/LOOPS/PERC/
+  SFX/SNARES/SYNTHS/VOIX) -- extraite et fusionnee dans `/samples` sur
+  la SD du Teensy (14 819 fichiers, 2,5 Go). Le pack "OP-1" propose en
+  parallele s'est revele etre autre chose (plus de la moitie de ses
+  2857 fichiers = un environnement Python zippe par erreur, plus un
+  dossier FIRMWARE = des firmwares du device OP-1, pas des samples) et
+  organise par GENRE musical plutot que par instrument -- laisse de
+  cote sur decision utilisateur explicite ("les son op1 on s'en occupe
+  pas").
+- **"joue l'instrument de la piste"** : les pads (page AUDIO) jouaient
+  jusqu'ici TOUJOURS une voix Dexed fixe separee (`liveVoice`), meme
+  ouverts depuis le bouton CLAVIER du tracker. Nouveau champ optionnel
+  `track=` sur la commande `PAD:` -- quand present, le Teensy route
+  vers `trackNoteOn()/trackNoteOff()` (le VRAI moteur/patch de la
+  piste, meme chemin que le sequenceur) au lieu de `liveVoice`. Le
+  bouton CLAVIER du tracker fixe desormais `padTargetTrack =
+  selectedSeqTrack` avant d'ouvrir la page ; AUDIO ouverte depuis le
+  menu general repart sur le comportement generique (`padTargetTrack =
+  -1`, corrige au passage une petite fuite d'etat preexistante ou
+  `padEditsStep` restait colle d'une visite CLAVIER precedente). Poser
+  une note en mode "pose sur le pas" (padEditsStep) fait maintenant
+  AUSSI entendre le son en direct (avant : totalement silencieux, on
+  n'entendait jamais ce qu'on venait de programmer).
+- **Kit de batterie configure sur les pads** : nouveau sampleur DEDIE
+  aux 16 pads, INDEPENDANT des 6 moteurs normaux -- 16x
+  `AudioPlaySampler` + 16 buffers PSRAM plafonnes a 2s/48kHz (~3 Mo,
+  verifie sur les 16 Mo de PSRAM reellement detectes, `PSRAM?` sur le
+  vrai materiel). Mixage a etages (4 groupes de 4 pads -> 1 bus pads ->
+  combine avec liveVoice -> mixFinal canal 2, qui etait deja plein a
+  4/4) -- meme principe que les groupes de pistes. Nouvelle commande
+  `PADSAMPLE:<pad 0-15>:<chemin>`, priorite absolue sur un pad
+  (ignore track=/liveVoice si un echantillon y est charge -- un hit de
+  kit ne se transpose pas). 8 sons choisis dans la bibliotheque
+  fraichement rangee (kick/snare/hat ferme/hat ouvert/clap/rim/
+  cowbell/ride), charges automatiquement au boot du Teensy.
+- **2 bugs reels trouves et corriges en testant** :
+  1. Parseur WAV a en-tete fixe (44 octets, ecrit pour les captures GB
+     "propres") -- la bibliotheque Azothwave, exportee via ffmpeg/
+     libav, insere un chunk LIST/INFO entre "fmt " et "data" : tous
+     les fichiers etaient rejetes en `WAV_UNSUPPORTED` alors que
+     parfaitement valides. Corrige en parcourant les chunks RIFF un
+     par un (fmt/data dans n'importe quel ordre, chunks inconnus
+     sautes) au lieu de supposer un en-tete fixe -- partage desormais
+     entre la capture GB et les samples de pad (`readWavPcm16Mono()`).
+  2. `loadDefaultDrumKit()` (le kit de depart) place AVANT
+     `setupSampleSd()` dans `setup()` -- la carte SD du Teensy n'etait
+     pas encore initialisee, chaque `SD.exists()` echouait
+     silencieusement, aucun pad ne chargeait rien au boot. Deplace
+     apres `setupSampleSd()`.
+  3. (evite avant de flasher, pas un bug materiel) : `setSample()`
+     appele sans le sampleRate REEL du fichier (24kHz pour toute la
+     bibliotheque Azothwave, pas les 44.1kHz par defaut) -- aurait
+     fait jouer chaque hit ~1.84x trop vite/trop aigu.
+- **"pouvoir aussi les sauvegarder dans le projet global"** : nouvel
+  etat ESP32 `padSamplePath[16]`, tenu a jour par l'echo
+  `PADSAMPLE:<pad>:READY:path=...` (capture aussi bien une assignation
+  manuelle que le kit de depart charge au boot du Teensy) --
+  `saveProject()`/`loadProject()` ecrivent/relisent une ligne
+  `PADSAMPLE:<pad>:<chemin>` par pad assigne. Verifie le mecanisme
+  bout en bout (Teensy -> echo -> ESP32) via serie direct ; le
+  declenchement tactile SAUVER/CHARGER lui-meme (page PROJET, pas de
+  chemin croix equivalent) reste a confirmer au doigt.
+
+Compile propre (`screen_esp`, `master_teensy`, `native`), 14 tests
+natifs au vert. Valide sur le vrai materiel : kit de depart charge au
+boot (8x `PADSAMPLE:...READY`), CPU/memoire stables en jouant les 8
+pads d'affilee (5.9%->6.6%, pic 8.6%, blocs memoire inchanges).
+
 **[2026-09-19 -- nouveau manuel d'utilisation (docs/AZ2_MANUEL_UTILISATEUR.md)]**
 
 Demande : "il faut travailler sur la doc plus complete on a pas grand

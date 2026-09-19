@@ -276,7 +276,51 @@ AudioConnection patchFxToGroup[kTrackCount] = {
 };
 AudioConnection patchGroupA(mixTracksA, 0, mixFinal, 0);
 AudioConnection patchGroupB(mixTracksB, 0, mixFinal, 1);
-AudioConnection patchLiveIn(liveVoice, 0, mixFinal, 2);
+
+// Sampleur DEDIE aux 16 pads (2026-09-19, "faire un kit de batterie
+// deja config sur les pad ... pouvoir les sauvegarder dans le projet
+// global") -- CHAQUE pad peut avoir son PROPRE echantillon charge
+// depuis la carte SD du Teensy, independant des 6 moteurs "normaux"
+// des pistes (trackSamplerEngine[] plus haut) : un vrai kit de
+// batterie, les 16 sons prets EN MEME TEMPS -- contrairement au
+// systeme "GB Capture" plus haut qui ne garde qu'UN SEUL buffer
+// partage. 2s/48kHz max par pad (kPadSampleCapacity, le taux max
+// accepte par readWavPcm16Mono()) : 16 x 192 Ko = ~3 Mo, verifie que
+// ca tient largement dans les 16 Mo de PSRAM (confirmes via PSRAM? sur
+// le vrai materiel).
+constexpr uint32_t kPadSampleCapacity = 48000U * 2U;
+EXTMEM int16_t padSampleBuffer[az2::kPadCount][kPadSampleCapacity];
+AudioPlaySampler padSampler[az2::kPadCount];
+bool padSamplerLoaded[az2::kPadCount] = {};
+
+// Meme principe de mixage a etages que les pistes (AudioMixer4 = 4
+// entrees max) : 4 groupes de 4 pads -> 1 bus pads -> combine avec
+// liveVoice AVANT mixFinal (dont les 4 canaux sont deja tous pris,
+// voir metronome/patchMetroOut plus bas) -- remplace l'ancienne
+// connexion directe liveVoice -> mixFinal canal 2.
+AudioMixer4 mixPadsA;  // pads 0-3
+AudioMixer4 mixPadsB;  // pads 4-7
+AudioMixer4 mixPadsC;  // pads 8-11
+AudioMixer4 mixPadsD;  // pads 12-15
+AudioMixer4 mixPadsAll;      // combine les 4 groupes ci-dessus
+AudioMixer4 mixLiveAndPads;  // combine liveVoice + bus pads -> mixFinal canal 2
+AudioConnection patchPadToGroup[az2::kPadCount] = {
+    AudioConnection(padSampler[0], 0, mixPadsA, 0), AudioConnection(padSampler[1], 0, mixPadsA, 1),
+    AudioConnection(padSampler[2], 0, mixPadsA, 2), AudioConnection(padSampler[3], 0, mixPadsA, 3),
+    AudioConnection(padSampler[4], 0, mixPadsB, 0), AudioConnection(padSampler[5], 0, mixPadsB, 1),
+    AudioConnection(padSampler[6], 0, mixPadsB, 2), AudioConnection(padSampler[7], 0, mixPadsB, 3),
+    AudioConnection(padSampler[8], 0, mixPadsC, 0), AudioConnection(padSampler[9], 0, mixPadsC, 1),
+    AudioConnection(padSampler[10], 0, mixPadsC, 2), AudioConnection(padSampler[11], 0, mixPadsC, 3),
+    AudioConnection(padSampler[12], 0, mixPadsD, 0), AudioConnection(padSampler[13], 0, mixPadsD, 1),
+    AudioConnection(padSampler[14], 0, mixPadsD, 2), AudioConnection(padSampler[15], 0, mixPadsD, 3),
+};
+AudioConnection patchPadsAtoAll(mixPadsA, 0, mixPadsAll, 0);
+AudioConnection patchPadsBtoAll(mixPadsB, 0, mixPadsAll, 1);
+AudioConnection patchPadsCtoAll(mixPadsC, 0, mixPadsAll, 2);
+AudioConnection patchPadsDtoAll(mixPadsD, 0, mixPadsAll, 3);
+AudioConnection patchLiveToCombined(liveVoice, 0, mixLiveAndPads, 0);
+AudioConnection patchPadsToCombined(mixPadsAll, 0, mixLiveAndPads, 1);
+AudioConnection patchLiveIn(mixLiveAndPads, 0, mixFinal, 2);
 
 // Metronome (2026-09-19, "il faut un bouton metronome ... pour
 // activer/desactiver") -- occupe le 4e canal de mixFinal, laisse
@@ -496,52 +540,129 @@ uint32_t wavLe32(const uint8_t *p) {
          (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
 }
 
-bool loadCapturedWavIntoSampler(const char *path) {
+// Coeur PARTAGE de lecture WAV (2026-09-19, factorise en reprenant ce
+// chantier pour l'ajout des samples de pad -- meme validation/lecture
+// que la capture GB, juste une destination et une capacite
+// parametrables au lieu du buffer/de la taille fixes de
+// gbCapturedSampleBuffer). Mono 16 bits PCM uniquement (comme avant),
+// 8-48kHz. `errPrefix` prefixe les messages d'erreur ("SAMPLER:GB_CAPTURE"
+// ou "SAMPLER:PAD:<n>") pour que l'appelant reste identifiable cote
+// ESP32/journal sans dupliquer tous les Serial.print() d'erreur.
+bool readWavPcm16Mono(const char *path, int16_t *dst, uint32_t capacity, const char *errPrefix,
+                       uint32_t &sampleCountOut, uint32_t &sampleRateOut) {
   if (external_psram_size == 0) {
-    Serial.println("SAMPLER:GB_CAPTURE:NO_PSRAM");
-    Serial1.println("SAMPLER:GB_CAPTURE:NO_PSRAM");
+    Serial.print(errPrefix);
+    Serial.println(":NO_PSRAM");
+    Serial1.print(errPrefix);
+    Serial1.println(":NO_PSRAM");
     return false;
   }
   File f = SD.open(path);
   if (!f) {
-    Serial.println("SAMPLER:GB_CAPTURE:OPEN_ERROR");
+    Serial.print(errPrefix);
+    Serial.println(":OPEN_ERROR");
     return false;
   }
-  uint8_t h[44];
-  if (f.read(h, sizeof(h)) != sizeof(h) ||
-      memcmp(h, "RIFF", 4) != 0 || memcmp(h + 8, "WAVE", 4) != 0 ||
-      memcmp(h + 12, "fmt ", 4) != 0 || memcmp(h + 36, "data", 4) != 0 ||
-      wavLe16(h + 20) != 1 || wavLe16(h + 22) != 1 || wavLe16(h + 34) != 16) {
+  uint8_t riffHeader[12];
+  if (f.read(riffHeader, sizeof(riffHeader)) != sizeof(riffHeader) || memcmp(riffHeader, "RIFF", 4) != 0 ||
+      memcmp(riffHeader + 8, "WAVE", 4) != 0) {
     f.close();
-    Serial.println("SAMPLER:GB_CAPTURE:WAV_UNSUPPORTED");
-    return false;
-  }
-  const uint32_t sampleRate = wavLe32(h + 24);
-  const uint32_t dataBytes = wavLe32(h + 40);
-  const uint32_t sampleCount = dataBytes / sizeof(int16_t);
-  if (sampleRate < 8000 || sampleRate > 48000 || (dataBytes & 1U) != 0 ||
-      sampleCount < 2 || sampleCount > kGbCapturedSampleCapacity ||
-      f.size() < 44ULL + dataBytes) {
-    f.close();
-    Serial.println("SAMPLER:GB_CAPTURE:WAV_SIZE_ERROR");
+    Serial.print(errPrefix);
+    Serial.println(":WAV_UNSUPPORTED");
     return false;
   }
 
-  uint8_t *dst = reinterpret_cast<uint8_t *>(gbCapturedSampleBuffer);
+  // Parcourt les "chunks" RIFF un par un plutot que de supposer un
+  // en-tete fixe de 44 octets (bug reel trouve le 2026-09-19 en
+  // chargeant la bibliotheque Azothwave fraichement rangee : ses WAV,
+  // exportes via ffmpeg/libav, inserent un chunk LIST/INFO entre "fmt "
+  // et "data" -- l'ancien parseur a offsets fixes (ecrit pour les
+  // captures GB "propres", sans chunk superflu) prenait ces fichiers
+  // pourtant parfaitement valides pour WAV_UNSUPPORTED). "fmt " et
+  // "data" peuvent apparaitre dans n'importe quel ordre/position tant
+  // que "fmt " precede "data" -- tout chunk INCONNU est simplement
+  // saute (taille alignee sur un nombre pair d'octets, convention RIFF
+  // standard).
+  bool haveFmt = false;
+  uint16_t formatTag = 0, channels = 0, bitsPerSample = 0;
+  uint32_t sampleRate = 0;
+  uint32_t dataBytes = 0;
+  bool haveData = false;
+  while (!haveData) {
+    uint8_t chunkHeader[8];
+    if (f.read(chunkHeader, sizeof(chunkHeader)) != sizeof(chunkHeader)) {
+      break;  // fin de fichier sans avoir trouve "data"
+    }
+    const uint32_t chunkSize = wavLe32(chunkHeader + 4);
+    if (memcmp(chunkHeader, "fmt ", 4) == 0) {
+      uint8_t fmtBuf[16];
+      if (chunkSize < 16 || f.read(fmtBuf, sizeof(fmtBuf)) != sizeof(fmtBuf)) {
+        f.close();
+        Serial.print(errPrefix);
+        Serial.println(":WAV_UNSUPPORTED");
+        return false;
+      }
+      formatTag = wavLe16(fmtBuf);
+      channels = wavLe16(fmtBuf + 2);
+      sampleRate = wavLe32(fmtBuf + 4);
+      bitsPerSample = wavLe16(fmtBuf + 14);
+      haveFmt = true;
+      const uint32_t leftover = chunkSize - 16;  // ex. WAVE_FORMAT_EXTENSIBLE (cbSize+...)
+      if (leftover > 0) {
+        f.seek(f.position() + leftover);
+      }
+    } else if (memcmp(chunkHeader, "data", 4) == 0) {
+      dataBytes = chunkSize;
+      haveData = true;  // position du fichier = debut des donnees, ne PAS avancer
+    } else {
+      f.seek(f.position() + chunkSize + (chunkSize & 1U));
+    }
+  }
+
+  if (!haveFmt || !haveData || formatTag != 1 || channels != 1 || bitsPerSample != 16) {
+    f.close();
+    Serial.print(errPrefix);
+    Serial.println(":WAV_UNSUPPORTED");
+    return false;
+  }
+
+  const uint32_t sampleCount = dataBytes / sizeof(int16_t);
+  if (sampleRate < 8000 || sampleRate > 48000 || (dataBytes & 1U) != 0 || sampleCount < 2 ||
+      sampleCount > capacity || f.position() + dataBytes > f.size()) {
+    f.close();
+    Serial.print(errPrefix);
+    Serial.println(":WAV_SIZE_ERROR");
+    return false;
+  }
+
+  uint8_t *out = reinterpret_cast<uint8_t *>(dst);
   size_t remaining = dataBytes;
   size_t offset = 0;
   while (remaining > 0) {
     const size_t chunk = remaining > 4096 ? 4096 : remaining;
-    const size_t got = f.read(dst + offset, chunk);
+    const size_t got = f.read(out + offset, chunk);
     if (got != chunk) {
       f.close();
-      Serial.println("SAMPLER:GB_CAPTURE:READ_ERROR");
+      Serial.print(errPrefix);
+      Serial.println(":READ_ERROR");
       return false;
     }
     offset += got;
     remaining -= got;
   }
   f.close();
+  sampleCountOut = sampleCount;
+  sampleRateOut = sampleRate;
+  return true;
+}
+
+bool loadCapturedWavIntoSampler(const char *path) {
+  uint32_t sampleCount = 0;
+  uint32_t sampleRate = 0;
+  if (!readWavPcm16Mono(path, gbCapturedSampleBuffer, kGbCapturedSampleCapacity, "SAMPLER:GB_CAPTURE", sampleCount,
+                        sampleRate)) {
+    return false;
+  }
 
   SamplerBankEntry &entry = kSamplerBank[az2::kSamplerGbCapturePatch];
   entry.data = gbCapturedSampleBuffer;
@@ -570,6 +691,70 @@ bool loadLatestCapturedSample() {
     if (SD.exists(path)) return loadCapturedWavIntoSampler(path);
   }
   return false;
+}
+
+// Charge un WAV (carte SD du Teensy) dans le buffer PSRAM DEDIE du pad
+// `pad` (2026-09-19, voir padSampleBuffer[]/padSampler[] plus haut) --
+// note racine fixe a 60 (Do central) : un "hit" de kit se joue en
+// general a une seule hauteur, pas besoin de la faire varier comme les
+// moteurs chromatiques normaux (voir AudioPlaySampler::noteOn(),
+// pitche relativement a la racine si jamais on veut varier plus tard).
+bool loadWavIntoPadSampler(uint8_t pad, const char *path) {
+  if (pad >= az2::kPadCount) {
+    return false;
+  }
+  char errPrefix[20];
+  snprintf(errPrefix, sizeof(errPrefix), "SAMPLER:PAD:%d", pad);
+  uint32_t sampleCount = 0;
+  uint32_t sampleRate = 0;
+  if (!readWavPcm16Mono(path, padSampleBuffer[pad], kPadSampleCapacity, errPrefix, sampleCount, sampleRate)) {
+    padSamplerLoaded[pad] = false;
+    return false;
+  }
+  // sampleRate REEL du fichier (pas le defaut 44100 de setSample()) --
+  // bug evite au moment d'ecrire ce code : la bibliotheque Azothwave
+  // fraichement rangee est en 24kHz, pas 44.1kHz -- sans ce parametre
+  // explicite, chaque hit aurait joue ~1.84x trop vite/trop aigu.
+  padSampler[pad].setSample(padSampleBuffer[pad], sampleCount, 60, sampleRate);
+  padSamplerLoaded[pad] = true;
+  Serial.print("PADSAMPLE:");
+  Serial.print(pad);
+  Serial.print(":READY:path=");
+  Serial.println(path);
+  Serial1.print("PADSAMPLE:");
+  Serial1.print(pad);
+  Serial1.print(":READY:path=");
+  Serial1.println(path);
+  return true;
+}
+
+// Kit de batterie de depart (2026-09-19, "tu peut faire un kit de
+// battrie deja config sur les pad") -- 8 sons choisis dans la
+// bibliotheque Azothwave KO II fraichement rangee (voir
+// AZ2_ETAT_DES_LIEUX.md), tries a l'oreille sur les NOMS de fichiers
+// (aucun moyen d'ecouter depuis ce firmware) : kick/snare/hat ferme/
+// hat ouvert/clap/rim/cowbell/ride. Pads 8-15 restent vides, prets
+// pour l'utilisateur (voir PADSAMPLE:<pad>:<chemin>). Charge au boot
+// SEULEMENT si le fichier existe (carte SD potentiellement absente ou
+// bibliotheque pas encore copiee) -- echoue silencieusement sinon
+// (pas bloquant, juste ce pad reste sur son comportement normal, voir
+// handlePadCommand()).
+constexpr const char *kDefaultKitPaths[8] = {
+    "/samples/KICKS/808BD_T1D3_Tape.wav",
+    "/samples/SNARES/Acoustic_Snare-03.wav",
+    "/samples/CYMBALS/Electro_Essent_VEE2_Closed_Hihat_002.wav",
+    "/samples/CYMBALS/Electro_Essent_VEE2_Open_Hihat_005.wav",
+    "/samples/PERC/cclap11.wav",
+    "/samples/PERC/Drumbrute_Rim_01.wav",
+    "/samples/PERC/COWBELL.wav",
+    "/samples/CYMBALS/Electro_Essent_VEE2_Ride_01.wav",
+};
+void loadDefaultDrumKit() {
+  for (uint8_t pad = 0; pad < 8; ++pad) {
+    if (SD.exists(kDefaultKitPaths[pad])) {
+      loadWavIntoPadSampler(pad, kDefaultKitPaths[pad]);
+    }
+  }
 }
 
 void applyTrackPatch(uint8_t track) {
@@ -2375,16 +2560,67 @@ void handlePadCommand(const String &line) {
   const uint8_t note = padToMidiNote(pad);
   const bool pressed = line.indexOf(":DOWN") > 0;
 
+  // PRIORITE kit de batterie (2026-09-19, "faire un kit de batterie
+  // deja config sur les pad") : si CE pad a un echantillon dedie charge
+  // (voir padSamplerLoaded[]/PADSAMPLE:), il joue TOUJOURS ce son a sa
+  // hauteur naturelle -- ignore track=/la voix live generique (un hit
+  // de kit ne se transpose pas). Sinon, comportement inchange (piste
+  // ciblee ou voix live, voir plus bas) : les pads sans echantillon
+  // assigne restent un clavier chromatique normal.
+  if (padSamplerLoaded[pad]) {
+    if (pressed) {
+      uint8_t velocity = 100;
+      const int velIdx = line.indexOf("vel=");
+      if (velIdx >= 0) {
+        velocity = static_cast<uint8_t>(line.substring(velIdx + 4).toInt());
+      }
+      padSampler[pad].noteOn(60, velocity);
+      announceLed(pad, "ON");
+    } else {
+      padSampler[pad].noteOff();
+      announceLed(pad, "OFF");
+    }
+    return;
+  }
+
+  // "track=" optionnel (2026-09-19, "on ajoute un bouton dans la
+  // fenetre du tracker pour pouvoir l'ouvrir dans n'importe quel
+  // pattern et piste et joue l'instrument de la piste") -- ouvert
+  // depuis le bouton CLAVIER du tracker, les pads jouent desormais le
+  // VRAI moteur/patch de la piste (trackNoteOn()/trackNoteOff(), meme
+  // chemin que le sequenceur et TEST: sur la page PATCH) au lieu de la
+  // voix live Dexed fixe. Absent (page AUDIO ouverte depuis le menu
+  // general, sans piste de reference) -> comportement inchange
+  // (liveVoice).
+  const int trackIdx = line.indexOf("track=");
+  const bool hasTrack = trackIdx >= 0;
+  uint8_t track = 0;
+  if (hasTrack) {
+    track = static_cast<uint8_t>(line.substring(trackIdx + 6).toInt());
+    if (track >= kTrackCount) {
+      sendCommandError("PAD", "TRACK_OUT_OF_RANGE");
+      return;
+    }
+  }
+
   if (pressed) {
     uint8_t velocity = 100;
     const int velIdx = line.indexOf("vel=");
     if (velIdx >= 0) {
       velocity = static_cast<uint8_t>(line.substring(velIdx + 4).toInt());
     }
-    liveVoice.keydown(note, velocity);
+    if (hasTrack) {
+      trackNoteOn(track, note, velocity);
+    } else {
+      liveVoice.keydown(note, velocity);
+    }
     announceLed(pad, "ON");
   } else {
-    liveVoice.keyup(note);
+    if (hasTrack) {
+      trackNoteOff(track, note);
+    } else {
+      liveVoice.keyup(note);
+    }
     announceLed(pad, "OFF");
   }
 }
@@ -2457,6 +2693,32 @@ void handleCommand(const String &line) {
 
   if (line.startsWith("PAD:")) {
     handlePadCommand(line);
+    return;
+  }
+
+  // PADSAMPLE:<pad 0-15>:<chemin SD> -- assigne un echantillon a un
+  // pad (2026-09-19, "pouvoir les sauvegarder dans le projet global") :
+  // utilise aussi bien pour une assignation manuelle depuis l'ecran que
+  // pour le rechargement d'un projet sauvegarde (voir loadProject()
+  // cote ESP32, qui renvoie ces memes commandes pour chaque pad
+  // assigne).
+  if (line.startsWith("PADSAMPLE:")) {
+    const int idx1 = line.indexOf(':');
+    const int idx2 = line.indexOf(':', idx1 + 1);
+    if (idx1 < 0 || idx2 < 0) {
+      sendCommandError("PADSAMPLE", "MALFORMED");
+      return;
+    }
+    const int pad = line.substring(idx1 + 1, idx2).toInt();
+    if (pad < 0 || pad >= static_cast<int>(az2::kPadCount)) {
+      sendCommandError("PADSAMPLE", "OUT_OF_RANGE");
+      return;
+    }
+    const String path = line.substring(idx2 + 1);
+    if (!loadWavIntoPadSampler(static_cast<uint8_t>(pad), path.c_str())) {
+      // Erreur deja rapportee par loadWavIntoPadSampler()/readWavPcm16Mono()
+      // (prefixe "SAMPLER:PAD:<n>:..."), rien de plus a faire ici.
+    }
     return;
   }
 
@@ -3441,7 +3703,7 @@ void setup() {
 
   mixFinal.gain(0, 0.8f);  // groupe pistes 0-3 (deja attenuees par groupMixer, voir setTrackEngine())
   mixFinal.gain(1, 0.8f);  // groupe pistes 4-7
-  mixFinal.gain(2, 0.5f);  // voix live
+  mixFinal.gain(2, 0.5f);  // voix live + bus pads (mixLiveAndPads, voir plus haut)
   mixFinal.gain(3, 0.6f);  // metronome (voir triggerMetronome())
 
   // Enveloppe "clic" du metronome : pas de sustain, decay seul ramene
@@ -3467,6 +3729,14 @@ void setup() {
 
   checkPsram();
   loadLatestCapturedSample();  // restaure automatiquement le dernier GB Capture depuis la SD
+  // Kit de batterie de depart sur les pads 0-7 (2026-09-19, "faire un
+  // kit de batterie deja config" -- voir loadDefaultDrumKit()) --
+  // APRES setupSampleSd() (bug reel trouve en testant : place avant,
+  // SD.begin() n'avait pas encore tourne, chaque SD.exists() du kit de
+  // depart echouait silencieusement). Aucun effet si la carte SD est
+  // absente ou si la bibliotheque n'a pas ete copiee (verifie fichier
+  // par fichier).
+  loadDefaultDrumKit();
   checkHeap();  // 2026-09-18 -- piste sur le souffle DEXED, voir le commentaire de checkHeap()
 
   delay(300);
