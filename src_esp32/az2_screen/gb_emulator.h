@@ -17,8 +17,9 @@
 // /games/<name> (kSavePathCapacity=96 cote emulation). Les noms plus
 // longs sont exclus du scan avec un diagnostic, jamais tronques.
 constexpr uint8_t kGbRomNameLen = 88;
-// Nombre maximum d'entrees du navigateur ROM.
-constexpr uint8_t kGbMaxRoms = 40;
+// Nombre maximum d'entrees du navigateur ROM. 100 reste sous la limite
+// int8_t du curseur UI et coute ~8,8 Ko pour les noms complets.
+constexpr uint8_t kGbMaxRoms = 100;
 
 // Scanne /games sur la carte SD pour les fichiers .gb/.gbc (jusqu'a
 // kGbMaxRoms), remplit `names` (kGbMaxRoms x kGbRomNameLen, deja
