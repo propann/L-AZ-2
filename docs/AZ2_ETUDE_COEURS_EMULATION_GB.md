@@ -1,6 +1,6 @@
 # Étude des cœurs Game Boy / Game Boy Color pour AZ-2
 
-Date : 19 septembre 2026  
+Date : 19 septembre 2026
 Cible matérielle : ESP32-S3 (émulation, écran, SD) + Teensy 4.1 (mixage et DAC)
 
 ## Décision
