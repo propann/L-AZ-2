@@ -318,6 +318,17 @@ namespace {
 int16_t gbAudioStereoBuf[AUDIO_SAMPLES_TOTAL];
 uint8_t gbAudioMonoBuf[AUDIO_SAMPLES];
 
+// Le firmware ecran et le firmware audio compilent avec le MEME contrat
+// AZ2_Protocol.h. Empêcher un changement de fréquence uniquement dans
+// platformio.ini : sinon le Teensy refuserait les paquets ou lirait une
+// longueur erronée sans avertissement au build.
+static_assert(AUDIO_SAMPLE_RATE == az2::kGbAudioSampleRate,
+              "GB: AUDIO_SAMPLE_RATE must match AZ2_Protocol.h");
+static_assert(AUDIO_SAMPLES == az2::kGbAudioSamplesPerPacket,
+              "GB: audio packet size must match the Teensy protocol");
+static_assert(AUDIO_SAMPLES > 0 && AUDIO_SAMPLES <= 255,
+              "GB: V1 packet length field is one byte");
+
 void sendGbAudioPacket() {
   minigb_apu_audio_callback(&apuCtx, gbAudioStereoBuf);
 
