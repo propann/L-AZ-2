@@ -34,9 +34,9 @@ Ce document distingue **code intégré**, **à implémenter**, et **à valider s
 
 - [ ] Caractériser le MiniGB APU présent : timing des écritures, latence, stéréo, dérive de pitch, charge CPU.
 - [ ] Prototyper Gb_Snd_Emu (écritures APU horodatées) dans une branche d'essai ; comparer avec SameBoy, vérifier licences et budget ESP32.
-- [x] Contrat V2 préparé et testé dans AZ2_Protocol : magic/version, longueur 16 bits, séquence, sample rate, canaux/format et CRC16. Il reste volontairement inactif sur le fil. [ ] Implémenter parser V2 Teensy, émetteur ESP32, négociation/fallback et compteurs CRC/séquence.
+- [x] V2 pilote implémenté des deux côtés : encodeur ESP32, décodeur Teensy borné avec contrôle CRC/longueur/séquence, négociation QUERY/READY, tests natifs. Pilote PCM8 mono/14 kHz **désactivé par défaut** (flag partagé). [ ] Valider la bascule et le retour V1 sur matériel, puis implémenter une véritable sortie stéréo/32 kHz avec capture et mixage adaptés.
 - [ ] Réserver bande passante UART aux commandes et tester les profils : stéréo PCM8 32 kHz (~64 ko/s sans overhead) et codec léger si 16 bits/44,1 kHz nécessaire. Le PCM stéréo 16 bits/44,1 kHz brut (~176,4 ko/s) NE tient PAS dans l'UART 921600 (~92,16 ko/s brut).
-- [x] Tampon circulaire borné côté Teensy et resampling linéaire 14 kHz → 44,1 kHz intégrés. Compteurs paquets reçus, longueurs invalides, timeouts et ring drops ajoutés. [ ] Ajouter séquence/CRC V2, mesure de latence et compteur d'underrun réel.
+- [x] Tampon circulaire borné côté Teensy et resampling linéaire 14 kHz → 44,1 kHz intégrés. Compteurs paquets reçus, longueurs invalides, timeouts et ring drops ajoutés. [x] Séquence/CRC V2 disponibles en mode pilote. [ ] Ajouter mesure de latence et compteur d'underrun réel.
 - [ ] Mesurer l'audio pendant lecture LSDJ + 8 pistes AZ-2 + effets ; ne pas déclarer la qualité haute fidélité avant essai d'écoute et mesures.
 
 ### Lot 3 — Sauvegarde sans gel de frame
