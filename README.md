@@ -74,8 +74,8 @@ Le matériel Teensy et l'écran ESP32 disposent de configurations de compilation
 | Fonction | État |
 | :-- | :-- |
 | Cœur Walnut-CGB, chargement ROM depuis SD, commandes physiques | Intégré ; compatibilité à qualifier ROM par ROM |
-| Rendu sans frame-skip par défaut, dual-fetch, télémétrie | Intégré ; cadence réelle à relever sur la machine |
-| Sauvegarde SRAM périodique, fichier de secours | Intégré ; robustesse en cas de coupure encore à durcir |
+| Rendu sans frame-skip par défaut, dual-fetch, télémétrie FPS/temps/missed | Intégré ; cadence réelle à relever sur la machine |
+| Sauvegarde SRAM périodique, SAVE NOW sur D, fichier de secours | Intégré ; robustesse en cas de coupure encore à durcir |
 | Audio GB vers Teensy | Intégré, actuellement **mono 8 bits / 14 kHz** |
 | Audio stéréo haute fidélité, APU horodatée, protocole V2 | **Non livré** |
 | Synchronisation LSDJ, capture → banque de samples utilisateur | **Non livré** |
@@ -101,12 +101,13 @@ Les cases d'implémentation et les tests d'acceptation figurent dans la [roadmap
 | [Câblage maître](docs/AZ2_CABLAGE_MASTER.md) | Relier commandes, Teensy, écran et DAC |
 | [État des lieux](docs/AZ2_ETAT_DES_LIEUX.md) | Séparer observations matérielles et code théorique |
 | [Roadmap Game Boy](docs/AZ2_GB_ROADMAP_IMPLEMENTATION.md) | Suivre les étapes de stabilisation et LSDJ |
+| [Validation GB/LSDJ](docs/AZ2_GB_VALIDATION.md) | Tester cadence, sauvegardes, jeux et capture sur le prototype |
 | [Roadmap générale](docs/AZ2_FEUILLE_DE_ROUTE.md) | Tracker, moteurs, interface et produit |
 | [Licences et composants tiers](docs/AZ2_LICENCES.md) | Vérifier provenance et obligations avant redistribution |
 
 ## Contribuer
 
-Un bug reproductible, une capture de logs, un test de ROM libre ou une amélioration de documentation sont utiles. Indiquez le SHA Git, l'environnement `master_teensy` / `screen_esp`, le matériel et les étapes de reproduction. Évitez d'ajouter au dépôt des ROM commerciales ou des fichiers de sauvegarde personnels.
+Voir [CONTRIBUTING.md](CONTRIBUTING.md). Un bug reproductible, une capture de logs, un test de ROM libre ou une amélioration de documentation sont utiles. Indiquez le SHA Git, l'environnement `master_teensy` / `screen_esp`, le matériel et les étapes de reproduction. Évitez d'ajouter au dépôt des ROM commerciales ou des fichiers de sauvegarde personnels.
 
 Code principal sous **GPL-3.0** ; plusieurs composants intégrés possèdent leurs propres licences. Voir [LICENSE](LICENSE) et [inventaire des licences](docs/AZ2_LICENCES.md).
 
