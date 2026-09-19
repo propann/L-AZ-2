@@ -2976,10 +2976,18 @@ void drawAboutPage() {
 // l'avoir quittee (voir le commentaire pres de "nowForIdle" dans loop()).
 // Reste reglable en direct depuis cette page.
 uint16_t screensaverTimeoutSec = 60;
+// Modes : Matrix classique, pluie des notes du pattern, 8 pistes,
+// tableau de bord musical. Un seul selecteur pilote tactile ET croix/A.
+enum class SaverStyle : uint8_t { Matrix, NoteRain, EightTracks, Dashboard, Count };
+SaverStyle screensaverStyle = SaverStyle::NoteRain;
+uint8_t configSelectedRow = 0;
+constexpr int16_t kSaverStyleY = 76;
+constexpr int16_t kSaverStyleH = 46;
+constexpr const char *kSaverStyleNames[] = {"MATRIX", "PLUIE DE NOTES", "8 PISTES", "DASHBOARD"};
 constexpr uint16_t kScreensaverStepSec = 10;
 constexpr uint16_t kScreensaverMaxSec = 600;
 
-constexpr int16_t kCfgRowY = 140;
+constexpr int16_t kCfgRowY = 165;
 constexpr int16_t kCfgRowH = 50;
 constexpr int16_t kCfgBtnW = 60;
 constexpr int16_t kScaleRowY = kCfgRowY + kCfgRowH + 40;
@@ -3046,6 +3054,32 @@ void drawConfigPage() {
   const int16_t minusX = kMargin;
   const int16_t plusX = static_cast<int16_t>(kScreenSize - kMargin - kCfgBtnW);
 
+  // Le focus est commun a la croix et au tactile. HAUT/BAS deplacent
+  // le cadre blanc ; GAUCHE/DROITE modifient, A confirme/incremente.
+  const int16_t rowYs[4] = {kSaverStyleY, kCfgRowY, kScaleRowY, kSwingRowY};
+  for (uint8_t row = 0; row < 4; ++row) {
+    if (configSelectedRow == row) {
+      gfx->drawRect(kMargin - 3, rowYs[row] - 3, kScreenSize - 2 * kMargin + 6,
+                    kCfgRowH + 6, RGB565_WHITE);
+    }
+  }
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(kMargin, kSaverStyleY - 16);
+  gfx->print("STYLE VEILLE (CROIX + A / TACTILE)");
+  gfx->fillRect(kMargin, kSaverStyleY, kScreenSize - 2 * kMargin, kSaverStyleH, RGB565_BLACK);
+  gfx->drawRect(minusX, kSaverStyleY, kCfgBtnW, kSaverStyleH, kFaint);
+  gfx->drawRect(plusX, kSaverStyleY, kCfgBtnW, kSaverStyleH, kFaint);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setTextSize(2);
+  gfx->setCursor(minusX + 20, kSaverStyleY + 13);
+  gfx->print('<');
+  gfx->setCursor(plusX + 20, kSaverStyleY + 13);
+  gfx->print('>');
+  gfx->setTextSize(1);
+  gfx->setCursor(kScreenSize / 2 - 52, kSaverStyleY + 17);
+  gfx->print(kSaverStyleNames[static_cast<uint8_t>(screensaverStyle)]);
+
   gfx->fillRect(kMargin, kCfgRowY, kScreenSize - 2 * kMargin, kCfgRowH, RGB565_BLACK);
   gfx->drawRect(minusX, kCfgRowY, kCfgBtnW, kCfgRowH, kFaint);
   gfx->drawRect(plusX, kCfgRowY, kCfgBtnW, kCfgRowH, kFaint);
@@ -3111,6 +3145,39 @@ void drawConfigPage() {
   gfx->setTextColor(kDim);
   gfx->setCursor(kMargin, static_cast<int16_t>(kSwingRowY - 20));
   gfx->print("SWING (0 = aucun)");
+}
+
+void configChangeRow(int8_t delta) {
+  switch (configSelectedRow) {
+    case 0: {
+      const int count = static_cast<int>(SaverStyle::Count);
+      screensaverStyle = static_cast<SaverStyle>(
+          (static_cast<int>(screensaverStyle) + count + delta) % count);
+      break;
+    }
+    case 1:
+      screensaverTimeoutSec = static_cast<uint16_t>(constrain(
+          static_cast<int>(screensaverTimeoutSec) + delta * kScreensaverStepSec,
+          0, static_cast<int>(kScreensaverMaxSec)));
+      break;
+    case 2:
+      currentScaleIndex = static_cast<uint8_t>(
+          (currentScaleIndex + kScaleCount + delta) % kScaleCount);
+      break;
+    case 3: {
+      swingValue = static_cast<uint8_t>(constrain(
+          static_cast<int>(swingValue) + delta * kSwingStep, 0, 127));
+      char msg[16];
+      snprintf(msg, sizeof(msg), "SWING:%d", swingValue);
+      sendToTeensy(msg);
+      break;
+    }
+  }
+  drawConfigPage();
+}
+
+bool hitTestSaverStyle(int16_t x, int16_t y) {
+  return inBox(x, y, kMargin, kSaverStyleY, kScreenSize - 2 * kMargin, kSaverStyleH);
 }
 
 bool hitTestCfgMinus(int16_t x, int16_t y) {
