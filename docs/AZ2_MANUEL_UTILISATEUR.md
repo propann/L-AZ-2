@@ -152,7 +152,14 @@ Chaîner plusieurs patterns pour construire un morceau complet (intro / couplet 
 
 ## 12. Page AUDIO (pads)
 
-4×4 pads tactiles colorés pour jouer en direct, indépendamment du tracker. Bouton D bascule le mode "pose la note sur le pas actuellement sélectionné du tracker" (pratique pour enregistrer une performance live directement dans un pattern).
+4×4 pads tactiles colorés pour jouer en direct. Bouton D bascule le mode "pose la note sur le pas actuellement sélectionné du tracker" (pratique pour enregistrer une performance live directement dans un pattern) — en mode pose, le son se fait aussi entendre en direct.
+
+Deux façons d'y arriver, avec un comportement différent :
+
+- **Depuis le menu (Musique → Audio)** : pads génériques, jouent une voix de synthèse fixe — pour noodler sans dépendre d'une piste précise.
+- **Depuis le bouton CLAVIER du panneau latéral du tracker** : les pads jouent le **vrai moteur/patch de la piste** actuellement sélectionnée (n'importe quel pattern, n'importe quelle piste) — si cette piste utilise le SAMPLER, ce sont ses échantillons qui sonnent.
+
+**Kit de batterie** : indépendamment de tout ça, chaque pad peut avoir son **propre échantillon dédié** assigné directement (jusqu'à 2 secondes chacun, les 16 pads sonnent en même temps si besoin) — un pad avec un échantillon assigné sonne toujours ce son-là en priorité, quel que soit le mode. Un premier kit de 8 sons (grosse caisse, caisse claire, charley fermé/ouvert, clap, rim, cowbell, ride) est déjà prêt sur les pads 1 à 8 dès que la bibliothèque de samples est présente sur la carte SD du Teensy. Ces assignations se sauvegardent avec le reste du morceau (page PROJET).
 
 ## 13. Jeux (Game Boy / Game Boy Color)
 

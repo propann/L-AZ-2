@@ -662,12 +662,36 @@ void drawAudioCell(uint8_t pad, bool pressed) {
 // pour ne jamais ecraser une composition par accident en jouant
 // simplement sur les pads.
 bool padEditsStep = false;
+// -1 = generique (voix live Dexed fixe, comportement d'origine) ; sinon
+// = piste dont les pads jouent le VRAI moteur/patch (2026-09-19, "on
+// ajoute un bouton dans la fenetre du tracker pour ... joue
+// l'instrument de la piste") -- distinct de padEditsStep : celui-ci
+// decide si les presses sont EN PLUS ecrites sur le pas selectionne,
+// celui-la decide quelle SOURCE SONORE joue. Les 2 sont orthogonaux.
+// Mis a jour par le bouton CLAVIER du tracker (voir hitTestTrkSideBtn(3))
+// et remis a -1 en entrant sur AUDIO depuis le menu general (voir les 2
+// sites goTo(kMenuItems[...].target)).
+int8_t padTargetTrack = -1;
+// Chemin SD (carte du Teensy) actuellement assigne a chaque pad, ""
+// = aucun (2026-09-19, "il faut pouvoir aussi les sauvegarder dans le
+// projet global") -- mis a jour par l'echo PADSAMPLE:<pad>:READY:
+// path=... cote Teensy (voir handleTeensyLine()), pas ecrit
+// directement ici : reste ainsi TOUJOURS synchronise avec ce qui est
+// reellement charge, que l'assignation vienne d'ici, du kit de depart
+// au boot du Teensy, ou d'un chargement de projet.
+char padSamplePath[az2::kPadCount][48] = {};
 extern int8_t selectedSeqTrack;  // definie plus bas, avec le reste de l'etat du sequenceur
 extern int8_t selectedSeqStep;
 
 void drawAudioPage() {
-  char title[48];
-  if (padEditsStep) {
+  char title[56];
+  if (padTargetTrack >= 0) {
+    if (padEditsStep) {
+      snprintf(title, sizeof(title), "AUDIO - piste %d, pose sur pas %d (D)", padTargetTrack + 1, selectedSeqStep);
+    } else {
+      snprintf(title, sizeof(title), "AUDIO - piste %d (D=poser sur pas)", padTargetTrack + 1);
+    }
+  } else if (padEditsStep) {
     // piste +1 (2026-09-19, "plus musicien") -- affichage seulement.
     snprintf(title, sizeof(title), "AUDIO - pose sur piste %d pas %d (D)", selectedSeqTrack + 1, selectedSeqStep);
   } else {
@@ -3232,6 +3256,17 @@ void saveProject(uint8_t slot) {
                trackReso[t], trackAttack[t], trackDecay[t], trackSustain[t], trackRelease[t], trackAlgo[t],
                trackFeedback[t], trackVolume[t], trackMuted[t] ? 1 : 0);
     }
+    // Kit de batterie / echantillons assignes aux pads (2026-09-19, "il
+    // faut pouvoir aussi les sauvegarder dans le projet global") --
+    // seulement les pads REELLEMENT assignes (padSamplePath[pad][0] !=
+    // '\0', tenu a jour par l'echo PADSAMPLE:...:READY:path=..., voir
+    // handleTeensyLine()) ; les autres pads restent silencieusement
+    // absents du fichier (comportement au chargement inchange pour eux).
+    for (uint8_t pad = 0; pad < az2::kPadCount; ++pad) {
+      if (padSamplePath[pad][0] != '\0') {
+        f.printf("PADSAMPLE:%d:%s\n", pad, padSamplePath[pad]);
+      }
+    }
     for (uint8_t p = 0; p < kPatternCount; ++p) {
       for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
         for (uint8_t s = 0; s < kSeqStepCount; ++s) {
@@ -3312,6 +3347,19 @@ void loadProject(uint8_t slot) {
       if (c >= 0) {
         snprintf(msg, sizeof(msg), "SONGSET:%s:%s", rest.substring(0, c).c_str(), rest.substring(c + 1).c_str());
         sendToTeensy(msg);
+      }
+    } else if (line.startsWith("PADSAMPLE:")) {
+      // Kit de batterie / echantillons de pad sauvegardes (2026-09-19,
+      // voir saveProject()) -- renvoie la meme commande que
+      // l'assignation manuelle, le Teensy la traite identiquement
+      // (charge le WAV depuis SA propre carte SD, echo PADSAMPLE:...:
+      // READY:... qui remet padSamplePath[] a jour cote ESP32).
+      const String rest = afterColon(line);
+      const int c = rest.indexOf(':');
+      if (c >= 0) {
+        char padMsg[64];
+        snprintf(padMsg, sizeof(padMsg), "PADSAMPLE:%s:%s", rest.substring(0, c).c_str(), rest.substring(c + 1).c_str());
+        sendToTeensy(padMsg);
       }
     } else if (line.startsWith("TRACK:")) {
       // 13 champs depuis l'ajout de MUTE (12e = volume, 13e = mute) --
@@ -4101,6 +4149,16 @@ void handleTeensyLine(const String &line) {
           uint8_t items[kMenuItemCount];
           const uint8_t count = categoryItems(static_cast<MenuCat>(menuCategory), items);
           if (menuSelected < count) {
+            // AUDIO ouverte depuis le menu general (pas depuis le
+            // bouton CLAVIER du tracker) : pas de piste de reference,
+            // repart sur la voix live generique -- sinon un etat
+            // laisse par une visite CLAVIER precedente resterait colle
+            // (meme raisonnement que patchScroll/engPatchScroll a
+            // chaque entree de page).
+            if (kMenuItems[items[menuSelected]].target == Screen::Audio) {
+              padTargetTrack = -1;
+              padEditsStep = false;
+            }
             goTo(kMenuItems[items[menuSelected]].target);
           }
         }
@@ -4651,6 +4709,24 @@ void handleTeensyLine(const String &line) {
         }
       }
     }
+  } else if (line.startsWith("PADSAMPLE:") && line.indexOf(":READY:path=") > 0) {
+    // Echo de l'assignation d'un sample a un pad (voir
+    // loadWavIntoPadSampler() cote Teensy) -- garde padSamplePath[] a
+    // jour meme si l'assignation vient d'ailleurs (kit de depart au
+    // boot du Teensy, chargement de projet) : necessaire pour pouvoir
+    // RE-sauvegarder cette assignation dans le projet global (demande
+    // 2026-09-19, "il faut pouvoir aussi les sauvegarder dans le
+    // projet global").
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    const int pathIdx = line.indexOf("path=");
+    if (i1 >= 0 && i2 >= 0 && pathIdx >= 0) {
+      const uint8_t pad = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
+      if (pad < az2::kPadCount) {
+        const String path = line.substring(pathIdx + 5);
+        path.toCharArray(padSamplePath[pad], sizeof(padSamplePath[pad]));
+      }
+    }
   } else if (line.startsWith("MUTE:") || line.startsWith("SOLO:")) {
     // Echo mute/solo (voir handleMuteCommand()/handleSoloCommand() cote
     // Teensy) -- garde trackMuted[]/trackSoloed[] a jour meme si le
@@ -5143,6 +5219,13 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       const int8_t hit = hitTestMenuSubRow(x, y, count);
       if (hit >= 0) {
         menuSelected = hit;  // garde la croix synchronisee avec le dernier choix tactile
+        // Meme reset qu'au clavier physique (voir l'autre site
+        // goTo(kMenuItems[...].target) plus haut) -- AUDIO depuis le
+        // menu general repart sur la voix live generique.
+        if (kMenuItems[items[hit]].target == Screen::Audio) {
+          padTargetTrack = -1;
+          padEditsStep = false;
+        }
         goTo(kMenuItems[items[hit]].target);
       }
     }
@@ -5152,9 +5235,9 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       heldAudioPad[slot] = pad;
       drawAudioCell(static_cast<uint8_t>(pad), true);
       if (padEditsStep) {
-        // "Poser" la note sur le pas selectionne (voir padEditsStep) au
-        // lieu de jouer en direct -- allume aussi le pas (STEP: ON),
-        // sinon la note posee ne s'entendrait jamais en lecture.
+        // "Poser" la note sur le pas selectionne (voir padEditsStep) --
+        // allume aussi le pas (STEP: ON), sinon la note posee ne
+        // s'entendrait jamais en lecture.
         const uint8_t t = static_cast<uint8_t>(selectedSeqTrack);
         const uint8_t s = static_cast<uint8_t>(selectedSeqStep);
         const uint8_t note = static_cast<uint8_t>(az2::kPadBaseNote + pad);
@@ -5165,9 +5248,20 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
         sendToTeensy(msg);
         snprintf(msg, sizeof(msg), "NOTE:%d:%d:%d", t, s, note);
         sendToTeensy(msg);
-      } else {
-        char msg[24];
-        snprintf(msg, sizeof(msg), "PAD:%02d:DOWN:vel=100", pad);
+      }
+      // Joue EN PLUS le son en direct (2026-09-19, "joue l'instrument
+      // de la piste" -- avant, poser une note en mode padEditsStep
+      // restait totalement silencieux, on n'entendait jamais ce qu'on
+      // venait de programmer). track= present -> le vrai moteur/patch
+      // de la piste (voir handlePadCommand() cote Teensy) ; absent ->
+      // voix live Dexed generique, comportement d'origine.
+      {
+        char msg[32];
+        if (padTargetTrack >= 0) {
+          snprintf(msg, sizeof(msg), "PAD:%02d:DOWN:vel=100:track=%d", pad, padTargetTrack);
+        } else {
+          snprintf(msg, sizeof(msg), "PAD:%02d:DOWN:vel=100", pad);
+        }
         sendToTeensy(msg);
       }
     }
@@ -5207,7 +5301,12 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       // live et l'enregistrer", donc les pads posent la note sur le pas
       // selectionne du tracker au lieu de seulement jouer en direct
       // (voir padEditsStep, BTN:D bascule ce reglage sur cette page).
+      // padTargetTrack = piste actuelle (2026-09-19, suite : "joue
+      // l'instrument de la piste") -- les pads sonnent desormais avec
+      // le vrai moteur/patch de CETTE piste, plus la voix live Dexed
+      // fixe generique.
       padEditsStep = true;
+      padTargetTrack = selectedSeqTrack;
       goTo(Screen::Audio);
     } else if (hitTestTrkSideBtn(4, x, y)) {
       // METRONOME (2026-09-19) -- pas d'affichage optimiste, attend
@@ -5472,8 +5571,12 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
 void handleTouchUp(uint8_t slot) {
   if (currentScreen == Screen::Audio && heldAudioPad[slot] >= 0) {
     drawAudioCell(static_cast<uint8_t>(heldAudioPad[slot]), false);
-    char msg[16];
-    snprintf(msg, sizeof(msg), "PAD:%02d:UP", heldAudioPad[slot]);
+    char msg[24];
+    if (padTargetTrack >= 0) {
+      snprintf(msg, sizeof(msg), "PAD:%02d:UP:track=%d", heldAudioPad[slot], padTargetTrack);
+    } else {
+      snprintf(msg, sizeof(msg), "PAD:%02d:UP", heldAudioPad[slot]);
+    }
     sendToTeensy(msg);
   }
   heldAudioPad[slot] = -1;
