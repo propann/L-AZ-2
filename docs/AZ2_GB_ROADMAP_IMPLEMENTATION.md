@@ -36,7 +36,7 @@ Ce document distingue **code intégré**, **à implémenter**, et **à valider s
 - [ ] Prototyper Gb_Snd_Emu (écritures APU horodatées) dans une branche d'essai ; comparer avec SameBoy, vérifier licences et budget ESP32.
 - [ ] Définir un protocole binaire V2 versionné : longueur >= 16 bits, séquence, CRC, format/rate/canaux, resynchronisation et compteurs ; ne pas casser les commandes existantes.
 - [ ] Réserver bande passante UART aux commandes et tester les profils : stéréo PCM8 32 kHz (~64 ko/s sans overhead) et codec léger si 16 bits/44,1 kHz nécessaire. Le PCM stéréo 16 bits/44,1 kHz brut (~176,4 ko/s) NE tient PAS dans l'UART 921600 (~92,16 ko/s brut).
-- [ ] Tampon circulaire borné côté Teensy, resampling avec interpolation, compteurs underrun/overflow/perte/latence ; traitement audio en priorité sur les animations UI.
+- [x] Tampon circulaire borné côté Teensy et resampling linéaire 14 kHz → 44,1 kHz intégrés. Compteurs paquets reçus, longueurs invalides, timeouts et ring drops ajoutés. [ ] Ajouter séquence/CRC V2, mesure de latence et compteur d'underrun réel.
 - [ ] Mesurer l'audio pendant lecture LSDJ + 8 pistes AZ-2 + effets ; ne pas déclarer la qualité haute fidélité avant essai d'écoute et mesures.
 
 ### Lot 3 — Sauvegarde sans gel de frame
