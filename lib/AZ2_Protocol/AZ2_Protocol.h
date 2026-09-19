@@ -69,6 +69,11 @@ constexpr uint8_t kGbAudioSamplesPerPacket = static_cast<uint8_t>(kGbAudioSample
 // CRC-16/CCITT-FALSE sur version..fin payload (magic et CRC exclus).
 // flags bit0 = stereo. format 1=PCM_U8, 2=PCM_S16LE.
 // ---------------------------------------------------------------------
+// Pilot disabled until full ESP32+Teensy hardware qualification; setting
+// this true on BOTH boards still requires explicit READY handshake.
+constexpr bool kGbAudioV2PilotEnabled = false;
+constexpr const char *kGbAudioV2Query = "GBV2:QUERY";
+constexpr const char *kGbAudioV2Ready = "GBV2:READY";
 constexpr uint8_t kGbAudioV2Magic = 0x03;
 constexpr uint8_t kGbAudioV2Version = 2;
 constexpr uint8_t kGbAudioV2FlagStereo = 0x01;
