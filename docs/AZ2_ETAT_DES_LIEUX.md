@@ -1,5 +1,47 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-19 -- fusion avec le travail GB (autre session IA) + boutons
+MUTE/SOLO tactiles sur MIXER + audit navigation "retour" (rien trouve
+de casse)]**
+
+- **Fusion `origin/main`** : une autre session IA travaillait en
+  parallele sur l'emulation Game Boy (confirme par l'utilisateur : "il
+  y a gpt qui bosse sur la partie emulation") -- 56 commits pousses
+  directement sur `main` pendant que ce chantier tournait, touchant
+  entre autres `lib/AZ2_Protocol/AZ2_Protocol.h` (+174 lignes, nouveau
+  protocole audio GB V2) ET les 2 memes `main.cpp` (Teensy/ESP32) que
+  ce chantier modifiait activement. Fusionne sur la branche de
+  fonctionnalite (`git merge origin/main`, pas de conflit textuel) puis
+  RE-VERIFIE integralement avant de faire confiance au resultat :
+  compile propre sur les 3 environnements, 14 tests natifs au vert (9
+  d'avant + 5 nouveaux tests GB audio V2), et re-teste sur le vrai
+  materiel (MIXER, mute/solo, encodeurs) apres reflashage des 2
+  cartes -- rien de casse par la fusion.
+- **"il faut que les 2 controles soit[ent] boutons tactil[es]"**
+  (mute/solo de la page MIXER, jusqu'ici seulement B/D physiques) :
+  2 boutons tactiles ajoutes sous les barres. Logique factorisee dans
+  `toggleMixerMuteSolo(bool mute)`, appelee aussi bien par B/D que par
+  ces 2 nouveaux boutons -- plus de duplication entre les 2 chemins.
+- **"verifie toute les navigations qu'on saute pas des fenetres dans
+  les retours"** : audit complet du systeme `navPrevious`/`goTo()`.
+  `currentScreen` n'est JAMAIS assigne ailleurs que dans `goTo()` (un
+  seul point de mutation, verifie par recherche exhaustive) --
+  `navPrevious` est donc toujours mis a jour avant tout changement
+  d'ecran, aucun chemin ne peut le contourner. Verifie aussi qu'aucun
+  gestionnaire n'appelle `goTo()` deux fois de suite dans le meme
+  evenement (ce qui aurait enregistre un ecran "intermediaire" jamais
+  vraiment vu comme `navPrevious`, faisant sauter une etape au retour)
+  -- tous les appels a `goTo()` vivent dans des branches if/else-if
+  mutuellement exclusives. **Rien trouve de casse** : le seul bug de
+  cette famille cette soiree etait le mute MIXER sur le bouton A (deja
+  trouve+corrige, voir l'entree precedente) -- categorie differente
+  (un gestionnaire qui reagit a tort a l'evenement qui vient de faire
+  `goTo()` VERS son propre ecran), pas un saut de fenetre au retour.
+
+Compile propre (`screen_esp`, `master_teensy`, `native`), 14 tests
+natifs au vert. Valide sur le vrai materiel via SIMNAV:/SIMBTN: apres
+la fusion.
+
 **[2026-09-19 -- page MIXER (nouvelle) + encodeurs 1/2 CONTEXTUELS +
 pistes affichees 1-8 + bouton SAUVER dans le tracker -- teste sur le
 vrai materiel]**

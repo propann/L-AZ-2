@@ -2519,16 +2519,70 @@ void drawMixerTrack(uint8_t t) {
   }
 }
 
+// Boutons MUTE/SOLO tactiles (2026-09-19, "il faut que les 2 controles
+// soit[ent] boutons tactil[es]" -- jusqu'ici seuls B/D physiques
+// marchaient, rien a toucher a l'ecran) -- agissent sur la piste
+// SELECTIONNEE (meme reflexe que B/D), pas sur celle touchee (pas de
+// tap-and-select combine ici, la selection se fait separement via une
+// colonne ou GAUCHE/DROITE).
+constexpr int16_t kMixerBtnY = kMixerBarBottom + 34;
+constexpr int16_t kMixerBtnH = 32;
+constexpr int16_t kMixerBtnW = (kScreenSize - 2 * kMargin - 8) / 2;
+constexpr int16_t kMixerMuteX = kMargin;
+constexpr int16_t kMixerSoloX = kMargin + kMixerBtnW + 8;
+
+void drawMixerActionBtns() {
+  const uint8_t t = static_cast<uint8_t>(selectedMixerTrack);
+  constexpr uint16_t kMuteColor = RGB565(200, 60, 60);
+  constexpr uint16_t kSoloColor = RGB565(60, 220, 90);
+
+  gfx->fillRect(kMixerMuteX, kMixerBtnY, kMixerBtnW, kMixerBtnH, trackMuted[t] ? kMuteColor : RGB565_BLACK);
+  gfx->drawRect(kMixerMuteX, kMixerBtnY, kMixerBtnW, kMixerBtnH, kMuteColor);
+  gfx->fillRect(kMixerSoloX, kMixerBtnY, kMixerBtnW, kMixerBtnH, trackSoloed[t] ? kSoloColor : RGB565_BLACK);
+  gfx->drawRect(kMixerSoloX, kMixerBtnY, kMixerBtnW, kMixerBtnH, kSoloColor);
+
+  gfx->setTextSize(2);
+  gfx->setTextColor(trackMuted[t] ? RGB565_BLACK : kMuteColor);
+  gfx->setCursor(static_cast<int16_t>(kMixerMuteX + kMixerBtnW / 2 - 28), static_cast<int16_t>(kMixerBtnY + 8));
+  gfx->print("MUTE");
+  gfx->setTextColor(trackSoloed[t] ? RGB565_BLACK : kSoloColor);
+  gfx->setCursor(static_cast<int16_t>(kMixerSoloX + kMixerBtnW / 2 - 24), static_cast<int16_t>(kMixerBtnY + 8));
+  gfx->print("SOLO");
+}
+
+bool hitTestMixerMute(int16_t x, int16_t y) {
+  return inBox(x, y, kMixerMuteX, kMixerBtnY, kMixerBtnW, kMixerBtnH);
+}
+bool hitTestMixerSolo(int16_t x, int16_t y) {
+  return inBox(x, y, kMixerSoloX, kMixerBtnY, kMixerBtnW, kMixerBtnH);
+}
+
+// Bascule mute (true) ou solo (false) sur la piste SELECTIONNEE --
+// factorise (2026-09-19) pour etre appele aussi bien par B/D
+// (physique) que par les boutons tactiles MUTE/SOLO ci-dessus, sans
+// dupliquer l'envoi MUTE:/SOLO: + le redessin.
+void toggleMixerMuteSolo(bool mute) {
+  const uint8_t t = static_cast<uint8_t>(selectedMixerTrack);
+  char msg[12];
+  if (mute) {
+    trackMuted[t] = !trackMuted[t];
+    snprintf(msg, sizeof(msg), "MUTE:%d:%d", t, trackMuted[t] ? 1 : 0);
+  } else {
+    trackSoloed[t] = !trackSoloed[t];
+    snprintf(msg, sizeof(msg), "SOLO:%d:%d", t, trackSoloed[t] ? 1 : 0);
+  }
+  sendToTeensy(msg);
+  drawMixerTrack(t);
+  drawMixerActionBtns();
+}
+
 void drawMixerPage() {
   drawSubHeader("MIXER", kPalette[5 % kPaletteCount]);
   drawEncoderHints("PISTE", "VOLUME");
   for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
     drawMixerTrack(t);
   }
-  gfx->setTextSize(1);
-  gfx->setTextColor(kDim);
-  gfx->setCursor(kMargin, static_cast<int16_t>(kMixerBarBottom + 32));
-  gfx->print("B: mute   D: solo");
+  drawMixerActionBtns();
 }
 
 bool hitTestMixerTrack(int16_t x, int16_t y, uint8_t &track) {
@@ -4166,17 +4220,7 @@ void handleTeensyLine(const String &line) {
       // en mute par accident. B est libre sur cette page (seulement pris
       // par la page PATCH, voir plus bas).
       if (pressed && currentScreen == Screen::Mixer && (letter == 'B' || letter == 'D')) {
-        const uint8_t t = static_cast<uint8_t>(selectedMixerTrack);
-        char msg[12];
-        if (letter == 'B') {
-          trackMuted[t] = !trackMuted[t];
-          snprintf(msg, sizeof(msg), "MUTE:%d:%d", t, trackMuted[t] ? 1 : 0);
-        } else {
-          trackSoloed[t] = !trackSoloed[t];
-          snprintf(msg, sizeof(msg), "SOLO:%d:%d", t, trackSoloed[t] ? 1 : 0);
-        }
-        sendToTeensy(msg);
-        drawMixerTrack(t);
+        toggleMixerMuteSolo(letter == 'B');
       }
     }
   } else if (line.startsWith("POT:")) {
@@ -5315,6 +5359,13 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
     if (hitTestMixerTrack(x, y, track)) {
       selectedMixerTrack = static_cast<int8_t>(track);
       drawMixerPage();
+    } else if (hitTestMixerMute(x, y)) {
+      // Boutons MUTE/SOLO tactiles (2026-09-19, "il faut que les 2
+      // controles soit[ent] boutons tactil[es]") -- meme action que
+      // B/D physiques, voir toggleMixerMuteSolo().
+      toggleMixerMuteSolo(true);
+    } else if (hitTestMixerSolo(x, y)) {
+      toggleMixerMuteSolo(false);
     }
   } else if (currentScreen == Screen::Song) {
     if (hitTestSongMode(x, y)) {
