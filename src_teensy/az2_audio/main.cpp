@@ -2727,6 +2727,10 @@ void gbRecPush(int16_t sample) {
   gbRecBuf[gbRecBufLen++] = sample;
   if (gbRecBufLen >= sizeof(gbRecBuf) / sizeof(gbRecBuf[0])) {
     gbRecFlushBuf();
+    if (gbRecWriteError) {
+      gbRecStop(); // ecriture SD interrompue : ne pas continuer la capture
+      return;
+    }
   }
   if (gbRecSampleCount + gbRecBufLen >= kGbRecMaxSamples) {
     gbRecStop();
