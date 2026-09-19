@@ -2,14 +2,14 @@
 
 AZ-2 est une groovebox hardware modulaire a 2 cerveaux, orientee
 Game Boy/GBC : un **Teensy 4.1** pour tout le moteur audio temps reel
-(5 synthetiseurs, filtre + ADSR par piste, sequenceur/tracker) et un
+(6 moteurs audio, filtre + ADSR par piste, sequenceur/tracker) et un
 **ESP32-S3** avec un ecran tactile 480x480 pour l'interface, la
 sauvegarde SD et l'emulation GB/GBC.
 
 ## Ce que la machine fait aujourd'hui
 
 - **8 pistes**, chacune avec son propre moteur au choix (Dexed FM,
-  mda ePiano, Braids, Karplus-Strong, oscillateur analogique), filtre
+  mda ePiano, Braids, Karplus-Strong, oscillateur analogique, sampleur), filtre
   resonant, ADSR et volume editables en direct, avec un oscilloscope
   pour voir l'onde changer en reglant les parametres. Reglages propres
   au Dexed (algorithme/feedback DX7). **Mute/solo par piste.**
@@ -22,8 +22,9 @@ sauvegarde SD et l'emulation GB/GBC.
   4 emplacements), sur la carte SD de l'ESP32.
 - **Emulateur Game Boy/GBC** (Walnut-CGB), son du jeu route jusqu'au
   DAC du Teensy, sauvegarde de la RAM de cartouche sur la SD, liste de
-  ROM paginee. Sampler (capture REC/STOP -> `.wav` sur la SD dediee du
-  Teensy) -- capture faite, lecture pas encore.
+  ROM paginee. Capture REC/STOP vers `.wav` sur la SD du Teensy ; moteur
+  sampleur one-shot Kick/Snare actif, les WAV captures ne sont pas encore
+  injectables dans sa banque.
 - **MIDI notes IN** (USB) vers la voix live.
 - **Croix + 4 boutons + 3 encodeurs rotatifs** (avec bouton integre)
   cables directement sur le Teensy -- navigation dans les menus,
@@ -44,7 +45,7 @@ Deux cartes, deux roles nets :
 - **ESP32-S3** (`src_esp32/az2_screen/`) : ecran tactile 480x480 RGB
   parallele (module VIEWE UEDX48480040E-WB), interface, emulateur GB/
   GBC, carte SD (ROMs + patches).
-- Liaison UART 230400 bauds entre les deux, protocole texte ligne par
+- Liaison UART 921600 bauds entre les deux, protocole texte ligne par
   ligne + paquets binaires (audio GB, oscilloscope) -- partage via
   `lib/AZ2_Protocol/`.
 - **Périmètre figé le 2026-09-18 :** le boîtier AZ-2 est plein. Aucun rack multi-ESP ni recâblage de commandes ; les cartouches AZ-BUS/AZ-CHIP/AZ-VA sont reportées à l’AZ-3.
@@ -53,7 +54,7 @@ Detail complet : [docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md](docs/AZ2_ARCHITECTUR
 
 ## Documentation
 
-- [Etat des lieux](docs/AZ2_ETAT_DES_LIEUX.md) : ce qui est verifie en
+- [Audit de code du 19 septembre 2026](docs/AZ2_AUDIT_CODE_2026-09-19.md) : verdict, risques prioritaires et plan de stabilisation.\n- [Etat des lieux](docs/AZ2_ETAT_DES_LIEUX.md) : ce qui est verifie en
   reel vs seulement compile, mis a jour au fil de l'eau.
 - [Feuille de route](docs/AZ2_FEUILLE_DE_ROUTE.md) : ordre de
   construction, ce qui reste a faire.
