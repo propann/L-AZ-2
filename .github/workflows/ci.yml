@@ -19,6 +19,8 @@ jobs:
           python-version: "3.12"
       - name: Install PlatformIO
         run: pip install --disable-pip-version-check platformio==6.1.19
+      - name: Check shared firmware contract
+        run: python tools/check_firmware_contract.py
       - name: Run native protocol tests
         run: pio test -e native
 
