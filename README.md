@@ -11,7 +11,7 @@
 ![Hardware](https://img.shields.io/badge/hardware-Teensy%204.1%20%2B%20ESP32--S3-16a085)
 ![Licence](https://img.shields.io/badge/licence-GPL--3.0-64748b)
 
-[Découvrir la machine](#la-machine) · [Démarrer](#démarrer) · [Architecture](#deux-firmwares-un-seul-instrument) · [Game Boy & LSDJ](#game-boy--lsdj) · [Feuille de route](#feuille-de-route) · [Documentation](#documentation)
+[Découvrir la machine](#la-machine) · [Manuel d'utilisation](docs/AZ2_MANUEL_UTILISATEUR.md) · [Démarrer](#démarrer) · [Architecture](#deux-firmwares-un-seul-instrument) · [Game Boy & LSDJ](#game-boy--lsdj) · [Feuille de route](#feuille-de-route) · [Documentation](#documentation)
 
 </div>
 
@@ -96,6 +96,7 @@ Les cases d'implémentation et les tests d'acceptation figurent dans la [roadmap
 
 | Commencer par… | Pour… |
 | :-- | :-- |
+| [Manuel d'utilisation](docs/AZ2_MANUEL_UTILISATEUR.md) | Jouer avec la machine : pages, contrôles, sauvegarde, premier beat |
 | [Premier démarrage](docs/AZ2_DEMARRAGE.md) | Préparer les deux cartes, les SD et les compilations |
 | [Architecture double firmware](docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md) | Comprendre les responsabilités de chaque cerveau |
 | [Câblage maître](docs/AZ2_CABLAGE_MASTER.md) | Relier commandes, Teensy, écran et DAC |

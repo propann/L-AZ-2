@@ -1,5 +1,27 @@
 # AZ-2 - Etat des lieux
 
+**[2026-09-19 -- nouveau manuel d'utilisation (docs/AZ2_MANUEL_UTILISATEUR.md)]**
+
+Demande : "il faut travailler sur la doc plus complete on a pas grand
+chose". Etat des lieux avant d'ecrire quoi que ce soit : plus de 30
+fichiers dans `docs/`, mais TOUS orientes ingenierie (audits, cablage,
+roadmap, licences) ou journal brut de session (`AZ2_ETAT_DES_LIEUX.md`,
+100+ Ko) -- AUCUN document explique comment UTILISER la machine une
+fois construite. Meme `AZ2_DEMARRAGE.md` ("Premier demarrage") est en
+realite une procedure de flash/dev (git clone, pio, checklist de
+securite), pas un guide utilisateur.
+
+Nouveau `docs/AZ2_MANUEL_UTILISATEUR.md` -- guide "comment jouer avec
+la machine", langage musicien plutot qu'informatique (coherent avec
+"c'est plus musicien" plus haut ce soir) : conventions de controle
+generales (C=retour, tap=selectionne, A+croix=edite), les 3 encodeurs
+(0=volume fixe, 1/2=contextuels avec leur code couleur), chaque page
+en detail (SEQUENCEUR/MOTEURS/PATCH/MIXER/SONG/AUDIO/JEUX/annexes),
+tableau des 6 moteurs et leurs patchs, sauvegarde patch-vs-projet, et
+un parcours pas-a-pas "premier beat". Ajoute au README (lien en tete
+de la doc-table ET dans la barre de navigation du haut) -- premiere
+chose qu'un utilisateur (pas un contributeur) devrait lire.
+
 **[2026-09-19 -- fusion avec le travail GB (autre session IA) + boutons
 MUTE/SOLO tactiles sur MIXER + audit navigation "retour" (rien trouve
 de casse)]**
