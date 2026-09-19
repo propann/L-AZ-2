@@ -112,6 +112,63 @@ void test_pad_id_and_valid_pad() {
 }
 
 
+void test_gb_audio_v2_stream_roundtrip() {
+  az2::GbAudioV2Frame frame;
+  frame.sequence = 65534;
+  frame.sampleRate = 32000;
+  frame.format = az2::kGbAudioV2FormatPcmU8;
+  frame.flags = az2::kGbAudioV2FlagStereo;
+  frame.payloadLen = 128;
+  for (uint16_t i = 0; i < frame.payloadLen; ++i)
+    frame.payload[i] = static_cast<uint8_t>((i * 37) & 0xff);
+  uint8_t wire[az2::kGbAudioV2HeaderBytes + az2::kGbAudioV2MaxPayload +
+               az2::kGbAudioV2CrcBytes] = {};
+  const size_t size = az2::encodeGbAudioV2(wire, sizeof(wire), frame);
+  TEST_ASSERT_EQUAL_UINT32(140, size);
+  az2::GbAudioV2Decoder decoder;
+  bool complete = false;
+  for (size_t i = 0; i < size; ++i) {
+    if (decoder.feed(wire[i])) {
+      TEST_ASSERT_FALSE(complete);
+      complete = true;
+    }
+  }
+  TEST_ASSERT_TRUE(complete);
+  TEST_ASSERT_EQUAL_UINT16(frame.sequence, decoder.frame.sequence);
+  TEST_ASSERT_EQUAL_UINT16(frame.sampleRate, decoder.frame.sampleRate);
+  TEST_ASSERT_EQUAL_UINT16(frame.payloadLen, decoder.frame.payloadLen);
+  TEST_ASSERT_EQUAL_MEMORY(frame.payload, decoder.frame.payload, frame.payloadLen);
+  TEST_ASSERT_EQUAL_UINT32(0, decoder.rejectedCrc);
+}
+
+void test_gb_audio_v2_reject_corruption_and_recover() {
+  az2::GbAudioV2Frame frame;
+  frame.sequence = 7;
+  frame.sampleRate = 14000;
+  frame.format = az2::kGbAudioV2FormatPcmU8;
+  frame.payloadLen = 4;
+  frame.payload[0] = 0x03; frame.payload[1] = 0xff;
+  frame.payload[2] = 0x03; frame.payload[3] = 0x00;
+  uint8_t wire[32] = {};
+  const size_t size = az2::encodeGbAudioV2(wire, sizeof(wire), frame);
+  TEST_ASSERT_EQUAL_UINT32(16, size);
+  az2::GbAudioV2Decoder decoder;
+  wire[11] ^= 0x80;
+  for (size_t i = 0; i < size; ++i) TEST_ASSERT_FALSE(decoder.feed(wire[i]));
+  TEST_ASSERT_EQUAL_UINT32(1, decoder.rejectedCrc);
+  wire[11] ^= 0x80;
+  bool complete = false;
+  for (size_t i = 0; i < size; ++i) complete |= decoder.feed(wire[i]);
+  TEST_ASSERT_TRUE(complete);
+  // Broken header must be rejected before touching the payload buffer.
+  wire[6] = 0xff; wire[7] = 0xff;
+  for (size_t i = 0; i < az2::kGbAudioV2HeaderBytes; ++i)
+    TEST_ASSERT_FALSE(decoder.feed(wire[i]));
+  TEST_ASSERT_EQUAL_UINT32(1, decoder.rejectedHeaders);
+  decoder.timeout();
+  TEST_ASSERT_EQUAL_UINT32(0, decoder.timeouts);
+}
+
 void test_gb_audio_v2_endian_helpers() {
   uint8_t bytes[2] = {0, 0};
   az2::writeLe16(bytes, 0xBEEF);
@@ -169,5 +226,7 @@ int main(int argc, char **argv) {
   RUN_TEST(test_gb_audio_v2_endian_helpers);
   RUN_TEST(test_gb_audio_v2_crc16_known_vector);
   RUN_TEST(test_gb_audio_v2_header_sanity);
+  RUN_TEST(test_gb_audio_v2_stream_roundtrip);
+  RUN_TEST(test_gb_audio_v2_reject_corruption_and_recover);
   return UNITY_END();
 }
