@@ -548,27 +548,32 @@ bool gbLoadRom(const char *filename) {
     romFile.close();
     return false;
   }
-  // Ouvrir et valider le fichier avant de liberer la partie precedente.
-  // La sauvegarde de l'ancienne cartouche est toujours effectuee ici.
-  if (!gbUnload()) {
-    romFile.close();
-    return false;
-  }
-  romSize = static_cast<uint32_t>(requestedRomSize);
-  romData = static_cast<uint8_t *>(heap_caps_malloc(romSize, MALLOC_CAP_SPIRAM));
-  if (romData == nullptr) {
+  // Staging : allocation + lecture COMPLETE avant de toucher a la
+  // cartouche active. Une ROM absente, trop grosse ou une SD instable
+  // ne doit pas interrompre le jeu/LSDJ deja charge.
+  uint8_t *candidateRomData =
+      static_cast<uint8_t *>(heap_caps_malloc(requestedRomSize, MALLOC_CAP_SPIRAM));
+  if (candidateRomData == nullptr) {
     Serial.println("GB:ROM_TOO_BIG_FOR_PSRAM");
     romFile.close();
     return false;
   }
-  const size_t readBytes = romFile.read(romData, romSize);
+  const size_t readBytes = romFile.read(candidateRomData, requestedRomSize);
   romFile.close();
-  if (readBytes != romSize) {
+  if (readBytes != requestedRomSize) {
     Serial.println("GB:ROM_READ_ERROR");
-    heap_caps_free(romData);
-    romData = nullptr;
+    heap_caps_free(candidateRomData);
     return false;
   }
+
+  // La nouvelle image est maintenant entierement disponible. Seulement
+  // ici on tente la sauvegarde/decharge de l'ancienne cartouche.
+  if (!gbUnload()) {
+    heap_caps_free(candidateRomData);
+    return false;
+  }
+  romSize = static_cast<uint32_t>(requestedRomSize);
+  romData = candidateRomData;
 
   const enum gb_init_error_e initErr =
       gb_init(&gb, romRead, romRead16, romRead32, cartRamRead, cartRamWrite, gbErrorCallback, nullptr);
