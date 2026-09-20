@@ -1,4 +1,5 @@
 #include "AZ2_RGB_Direct.h"
+#include <esp_cache.h>
 
 AZ2RgbDirect::AZ2RgbDirect(Arduino_DataBus *bus, const uint8_t *init_ops,
                            size_t init_len, int de, int vsync, int hsync,
@@ -70,4 +71,35 @@ void *AZ2RgbDirect::writableFrameBuffer() const {
 
 void *AZ2RgbDirect::frameBuffer(uint8_t index) const {
   return _frames[index & 1];
+}
+
+AZ2RgbDirectOutput::AZ2RgbDirectOutput(AZ2RgbDirect *driver)
+    : Arduino_G(480, 480), _driver(driver) {}
+
+bool AZ2RgbDirectOutput::begin(int32_t) {
+  return _driver && _driver->begin();
+}
+
+void AZ2RgbDirectOutput::drawBitmap(int16_t, int16_t, uint8_t *, int16_t,
+                                    int16_t, uint16_t, uint16_t) {}
+void AZ2RgbDirectOutput::drawIndexedBitmap(int16_t, int16_t, uint8_t *,
+                                           uint16_t *, int16_t, int16_t,
+                                           int16_t) {}
+void AZ2RgbDirectOutput::draw3bitRGBBitmap(int16_t, int16_t, uint8_t *, int16_t,
+                                           int16_t) {}
+void AZ2RgbDirectOutput::draw24bitRGBBitmap(int16_t, int16_t, uint8_t *, int16_t,
+                                            int16_t) {}
+
+void AZ2RgbDirectOutput::draw16bitRGBBitmap(int16_t x, int16_t y,
+                                            uint16_t *bitmap, int16_t w,
+                                            int16_t h) {
+  if (!_driver || !bitmap || x < 0 || y < 0 || x + w > WIDTH || y + h > HEIGHT) return;
+  auto *dst = static_cast<uint16_t *>(_driver->writableFrameBuffer());
+  for (int16_t row = 0; row < h; ++row) {
+    memcpy(dst + (y + row) * WIDTH + x, bitmap + row * w,
+           static_cast<size_t>(w) * sizeof(uint16_t));
+  }
+  esp_cache_msync(dst + y * WIDTH + x,
+                  static_cast<size_t>(h) * WIDTH * sizeof(uint16_t),
+                  ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 }
