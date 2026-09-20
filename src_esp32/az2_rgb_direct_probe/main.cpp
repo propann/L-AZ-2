@@ -12,6 +12,7 @@ AZ2RgbDirect driver(bus, gc9503v_type1_init_operations,
                     18, 17, 16, 21, kDataPins, W, H, 12000000);
 AZ2RgbDirectOutput output(&driver);
 Arduino_Canvas canvas(W, H, &output);
+uint16_t band[480 * 24];
 }
 
 void setup() {
@@ -47,14 +48,19 @@ void loop() {
   const uint32_t copyStartUs = micros();
   canvas.flush();
   const uint32_t copyUs = micros() - copyStartUs;
+  for (size_t i = 0; i < sizeof(band) / sizeof(band[0]); ++i) band[i] = phase ? RGB565(0, 120, 0) : RGB565(120, 80, 0);
+  const uint32_t bandStartUs = micros();
+  driver.copyRotatedRgb565(band, 0, 24, 480, 24);
+  const uint32_t bandUs = micros() - bandStartUs;
   phase = !phase;
   const uint32_t now = millis();
   if (now - last >= 1000) {
     last = now;
-    Serial.printf("AZ2:RGB_DIRECT_PROBE:STAT:frames=%lu:write=%u:flush_us=%lu\n",
+    Serial.printf("AZ2:RGB_DIRECT_PROBE:STAT:frames=%lu:write=%u:flush_us=%lu:band_us=%lu\n",
                   (unsigned long)driver.completedFrames(),
                   (unsigned)driver.writableIndex(),
-                  (unsigned long)copyUs);
+                  (unsigned long)copyUs,
+                  (unsigned long)bandUs);
   }
   delay(250);
 }

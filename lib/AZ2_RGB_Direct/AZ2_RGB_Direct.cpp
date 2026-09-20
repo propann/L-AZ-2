@@ -84,7 +84,9 @@ bool AZ2RgbDirect::copyRotatedRgb565(const uint16_t *bitmap, int16_t x,
       dst[dstY * _width + dstX] = bitmap[row * w + col];
     }
   }
-  esp_cache_msync(dst, static_cast<size_t>(_width) * _height * sizeof(uint16_t),
+  const int16_t firstDstY = _height - (y + h);
+  esp_cache_msync(dst + firstDstY * _width,
+                  static_cast<size_t>(h) * _width * sizeof(uint16_t),
                   ESP_CACHE_MSYNC_FLAG_DIR_C2M);
   return true;
 }
