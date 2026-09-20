@@ -81,3 +81,11 @@ Le probe Canvas corrigé applique la rotation 180 degrés avant la copie dans le
 buffer RGB direct. Test matériel validé : texte « RGB x2 » à l'endroit, aplats
 vert et brun alternés, et callbacks des deux buffers continus. Le pilote direct
 est maintenant validé pour les primitives Canvas de base à 12 MHz.
+
+## Mesure de copie Canvas complète
+
+Le probe instrumenté donne `flush_us=30660..36123` us pour une copie complète
+480x480 avec rotation 180 degrés. Cette voie est trop lente pour rafraîchir une
+image complète à 60 Hz. Le rendu GB devra donc conserver la copie par bandes et
+appeler la façade uniquement sur les lignes modifiées ; le double framebuffer
+reste utile pour supprimer le déchirement, pas pour accélérer une copie totale.
