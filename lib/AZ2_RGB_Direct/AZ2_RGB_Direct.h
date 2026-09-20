@@ -15,6 +15,8 @@ class AZ2RgbDirect {
   bool begin();
   void *writableFrameBuffer() const;
   void *frameBuffer(uint8_t index) const;
+  bool copyRotatedRgb565(const uint16_t *bitmap, int16_t x, int16_t y,
+                         int16_t w, int16_t h);
   uint32_t completedFrames() const { return _completedFrames; }
   uint8_t writableIndex() const { return _writeIndex; }
 

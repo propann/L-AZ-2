@@ -73,6 +73,22 @@ void *AZ2RgbDirect::frameBuffer(uint8_t index) const {
   return _frames[index & 1];
 }
 
+bool AZ2RgbDirect::copyRotatedRgb565(const uint16_t *bitmap, int16_t x,
+                                     int16_t y, int16_t w, int16_t h) {
+  if (!bitmap || x < 0 || y < 0 || x + w > _width || y + h > _height) return false;
+  auto *dst = static_cast<uint16_t *>(writableFrameBuffer());
+  for (int16_t row = 0; row < h; ++row) {
+    for (int16_t col = 0; col < w; ++col) {
+      const int16_t dstX = _width - 1 - (x + col);
+      const int16_t dstY = _height - 1 - (y + row);
+      dst[dstY * _width + dstX] = bitmap[row * w + col];
+    }
+  }
+  esp_cache_msync(dst, static_cast<size_t>(_width) * _height * sizeof(uint16_t),
+                  ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  return true;
+}
+
 AZ2RgbDirectOutput::AZ2RgbDirectOutput(AZ2RgbDirect *driver)
     : Arduino_G(480, 480), _driver(driver) {}
 
@@ -94,16 +110,7 @@ void AZ2RgbDirectOutput::draw16bitRGBBitmap(int16_t x, int16_t y,
                                             uint16_t *bitmap, int16_t w,
                                             int16_t h) {
   if (!_driver || !bitmap || x < 0 || y < 0 || x + w > WIDTH || y + h > HEIGHT) return;
-  auto *dst = static_cast<uint16_t *>(_driver->writableFrameBuffer());
   // Le panneau est monté en rotation 180 degrés, comme le chemin
   // Arduino_RGB_Display(rotation=2) du firmware principal.
-  for (int16_t row = 0; row < h; ++row) {
-    for (int16_t col = 0; col < w; ++col) {
-      const int16_t dstX = WIDTH - 1 - (x + col);
-      const int16_t dstY = HEIGHT - 1 - (y + row);
-      dst[dstY * WIDTH + dstX] = bitmap[row * w + col];
-    }
-  }
-  esp_cache_msync(dst, static_cast<size_t>(WIDTH) * HEIGHT * sizeof(uint16_t),
-                  ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  _driver->copyRotatedRgb565(bitmap, x, y, w, h);
 }
