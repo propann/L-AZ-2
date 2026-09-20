@@ -74,3 +74,10 @@ panneau réel a montré une image inversée avec des aplats vert/brun. Le probl�
 vient de la rotation 180° et de l'ordre des composantes appliqués par la façade,
 pas de l'allocation double buffer. Le probe est conservé comme test de
 synchronisation, sans être promu dans le firmware principal.
+
+## Correction de rotation validée
+
+Le probe Canvas corrigé applique la rotation 180 degrés avant la copie dans le
+buffer RGB direct. Test matériel validé : texte « RGB x2 » à l'endroit, aplats
+vert et brun alternés, et callbacks des deux buffers continus. Le pilote direct
+est maintenant validé pour les primitives Canvas de base à 12 MHz.
