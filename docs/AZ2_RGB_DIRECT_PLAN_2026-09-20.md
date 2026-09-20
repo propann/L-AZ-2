@@ -96,3 +96,12 @@ Le probe matériel donne `band_us=1573..1597` us pour une bande 480x24 avec
 rotation et invalidation cache limitée. La copie plein écran reste à
 `flush_us=30482..33626` us. Le chemin par bande est donc environ 20 fois moins
 coûteux et correspond à la granularité nécessaire au rendu GB X3.
+
+## Optimisation de copie mesurée
+
+Le probe a ensuite remplacé les écritures PSRAM 16 bits pixel par pixel par des
+écritures groupées 32 bits lorsque l'adresse est alignée, avec un repli sûr pour
+les coordonnées impaires. Sur la même carte, la copie plein écran est passée à
+`flush_us=23299..25469` us et la bande à `band_us=1140..1380` us. Le gain est
+d'environ 25 % sur le plein écran et 15 % sur la bande. Le commit de référence
+est `f91e72a`.
