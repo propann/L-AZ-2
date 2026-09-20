@@ -123,3 +123,16 @@ Code principal sous **GPL-3.0** ; plusieurs composants intégrés possèdent leu
 ---
 
 <div align="center"><sub>AZ-2 — Fabriquer un instrument, pas seulement assembler des composants.</sub></div>
+
+## Probe RGB double framebuffer
+
+Le pilote RGB direct est testable sans modifier le firmware AZ-Tracker :
+
+```bash
+pio run -e screen_esp_rgb_direct_probe
+pio run -e screen_esp_rgb_direct_probe -t upload
+```
+
+Ce probe utilise `esp_lcd` à 12 MHz, deux framebuffers PSRAM et le callback
+`on_frame_buf_complete`. Il alterne deux aplats de couleur pour vérifier la
+rotation des buffers. Le firmware principal reste dans `screen_esp`.
