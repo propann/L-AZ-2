@@ -89,3 +89,10 @@ Le probe instrumenté donne `flush_us=30660..36123` us pour une copie complète
 image complète à 60 Hz. Le rendu GB devra donc conserver la copie par bandes et
 appeler la façade uniquement sur les lignes modifiées ; le double framebuffer
 reste utile pour supprimer le déchirement, pas pour accélérer une copie totale.
+
+## Mesure par bande validée
+
+Le probe matériel donne `band_us=1573..1597` us pour une bande 480x24 avec
+rotation et invalidation cache limitée. La copie plein écran reste à
+`flush_us=30482..33626` us. Le chemin par bande est donc environ 20 fois moins
+coûteux et correspond à la granularité nécessaire au rendu GB X3.
