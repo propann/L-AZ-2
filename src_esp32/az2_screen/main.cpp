@@ -6005,9 +6005,19 @@ int16_t gbScreenLeft() { return static_cast<int16_t>((kScreenSize - gbScaledW())
 int16_t gbScreenTop() { return static_cast<int16_t>((kScreenSize - gbScaledH()) / 2); }
 
 #ifdef AZ2_DIRECT_PANEL
-void flushUiCanvas() { directCanvas.flush(); }
+bool uiCanvasFlushPending = false;
+uint32_t uiCanvasLastFlushMs = 0;
+void flushUiCanvas() { uiCanvasFlushPending = true; }
+void serviceUiCanvas() {
+  const uint32_t now = millis();
+  if (!uiCanvasFlushPending || now - uiCanvasLastFlushMs < 40) return;
+  directCanvas.flush();
+  uiCanvasLastFlushMs = now;
+  uiCanvasFlushPending = false;
+}
 #else
 void flushUiCanvas() {}
+void serviceUiCanvas() {}
 #endif
 
 void drawGbViewportFrame() {
@@ -6966,4 +6976,5 @@ void loop() {
     lastHeartbeatMs = now;
     Serial.println("DISPLAY:ALIVE:TICK");
   }
+  serviceUiCanvas();
 }
