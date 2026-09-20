@@ -123,3 +123,14 @@ validée visuellement.
 Le palier 19 MHz a ensuite été mesuré à `27..32 ms` pour le plein écran et
 `1,60 ms` pour une bande, sans avantage mesurable. Le probe est donc revenu à
 16 MHz dans les sources, qui reste le candidat à flasher pour la suite.
+
+## Variante d'intégration GB isolée
+
+Une cible `screen_esp_gb_direct` a été créée pour brancher le panneau direct au
+code complet de l'interface et de l'émulateur, sans modifier `screen_esp`. Le
+build passe, mais le premier essai matériel a perdu les entrées tactiles et les
+commandes, puis le port USB a décroché après le redémarrage. Cette cible reste
+donc expérimentale et ne doit pas être utilisée comme firmware de travail. Le
+firmware stable `screen_esp` a été restauré ; la prochaine intégration devra
+conserver l'initialisation d'entrée et le chemin UI éprouvé avant de remplacer
+le panneau.
