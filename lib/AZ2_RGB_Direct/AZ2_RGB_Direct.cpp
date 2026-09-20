@@ -95,11 +95,15 @@ void AZ2RgbDirectOutput::draw16bitRGBBitmap(int16_t x, int16_t y,
                                             int16_t h) {
   if (!_driver || !bitmap || x < 0 || y < 0 || x + w > WIDTH || y + h > HEIGHT) return;
   auto *dst = static_cast<uint16_t *>(_driver->writableFrameBuffer());
+  // Le panneau est monté en rotation 180 degrés, comme le chemin
+  // Arduino_RGB_Display(rotation=2) du firmware principal.
   for (int16_t row = 0; row < h; ++row) {
-    memcpy(dst + (y + row) * WIDTH + x, bitmap + row * w,
-           static_cast<size_t>(w) * sizeof(uint16_t));
+    for (int16_t col = 0; col < w; ++col) {
+      const int16_t dstX = WIDTH - 1 - (x + col);
+      const int16_t dstY = HEIGHT - 1 - (y + row);
+      dst[dstY * WIDTH + dstX] = bitmap[row * w + col];
+    }
   }
-  esp_cache_msync(dst + y * WIDTH + x,
-                  static_cast<size_t>(h) * WIDTH * sizeof(uint16_t),
+  esp_cache_msync(dst, static_cast<size_t>(WIDTH) * HEIGHT * sizeof(uint16_t),
                   ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 }
