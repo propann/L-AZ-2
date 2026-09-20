@@ -84,6 +84,21 @@ bool AZ2RgbDirect::copyRotatedRgb565(const uint16_t *bitmap, int16_t x,
     // The panel is rotated 180 degrees.  Pair adjacent pixels so the
     // reversed destination can be written as one aligned 32-bit store.
     int16_t col = 0;
+    for (; col + 3 < w; col += 4) {
+      const int16_t dstX = _width - 1 - (x + col + 3);
+      const uint64_t quad = static_cast<uint64_t>(src[col + 3]) |
+                            (static_cast<uint64_t>(src[col + 2]) << 16) |
+                            (static_cast<uint64_t>(src[col + 1]) << 32) |
+                            (static_cast<uint64_t>(src[col]) << 48);
+      if ((reinterpret_cast<uintptr_t>(dstRow + dstX) & 7u) == 0) {
+        *reinterpret_cast<uint64_t *>(dstRow + dstX) = quad;
+      } else {
+        dstRow[dstX] = src[col + 3];
+        dstRow[dstX + 1] = src[col + 2];
+        dstRow[dstX + 2] = src[col + 1];
+        dstRow[dstX + 3] = src[col];
+      }
+    }
     for (; col + 1 < w; col += 2) {
       const int16_t dstX = _width - 1 - (x + col + 1);
       const uint32_t pair = static_cast<uint32_t>(src[col + 1]) |

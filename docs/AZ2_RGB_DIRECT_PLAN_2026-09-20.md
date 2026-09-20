@@ -105,3 +105,8 @@ les coordonnées impaires. Sur la même carte, la copie plein écran est passée
 `flush_us=23299..25469` us et la bande à `band_us=1140..1380` us. Le gain est
 d'environ 25 % sur le plein écran et 15 % sur la bande. Le commit de référence
 est `f91e72a`.
+
+Une variante 64 bits alignée a ensuite été testée sur le probe. Elle donne
+`flush_us=22044..23623` us et `band_us=1100..1351` us sur plusieurs cycles,
+sans erreur série ni redémarrage. Le gain supplémentaire est modeste mais la
+voie reste compatible avec le repli 32 bits pour les adresses non alignées.
