@@ -57,3 +57,12 @@ alterne des aplats de couleur pour vérifier la synchronisation. La compilation
 PlatformIO est validée le 20/09/2026 ; le probe n'est pas flashé sur la machine
 principale tant que l'on n'a pas décidé de remplacer temporairement l'interface
 AZ-Tracker.
+
+## Test matériel du probe
+
+Le probe a été flashé après passage en mode BOOT. Le port série a confirmé les
+callbacks `on_frame_buf_complete` avec `frames=232, 274, 316, 359, 401` sur les
+fenêtres successives, soit environ 42 callbacks/s. Les deux adresses sont
+utilisées par l'alternance `write=0/1`. Le test valide donc l'allocation et la
+rotation matérielle des deux buffers à PCLK 12 MHz. Il reste à restaurer le
+firmware AZ-Tracker, puis à intégrer cette mécanique dans la façade graphique.
