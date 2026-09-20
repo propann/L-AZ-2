@@ -183,8 +183,20 @@ uint8_t readTouches(TouchPoint points[2]) {
   if (touchCount >= 1) {
     const int16_t rawX = static_cast<int16_t>(((buf[1] & 0x0F) << 8) | buf[2]);
     const int16_t rawY = static_cast<int16_t>(((buf[3] & 0x0F) << 8) | buf[4]);
-    const int16_t x = static_cast<int16_t>((kScreenSize - 1) - rawX);
-    const int16_t y = static_cast<int16_t>((kScreenSize - 1) - rawY);
+    const int16_t x = static_cast<int16_t>(
+#ifdef AZ2_DIRECT_PANEL
+        rawX
+#else
+        (kScreenSize - 1) - rawX
+#endif
+    );
+    const int16_t y = static_cast<int16_t>(
+#ifdef AZ2_DIRECT_PANEL
+        rawY
+#else
+        (kScreenSize - 1) - rawY
+#endif
+    );
     if (x >= 0 && x < kScreenSize && y >= 0 && y < kScreenSize) {
       points[0].active = true;
       points[0].x = x;
@@ -197,8 +209,20 @@ uint8_t readTouches(TouchPoint points[2]) {
   if (touchCount >= 2) {
     const int16_t rawX = static_cast<int16_t>(((buf[7] & 0x0F) << 8) | buf[8]);
     const int16_t rawY = static_cast<int16_t>(((buf[9] & 0x0F) << 8) | buf[10]);
-    const int16_t x = static_cast<int16_t>((kScreenSize - 1) - rawX);
-    const int16_t y = static_cast<int16_t>((kScreenSize - 1) - rawY);
+    const int16_t x = static_cast<int16_t>(
+#ifdef AZ2_DIRECT_PANEL
+        rawX
+#else
+        (kScreenSize - 1) - rawX
+#endif
+    );
+    const int16_t y = static_cast<int16_t>(
+#ifdef AZ2_DIRECT_PANEL
+        rawY
+#else
+        (kScreenSize - 1) - rawY
+#endif
+    );
     if (x >= 0 && x < kScreenSize && y >= 0 && y < kScreenSize) {
       points[1].active = true;
       points[1].x = x;
