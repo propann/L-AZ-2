@@ -1,5 +1,7 @@
 # Audit de code AZ-2 — 19 septembre 2026
 
+> **Archive de révision antérieure.** Plusieurs constats ci-dessous (sampleur à deux sons, sauvegardes non atomiques, `INST:255` et sauvegarde GB seulement à la sortie) ont été corrigés après cet audit. Voir [l'état vérifié du 20 septembre](AZ2_ETAT_2026-09-20.md) et [l'audit continu](AZ2_AUDIT_CONTINU_2026-09-19.md) avant de planifier de nouveaux travaux.
+
 ## Verdict
 
 **AZ-2 progresse très bien.** Le dépôt est passé d’un prototype avancé mais fragile à une **alpha matérielle cohérente et réellement utilisable**. Le système n’est pas encore au niveau « bêta fiable » : les fonctions essentielles existent, plusieurs tests sur le vrai matériel sont documentés, mais la protection des sauvegardes, la validation longue durée et la maintenabilité restent insuffisantes.

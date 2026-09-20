@@ -57,6 +57,19 @@ class AudioPlaySampler : public AudioStream {
   // cote appelant reste un seul chemin generique).
   void noteOff() {}
 
+  // Coupe IMMEDIATEMENT la lecture en cours (2026-09-19, audit de code
+  // -- meme categorie de risque que celui deja signale par l'audit des
+  // racks logiciels pour le rechargement PSRAM du GB Capture) : appele
+  // juste avant d'ecraser sampleData_/sampleLen_ (voir
+  // loadWavIntoPadSampler() cote main.cpp) pour eviter que update()
+  // continue de lire le buffer PENDANT qu'un nouveau fichier y est
+  // ecrit depuis la carte SD -- sans ca, un pad reassigne pendant
+  // qu'il joue encore pourrait lire un melange d'ancien et de nouveau
+  // contenu (glitch audio, pas un crash : sampleLen_ courant reste
+  // valide pour le buffer, meme taille). Distinct de noteOff()
+  // (silence volontaire, pas la fin naturelle du sample).
+  void stopNow() { playing_ = false; }
+
   virtual void update(void) {
     audio_block_t *block = allocate();
     if (block == nullptr) {

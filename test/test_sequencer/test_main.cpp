@@ -1,16 +1,17 @@
-#include <cassert>
+#include <unity.h>
 #include "sequencer.h"
 
 void testSequencerTrackInit() {
     SequencerTrack track;
-    assert(track.stepPlaying == false);
-    assert(track.activeFx == az2::kStepFxNone);
+    TEST_ASSERT_FALSE(track.stepPlaying);
+    TEST_ASSERT_EQUAL_UINT8(az2::kStepFxNone, track.activeFx);
     for (int i = 0; i < az2::kStepCount; ++i) {
-        assert(track.stepOn[i] == false);
+        TEST_ASSERT_FALSE(track.stepOn[i]);
     }
 }
 
 int main() {
-    testSequencerTrackInit();
-    return 0;
+    UNITY_BEGIN();
+    RUN_TEST(testSequencerTrackInit);
+    return UNITY_END();
 }

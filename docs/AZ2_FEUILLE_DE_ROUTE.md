@@ -604,3 +604,49 @@ Critère final émulation : 59,7275 Hz logique stable pendant 30 minutes, audio 
 Priorités matérielles AZ-2 : fiabiliser le câblage existant, ranger et immobiliser le faisceau, préserver l’accès USB/SD, terminer le sampler et l’émulation. Ne plus ajouter de carte dans ce boîtier.
 
 Documents associés : AZ2_EMULATION_JEUX.md pour l’AZ-2 actif ; AZ2_BUS_RACK_MOTEURS.md, AZ2_FLASH_MODULES.md, AZ2_MODULE_ESP32_AZ_VA1.md et AZ2_MODULE_ESP8266_AZ_CHIP.md comme études AZ-3.
+
+## Phase 10 active AZ-2 — fiabilité avant nouvelles fonctions (19 septembre 2026)
+
+L'audit actualisé est dans [AZ2_AUDIT_CONTINU_2026-09-19.md](AZ2_AUDIT_CONTINU_2026-09-19.md). Les corrections `INST:255`, sauvegarde temporaire et sampleur à 16 pads existent déjà ; les critères ci-dessous portent sur leur validation et leurs risques restants.
+
+| Ordre | Travail | Critère de sortie |
+| ---: | --- | --- |
+| 1 | Projets et patches : version, contrôle d'intégrité, validation complète avant application, reprise `.bak` | 20 cycles save/load et essais de coupure à plusieurs points sans perte du dernier projet valide |
+| 2 | Sampleur : permutation sûre des buffers, niveaux du bus pads, essais simultanés | 16 pads déclenchés sans lecture de buffer en cours d'écriture ni saturation non maîtrisée |
+| 3 | RAM GB : sauvegarde manuelle et périodique atomique | progression conservée après coupure contrôlée, ancien `.sav` toujours récupérable |
+| 4 | Séquenceur : durée maximale ISR et accès partagés | 30 minutes de lecture avec édition live, aucun dépassement ni état incohérent |
+| 5 | Émulation : matrice GB/GBC et métriques du lot 9.1 | 10 ROMs documentées, FPS logique, pertes audio et reprise de sauvegarde mesurés |
+
+Le passage au lot suivant dépend des essais sur la machine réelle. Les builds et tests natifs ne remplacent pas les mesures audio, SD et temps réel.
+
+Avancement du lot 1 : les nouvelles sauvegardes projet/patch utilisent `AZ2V2` et un CRC32 ; le chargement tente le `.bak` si le fichier principal est absent ou invalide. Les projets sont contrôlés avant chargement et avant remplacement du fichier précédent : lignes obligatoires, indices uniques et plages principales. Restent les essais de coupure et d'erreur SD sur matériel, ainsi que la validation exhaustive des champs optionnels.
+
+Avancement du lot 2 : l'arrêt du pad et la mise à jour de ses métadonnées sont synchronisés avec l'interruption audio ; le chargement WAV ne bloque pas les mises à jour audio. Les deux cartes ont été flashées et leur liaison vérifiée par journaux série. Restent l'essai d'un pad remplacé pendant sa lecture et la mesure du niveau avec plusieurs pads simultanés.
+
+### Éditeur SAMPLEUR et pages SONG / PROJETS
+
+Le travail d'interface demandé le 19 septembre est intégré au code : AUDIO ouvre SAMPLEUR ; celui-ci propose 16 pads compacts, la liste paginée des WAV de la SD Teensy, l'affectation au toucher ou à la croix/A, l'écoute avec B et quatre kits sauvegardables. SONG et PROJETS sont maintenant deux pages distinctes : SONG garde le chaînage, tandis que PROJETS présente les quatre slots avec CHARGER et SAUVER. La sauvegarde de projet comprend déjà les chemins des samples affectés.
+
+Validation : les deux cartes sont flashées. Le Teensy renvoie `SAMPLELIST`/`PADSAMPLE?` sur le matériel ; la navigation simulée ouvre la nouvelle page, et le pad 8 accepte un WAV puis reçoit bien `PAD:08:DOWN/UP` avec confirmation LED. Restent l'écoute humaine, le contrôle tactile/visuel et un cycle sauver/recharger un kit puis un projet dans des slots choisis sans écraser de données utiles. Mesurer aussi la latence du parcours SD avec une bibliothèque volumineuse.
+
+Extension arborescence demandée ensuite : le Teensy flashé liste maintenant le dossier courant (`SAMPLEDIR` ou `SAMPLEFILE`) avec pagination bornée. La racine et `/samples/BASS` sont confirmés sur la vraie SD. L'écran dispose du chemin courant, de l'ouverture au toucher/A et de la remontée par C/« < » ; le nouveau binaire écran compile et attend son flash en mode BOOT manuel. Après flash, parcourir plusieurs niveaux et vérifier le retour parent et l'affectation d'un WAV dans un sous-dossier.
+
+Mise à jour du 20 septembre : [état vérifié et répartition des cartes SD](AZ2_ETAT_2026-09-20.md). Les projets de démonstration ont été complétés au format chargé par l'ESP32 ; les slots 1 à 3 sont copiés sur sa carte SD, le slot 0 existant est préservé. Le séquenceur actif utilise désormais `sequencer.h` et `ISRLOAD?` permet de lire sa durée maximale de tick. Les validations sur le prototype restent nécessaires.
+
+## Point de bascule du 20 septembre — AZ-2 vers l'interface et le rack logiciel
+
+| Bloc | État réel | Décision |
+| --- | --- | --- |
+| Interface écran, tactile, croix/boutons, tracker, PATCH, SONG, PROJETS | Très avancé et flashé sur le prototype ; une passe page par page reste nécessaire | Stabiliser les retours, zones tactiles et redessins |
+| Rack audio local Teensy | Présent : 8 pistes, six moteurs, mixage, séquenceur partagé et contrôle moteur/patch | Mesurer la charge avec `projects/4.proj` |
+| Sampleur | Pads et moteur SAMPLER par piste présents ; banque WAV, découpage et édition avancée restent à faire | Qualifier les 16 pads et la permutation des samples |
+| Émulation GB/GBC | Fonctionnelle pour lancer des ROM, afficher, commander, sauvegarder et capturer un WAV ; cadence, compatibilité et audio restent insuffisamment mesurés | La garder en validation, sans bloquer l'interface musicale |
+| Rack général multi-cartes | Architecture AZ-BUS étudiée pour AZ-3 ; le boîtier AZ-2 est déjà plein | Ne pas ajouter de matériel dans AZ-2 |
+
+Ordre retenu : (1) tester chaque page au tactile et aux boutons, (2) jouer le projet de charge et mesurer ISR/audio, (3) qualifier le sampler, (4) établir la matrice de dix ROMs GB/GBC, puis (5) reprendre les fonctions d'émulation qui apportent un gain musical direct. La synchronisation LSDJ ↔ tracker et le rack multi-cartes restent hors du chemin critique AZ-2.
+### Idée à conserver — longueur variable des patterns
+
+Ajouter dans le tracker un mini-menu ouvert par l'appui sur l'encodeur 3. Une
+ligne de ce menu permettra de régler la longueur du pattern en cours, avec
+validation par l'encodeur. Cette fonction est notée pour une passe séquenceur
+ultérieure ; elle ne doit pas interrompre l'optimisation de l'émulation X3.

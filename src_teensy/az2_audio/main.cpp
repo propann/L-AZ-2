@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <math.h>
 // AZ-2 - Moteur audio Teensy v1 : multi-voix + sequenceur 16 pas.
 //
 // Architecture reprise de MicroDexed-touch (voir
@@ -18,6 +19,7 @@
 #include <Arduino.h>
 #include <Audio.h>
 #include <AZ2_Protocol.h>
+#include "sequencer.h"
 #include <Encoder.h>
 #include <SD.h>
 #include <synth_dexed.h>
@@ -25,7 +27,7 @@
 #include <synth_braids.h>
 #include <malloc.h>  // mallinfo() -- voir checkHeap(), diagnostic 2026-09-18
 
-volatile uint32_t maxIsrTime = 0;
+volatile uint32_t maxIsrTime = 0;  // duree maximale d'un tick, en microsecondes
 
 
 // Rempli par le coeur Teensyduino au boot (startup.c) en sommant les 2
@@ -51,13 +53,18 @@ void checkHeapTest(uint32_t bytes);  // definie plus bas, utilisee par handleCom
 // 8 (au lieu de 4) depuis la demande du 2026-09-14 ("on peut augmenter
 // les pistes monter a 8") -- performance mesuree reelle avant/apres ce
 // changement, voir AZ2_FEUILLE_DE_ROUTE_MOTEUR.md.
-constexpr uint8_t kTrackCount = 8;
+constexpr uint8_t kTrackCount = az2::kTrackCount;
 // Taille du pool AudioMemory() partage -- constante nommee (2026-09-19,
 // corrige un affichage fige a "/200" dans reportCpuUsage() alors que le
 // pool reel etait deja passe a 700, voir setup()) : une seule source de
 // verite pour l'appel AudioMemory() ET le diagnostic MEM?.
 constexpr uint16_t kAudioMemoryBlocks = 700;
-constexpr uint8_t kStepCount = 16;
+constexpr uint8_t kStepCount = az2::kStepCount;
+constexpr uint8_t kPatternCount = az2::kPatternCount;
+using az2::kStepFxNone;
+using az2::kStepFxArp;
+using az2::kStepFxCut;
+using az2::kStepFxRetrig;
 constexpr uint8_t kNotesPerTrack = 2;  // polyphonie legere par piste (accords)
 constexpr uint8_t kLiveNotes = 4;      // polyphonie de la voix "jeu au clavier"
 
@@ -295,6 +302,7 @@ AudioConnection patchGroupB(mixTracksB, 0, mixFinal, 1);
 constexpr uint32_t kPadSampleCapacity = 48000U * 2U;
 EXTMEM int16_t padSampleBuffer[az2::kPadCount][kPadSampleCapacity];
 AudioPlaySampler padSampler[az2::kPadCount];
+char padSamplePathLive[az2::kPadCount][64] = {};
 bool padSamplerLoaded[az2::kPadCount] = {};
 
 // Meme principe de mixage a etages que les pistes (AudioMixer4 = 4
@@ -707,6 +715,20 @@ bool loadWavIntoPadSampler(uint8_t pad, const char *path) {
   if (pad >= az2::kPadCount) {
     return false;
   }
+  // Coupe la lecture en cours AVANT d'ecraser le buffer (2026-09-19,
+  // audit de code -- meme categorie de risque que celle deja signalee
+  // par l'audit des racks logiciels pour le rechargement PSRAM du GB
+  // Capture) : reassigner un pad pendant qu'il joue encore ne doit pas
+  // laisser update() lire un melange d'ancien/nouveau contenu au
+  // milieu de l'ecriture SD (qui peut prendre plusieurs millisecondes
+  // pour un fichier de pres de 2s).
+  // stopNow() seul peut courir avec update() deja en cours. La section
+  // critique attend la fin de cette mise a jour puis interdit la
+  // suivante pendant le changement d'etat. La lecture SD, longue,
+  // s'effectue ensuite avec les interruptions audio retablies.
+  AudioNoInterrupts();
+  padSampler[pad].stopNow();
+  AudioInterrupts();
   char errPrefix[20];
   snprintf(errPrefix, sizeof(errPrefix), "SAMPLER:PAD:%d", pad);
   uint32_t sampleCount = 0;
@@ -719,8 +741,11 @@ bool loadWavIntoPadSampler(uint8_t pad, const char *path) {
   // bug evite au moment d'ecrire ce code : la bibliotheque Azothwave
   // fraichement rangee est en 24kHz, pas 44.1kHz -- sans ce parametre
   // explicite, chaque hit aurait joue ~1.84x trop vite/trop aigu.
+  AudioNoInterrupts();
   padSampler[pad].setSample(padSampleBuffer[pad], sampleCount, 60, sampleRate);
+  AudioInterrupts();
   padSamplerLoaded[pad] = true;
+  snprintf(padSamplePathLive[pad], sizeof(padSamplePathLive[pad]), "%s", path);
   Serial.print("PADSAMPLE:");
   Serial.print(pad);
   Serial.print(":READY:path=");
@@ -730,6 +755,47 @@ bool loadWavIntoPadSampler(uint8_t pad, const char *path) {
   Serial1.print(":READY:path=");
   Serial1.println(path);
   return true;
+}
+
+// Explore un dossier a la fois, comme la structure reelle de /samples.
+// SAMPLELIST:<dossier>:<offset> renvoie six dossiers/WAV et une 7e
+// entree temoin pour savoir si la page suivante existe.
+FLASHMEM __attribute__((noinline)) void listPadSamples(const String &line) {
+  const int lastColon = line.lastIndexOf(':');
+  String folder = line.substring(11, lastColon);
+  if (folder.length() == 0) folder = "/samples";  // ancien SAMPLELIST:0
+  if ((folder != "/samples" && !folder.startsWith("/samples/")) ||
+      folder.indexOf("..") >= 0 || folder.length() >= 64) {
+    Serial1.println("SAMPLELIST:ERROR:PATH");
+    return;
+  }
+  const int offset = constrain(line.substring(lastColon + 1).toInt(), 0, 4096);
+  uint16_t found = 0;
+  uint8_t sent = 0;
+  File root = SD.open(folder.c_str());
+  if (root) {
+    File entry = root.openNextFile();
+    while (entry && found <= offset + 6) {
+      const String name = entry.name();
+      const String path = name.startsWith("/") ? name : folder + "/" + name;
+      String lower = path;
+      lower.toLowerCase();
+      const bool isDir = entry.isDirectory();
+      if (name != "." && name != ".." && path.length() < 64 &&
+          (isDir || lower.endsWith(".wav"))) {
+        if (found >= offset && sent < 6) {
+          Serial1.printf(isDir ? "SAMPLEDIR:%u:%s\n" : "SAMPLEFILE:%u:%s\n", sent, path.c_str());
+          ++sent;
+        }
+        ++found;
+      }
+      entry.close();
+      entry = root.openNextFile();
+    }
+    if (entry) entry.close();
+    root.close();
+  }
+  Serial1.printf("SAMPLELIST:DONE:%u:%u\n", found, sent);
 }
 
 // Kit de batterie de depart (2026-09-19, "tu peut faire un kit de
@@ -932,32 +998,8 @@ void sendCommandError(const char *command, const char *reason) {
 // piste ; stocke/transmis mais PAS ENCORE applique en temps reel, voir
 // note dans triggerStepFx()/advanceTick() plus bas -- changer un patch
 // Dexed coute trop cher pour une ISR), FX+VAL (stepFx/stepFxVal).
-enum StepFx : uint8_t { kStepFxNone = 0, kStepFxArp = 1, kStepFxCut = 2, kStepFxRetrig = 3 };
 constexpr uint8_t kStepFxCount = 4;  // kStepFxNone..kStepFxRetrig
 
-struct SequencerTrack {
-  bool stepOn[kStepCount] = {};
-  uint8_t stepNote[kStepCount] = {};    // seede par seedDefaultNotes()
-  uint8_t stepPatch[kStepCount];        // 0xFF par defaut, voir seedDefaultNotes()
-  uint8_t stepFx[kStepCount] = {};      // StepFx, 0 = aucun
-  uint8_t stepFxVal[kStepCount] = {};   // ARP: xy (nibbles, demi-tons) ; CUT/RETRIG: nb de ticks
-  // Probabilite/condition par pas (2026-09-17, "on travaille le tracker on
-  // fait un truc qui eclate tout" -- fonction la plus citee dans l'etude
-  // concurrence face a Elektron). Values par defaut = comportement
-  // ORIGINAL exact (100 = joue toujours, 0/kStepCondAlways = aucune
-  // condition) : un pattern deja sauvegarde avant cet ajout continue de
-  // jouer identique tant qu'on n'y touche pas.
-  uint8_t stepProb[kStepCount];         // 0-100 (%), 100 par defaut -- voir seedDefaultNotes()
-  uint8_t stepCondition[kStepCount] = {};  // encode az2::stepConditionEncode()/kStepCond*, voir AZ2_Protocol.h
-  uint8_t playingNote = 0;  // note reellement tenue, pour l'extinction correcte
-  bool stepPlaying = false;
-  // Etat d'effet du pas EN COURS (recalcule a chaque declenchement,
-  // consulte/avance par l'ISR de tick -- voir advanceTick()).
-  uint8_t activeFx = kStepFxNone;
-  uint8_t activeFxVal = 0;
-  uint8_t baseNote = 0;          // note de reference du pas (l'ARP applique ses offsets dessus)
-  uint8_t ticksSinceTrigger = 0;
-};
 // Plusieurs patterns + chainage en "song", demande le 2026-09-16 ("il
 // faut un tracker complet ... plus qu'un sequenceur qui permet
 // d'assembler des patterns"). Modele le plus simple des 3 references
@@ -965,7 +1007,6 @@ struct SequencerTrack {
 // pas de song = UN pattern complet (8 pistes ensemble), pas de chaines
 // par piste independantes comme LSDJ/M8 (bien plus de travail pour peu
 // de gain a ce stade).
-constexpr uint8_t kPatternCount = 8;
 SequencerTrack patterns[kPatternCount][kTrackCount];
 // Pattern en cours d'EDITION -- STEP:/NOTE:/INST:/SFX: modifient
 // toujours celui-ci, qu'il soit ou non celui qui joue reellement (on
@@ -1255,6 +1296,7 @@ void triggerStepFx(uint8_t t) {
 // RETRIG, voir triggerStepFx()). Reste volontairement minimale : aucun
 // Serial.print ici (voir clockPending / updateSequencer()).
 void advanceTick() {
+  const uint32_t startedUs = micros();
   if (currentTick == 0) {
     allTrackNotesOff();
 
@@ -1335,6 +1377,8 @@ void advanceTick() {
   }
 
   currentTick = static_cast<uint8_t>((currentTick + 1) % ticksForCurrentStep);
+  const uint32_t elapsedUs = micros() - startedUs;
+  if (elapsedUs > maxIsrTime) maxIsrTime = elapsedUs;
 }
 
 // Appelee depuis loop() : se contente d'imprimer le CLOCK: en attente
@@ -1728,6 +1772,15 @@ void handlePatchCommand(const String &line) {
 float masterVolume = 1.0f;  // potard 1
 float reverbWet = 0.0f;     // potard 2 ou FX:reverb:
 float delayWet = 0.0f;      // potard 3 ou FX:delay:
+
+// Une course lineaire en amplitude parait concentree pres du maximum a
+// l'oreille. La racine carree etale donc la zone audible sur toute la course
+// de l'encodeur, tout en conservant le silence exact a 0.
+float masterGainFromEncoder(uint8_t value) {
+  const float normalized = static_cast<float>(value) / 127.0f;
+  constexpr float kMasterHeadroom = 0.75f;
+  return kMasterHeadroom * sqrtf(normalized);
+}
 
 void applyMasterMix() {
   mixMaster.gain(0, masterVolume);
@@ -2531,7 +2584,7 @@ void updateEncoders() {
     // choisit de les reaffecter au bus maitre sur certains ecrans (voir
     // handleFxCommand()).
     if (i == 0) {
-      masterVolume = static_cast<float>(encValue[i]) / 127.0f;
+      masterVolume = masterGainFromEncoder(encValue[i]);
       applyMasterMix();
     }
   }
@@ -2564,6 +2617,21 @@ void handlePadCommand(const String &line) {
   const uint8_t note = padToMidiNote(pad);
   const bool pressed = line.indexOf(":DOWN") > 0;
 
+  // Un pad ouvert depuis le tracker porte toujours la piste cible : dans
+  // ce cas le son vient du moteur/patch de cette piste (y compris le moteur
+  // SAMPLER). Les samples affectés aux pads restent réservés au clavier
+  // libre, sans piste cible.
+  const int trackIdx = line.indexOf("track=");
+  const bool hasTrack = trackIdx >= 0;
+  uint8_t track = 0;
+  if (hasTrack) {
+    track = static_cast<uint8_t>(line.substring(trackIdx + 6).toInt());
+    if (track >= kTrackCount) {
+      sendCommandError("PAD", "TRACK_OUT_OF_RANGE");
+      return;
+    }
+  }
+
   // PRIORITE kit de batterie (2026-09-19, "faire un kit de batterie
   // deja config sur les pad") : si CE pad a un echantillon dedie charge
   // (voir padSamplerLoaded[]/PADSAMPLE:), il joue TOUJOURS ce son a sa
@@ -2571,7 +2639,7 @@ void handlePadCommand(const String &line) {
   // de kit ne se transpose pas). Sinon, comportement inchange (piste
   // ciblee ou voix live, voir plus bas) : les pads sans echantillon
   // assigne restent un clavier chromatique normal.
-  if (padSamplerLoaded[pad]) {
+  if (padSamplerLoaded[pad] && !hasTrack) {
     if (pressed) {
       uint8_t velocity = 100;
       const int velIdx = line.indexOf("vel=");
@@ -2596,17 +2664,6 @@ void handlePadCommand(const String &line) {
   // voix live Dexed fixe. Absent (page AUDIO ouverte depuis le menu
   // general, sans piste de reference) -> comportement inchange
   // (liveVoice).
-  const int trackIdx = line.indexOf("track=");
-  const bool hasTrack = trackIdx >= 0;
-  uint8_t track = 0;
-  if (hasTrack) {
-    track = static_cast<uint8_t>(line.substring(trackIdx + 6).toInt());
-    if (track >= kTrackCount) {
-      sendCommandError("PAD", "TRACK_OUT_OF_RANGE");
-      return;
-    }
-  }
-
   if (pressed) {
     uint8_t velocity = 100;
     const int velIdx = line.indexOf("vel=");
@@ -2719,9 +2776,32 @@ void handleCommand(const String &line) {
       return;
     }
     const String path = line.substring(idx2 + 1);
+    if (path == "-") {
+      AudioNoInterrupts();
+      padSampler[pad].stopNow();
+      AudioInterrupts();
+      padSamplerLoaded[pad] = false;
+      padSamplePathLive[pad][0] = '\0';
+      Serial1.printf("PADSAMPLE:%d:CLEARED\n", pad);
+      return;
+    }
     if (!loadWavIntoPadSampler(static_cast<uint8_t>(pad), path.c_str())) {
       // Erreur deja rapportee par loadWavIntoPadSampler()/readWavPcm16Mono()
       // (prefixe "SAMPLER:PAD:<n>:..."), rien de plus a faire ici.
+    }
+    return;
+  }
+
+  if (line.startsWith("SAMPLELIST:")) {
+    listPadSamples(line);
+    return;
+  }
+
+  if (line == "PADSAMPLE?") {
+    for (uint8_t pad = 0; pad < az2::kPadCount; ++pad) {
+      if (padSamplerLoaded[pad] && padSamplePathLive[pad][0])
+        Serial1.printf("PADSAMPLE:%u:READY:path=%s\n", pad, padSamplePathLive[pad]);
+      else Serial1.printf("PADSAMPLE:%u:CLEARED\n", pad);
     }
     return;
   }
@@ -2946,6 +3026,16 @@ void handleCommand(const String &line) {
 
   if (line == "CPU?") {
     reportCpuUsage();
+    return;
+  }
+
+  if (line == "ISRLOAD?") {
+    const uint32_t maxUs = maxIsrTime;  // lecture 32 bits atomique sur Cortex-M7
+    const uint32_t budgetUs = static_cast<uint32_t>(tickIntervalUs() + 0.5f);
+    Serial.printf("ISRLOAD:max_us=%lu:tick_us=%lu\n",
+                  static_cast<unsigned long>(maxUs), static_cast<unsigned long>(budgetUs));
+    Serial1.printf("ISRLOAD:max_us=%lu:tick_us=%lu\n",
+                   static_cast<unsigned long>(maxUs), static_cast<unsigned long>(budgetUs));
     return;
   }
 
@@ -3709,6 +3799,22 @@ void setup() {
   mixFinal.gain(1, 0.8f);  // groupe pistes 4-7
   mixFinal.gain(2, 0.5f);  // voix live + bus pads (mixLiveAndPads, voir plus haut)
   mixFinal.gain(3, 0.6f);  // metronome (voir triggerMetronome())
+
+  // Marge de tete du bus pads (2026-09-19, audit de code -- aucun gain
+  // n'etait regle sur ces 6 nouveaux mixeurs, tous restaient au defaut
+  // 1.0 de la lib) : sans attenuation, un kit de batterie joue souvent
+  // PLUSIEURS pads a la fois (fill rapide, plusieurs doigts) -- 4 pads
+  // d'un meme groupe a 1.0 chacun peuvent sommer jusqu'a 4x avant
+  // meme mixFinal. Meme principe/ordre de grandeur que les groupes de
+  // pistes ci-dessus (0.8), applique ici a l'entree de chaque groupe de
+  // pads plutot qu'en sortie -- une seule case a regler pour les 4
+  // groupes (memes reglages pour A/B/C/D).
+  for (uint8_t ch = 0; ch < 4; ++ch) {
+    mixPadsA.gain(ch, 0.7f);
+    mixPadsB.gain(ch, 0.7f);
+    mixPadsC.gain(ch, 0.7f);
+    mixPadsD.gain(ch, 0.7f);
+  }
 
   // Enveloppe "clic" du metronome : pas de sustain, decay seul ramene
   // a zero -- une seule noteOn() par temps suffit, pas de noteOff() a

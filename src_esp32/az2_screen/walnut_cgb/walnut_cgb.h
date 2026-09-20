@@ -9910,11 +9910,3 @@ void __gb_step_cpu_x(struct gb_s *gb)
 #undef WGB_GET_ARITH
 #undef WGB_GET_ZERO
 #endif //WALNUT_GB_H
-
-
-
-
-
-
-
-

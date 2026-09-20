@@ -91,8 +91,17 @@ uint32_t gbLastAutosaveMs = 0;
 GbRuntimeStats runtimeStats;
 uint32_t statsWindowStartUs = 0;
 uint32_t statsWorkAccumUs = 0;
+uint32_t statsCoreAccumUs = 0;
+uint32_t statsAudioAccumUs = 0;
+uint32_t statsDisplayAccumUs = 0;
+uint32_t statsCoreMaxUs = 0;
+uint32_t statsDisplayMaxUs = 0;
+uint32_t statsAudioMaxUs = 0;
 uint32_t statsWindowFrames = 0;
 uint32_t statsWindowMaxUs = 0;
+constexpr uint8_t kStatsSamplesCapacity = 64;
+uint32_t statsWorkSamples[kStatsSamplesCapacity] = {};
+uint8_t statsWorkSampleCount = 0;
 char romTitle[17] = {0};
 // Chemin de sauvegarde (cart RAM) pour la ROM courante, meme nom que la
 // ROM avec l'extension remplacee par .sav, a cote d'elle dans /games --
@@ -108,26 +117,26 @@ char saveRamPath[kSavePathCapacity] = {0};
 static_assert(sizeof(rtcPath) == kSavePathCapacity,
               "GB: RTC/save path capacities must match");
 
-uint8_t romRead(struct gb_s *, const uint_fast32_t addr) {
+IRAM_ATTR uint8_t romRead(struct gb_s *, const uint_fast32_t addr) {
   return (addr < romSize) ? romData[addr] : 0xFF;
 }
 
-uint16_t romRead16(struct gb_s *, const uint_fast32_t addr) {
+IRAM_ATTR uint16_t romRead16(struct gb_s *, const uint_fast32_t addr) {
   if (addr + 1 >= romSize) return 0xFFFF;
   return static_cast<uint16_t>(romData[addr]) | (static_cast<uint16_t>(romData[addr + 1]) << 8);
 }
 
-uint32_t romRead32(struct gb_s *, const uint_fast32_t addr) {
+IRAM_ATTR uint32_t romRead32(struct gb_s *, const uint_fast32_t addr) {
   if (addr + 3 >= romSize) return 0xFFFFFFFF;
   return static_cast<uint32_t>(romData[addr]) | (static_cast<uint32_t>(romData[addr + 1]) << 8) |
          (static_cast<uint32_t>(romData[addr + 2]) << 16) | (static_cast<uint32_t>(romData[addr + 3]) << 24);
 }
 
-uint8_t cartRamRead(struct gb_s *, const uint_fast32_t addr) {
+IRAM_ATTR uint8_t cartRamRead(struct gb_s *, const uint_fast32_t addr) {
   return (addr < cartRamSize) ? cartRam[addr] : 0xFF;
 }
 
-void cartRamWrite(struct gb_s *, const uint_fast32_t addr, const uint8_t val) {
+IRAM_ATTR void cartRamWrite(struct gb_s *, const uint_fast32_t addr, const uint8_t val) {
   if (addr < cartRamSize) {
     if (cartRam[addr] != val) {
       cartRam[addr] = val;
@@ -696,6 +705,13 @@ bool gbUnload() {
   statsWorkAccumUs = 0;
   statsWindowFrames = 0;
   statsWindowMaxUs = 0;
+  statsCoreAccumUs = 0;
+  statsAudioAccumUs = 0;
+  statsDisplayAccumUs = 0;
+  statsCoreMaxUs = 0;
+  statsDisplayMaxUs = 0;
+  statsAudioMaxUs = 0;
+  statsWorkSampleCount = 0;
   return true;
 }
 
@@ -880,6 +896,9 @@ bool gbLoadRom(const char *filename) {
   gbLastAutosaveMs = millis();  // reparti a zero pour cette partie, voir gbRunFrame()
   runtimeStats = GbRuntimeStats{};
   statsWindowStartUs = micros();
+  statsCoreAccumUs = 0;
+  statsAudioAccumUs = 0;
+  statsWorkSampleCount = 0;
   if (cartRamSize > 0) {
     cartRam = static_cast<uint8_t *>(heap_caps_malloc(cartRamSize, MALLOC_CAP_SPIRAM));
     if (cartRam != nullptr) {
@@ -923,7 +942,11 @@ bool gbLoadRom(const char *filename) {
   // lignes en bandes pour supprimer l'ancien cout de 144 transactions par
   // frame. Un mode economie pourra etre ajoute plus tard, mais ne doit pas
   // etre le comportement par defaut d'une machine visant l'emulation native.
-  gb.direct.frame_skip = false;
+  // Le cœur continue d'exécuter chaque frame et de produire l'audio, mais
+  // saute un rendu LCD sur deux : le panneau RGB/PSRAM reste le goulet
+  // mesuré. L'image reste ainsi fluide autour de 30 Hz tandis que la logique
+  // du jeu conserve sa cadence proche de 59,7 Hz.
+  gb.direct.frame_skip = true;
 
   gb_get_rom_name(&gb, romTitle);
   romLoaded = true;
@@ -958,13 +981,27 @@ void gbRunFrame() {
   // optimisations 16 bits experimentales connues pour casser des jeux
   // restent, elles, desactivees dans walnut_cgb.h.
   gb_run_frame_dualfetch(&gb);
+  const uint32_t coreUs = micros() - workStartUs;
+  extern volatile uint32_t gGbDisplayLastUs;
+  const uint32_t displayUs = gGbDisplayLastUs;
+  const uint32_t audioStartUs = micros();
   sendGbAudioPacket();
-  const uint32_t workUs = micros() - workStartUs;
+  const uint32_t audioUs = micros() - audioStartUs;
+  const uint32_t workUs = coreUs + audioUs;
 
   ++runtimeStats.totalFrames;
   ++statsWindowFrames;
   statsWorkAccumUs += workUs;
+  statsCoreAccumUs += coreUs;
+  statsDisplayAccumUs += displayUs;
+  statsAudioAccumUs += audioUs;
+  if (coreUs > statsCoreMaxUs) statsCoreMaxUs = coreUs;
+  if (displayUs > statsDisplayMaxUs) statsDisplayMaxUs = displayUs;
+  if (audioUs > statsAudioMaxUs) statsAudioMaxUs = audioUs;
   if (workUs > statsWindowMaxUs) statsWindowMaxUs = workUs;
+  if (statsWorkSampleCount < kStatsSamplesCapacity) {
+    statsWorkSamples[statsWorkSampleCount++] = workUs;
+  }
 
   const uint32_t nowUs = micros();
   const uint32_t windowUs = nowUs - statsWindowStartUs;
@@ -972,11 +1009,40 @@ void gbRunFrame() {
     runtimeStats.fpsX10 = static_cast<uint16_t>(
         (static_cast<uint64_t>(statsWindowFrames) * 10000000ull + windowUs / 2) / windowUs);
     runtimeStats.avgWorkUs = statsWorkAccumUs / statsWindowFrames;
+    runtimeStats.avgCoreUs = statsCoreAccumUs / statsWindowFrames;
+    runtimeStats.avgDisplayUs = statsDisplayAccumUs / statsWindowFrames;
+    runtimeStats.avgAudioUs = statsAudioAccumUs / statsWindowFrames;
+    runtimeStats.maxCoreUs = statsCoreMaxUs;
+    runtimeStats.maxDisplayUs = statsDisplayMaxUs;
+    runtimeStats.maxAudioUs = statsAudioMaxUs;
     runtimeStats.maxWorkUs = statsWindowMaxUs;
+    for (uint8_t i = 1; i < statsWorkSampleCount; ++i) {
+      const uint32_t value = statsWorkSamples[i];
+      uint8_t j = i;
+      while (j > 0 && statsWorkSamples[j - 1] > value) {
+        statsWorkSamples[j] = statsWorkSamples[j - 1];
+        --j;
+      }
+      statsWorkSamples[j] = value;
+    }
+    if (statsWorkSampleCount > 0) {
+      const uint8_t p99Index = static_cast<uint8_t>((statsWorkSampleCount * 99U) / 100U);
+      runtimeStats.p99WorkUs = statsWorkSamples[p99Index >= statsWorkSampleCount ?
+                                                   statsWorkSampleCount - 1 : p99Index];
+    } else {
+      runtimeStats.p99WorkUs = 0;
+    }
     statsWindowStartUs = nowUs;
     statsWorkAccumUs = 0;
+    statsCoreAccumUs = 0;
+    statsDisplayAccumUs = 0;
+    statsAudioAccumUs = 0;
+    statsCoreMaxUs = 0;
+    statsDisplayMaxUs = 0;
+    statsAudioMaxUs = 0;
     statsWindowFrames = 0;
     statsWindowMaxUs = 0;
+    statsWorkSampleCount = 0;
   }
 
   const uint32_t now = millis();

@@ -73,7 +73,7 @@ Le cœur de la composition : un tracker 8 pistes, 16 pas par pattern, inspiré d
   - **MOTEUR** — ouvre la page Moteurs pour cette piste.
   - **PATCH** — ouvre la page Patch complète (filtre, ADSR, forme d'onde) pour cette piste.
   - **EFFET** — reste dans le tracker, place le focus croix directement sur la colonne FX du pas sélectionné.
-  - **CLAVIER** — ouvre la page Audio (pads tactiles), en mode "pose la note sur le pas sélectionné" (pratique pour composer en jouant en direct).
+  - **PAD 4X4** — ouvre le clavier tactile 4×4 configuré sur le moteur/patch de la piste sélectionnée, en mode "pose la note sur le pas sélectionné".
   - **METRO** — active/désactive le métronome.
   - **SAUVER** — sauvegarde tout le morceau (patterns, chaînage song, tempo, et le moteur/patch/réglages de chaque piste) dans l'emplacement PROJET actuellement choisi, sans quitter le tracker.
 
@@ -91,7 +91,7 @@ Le cœur de la composition : un tracker 8 pistes, 16 pas par pattern, inspiré d
 
 ### Transport
 
-Barre du bas : PLAY/STOP, BPM (+/- 5 par tap gauche/droite de la case), division rythmique. Bouton D = déclenche un "fill" temporaire pendant qu'il est maintenu (variation de motif).
+Barre du bas : PLAY/STOP, BPM (+/- 5 par tap gauche/droite de la case), division rythmique. Les flèches peuvent entrer dans les boutons latéraux : depuis la dernière colonne, DROITE ouvre le focus du panneau, HAUT/BAS choisit MOTEUR/PATCH/EFFET/CLAVIER/METRO/SAUVER, puis A confirme. Bouton **D** déclenche un "fill" temporaire pendant qu'il est maintenu (variation de motif). C reste le retour.
 
 ## 6. Page MOTEURS
 
@@ -144,11 +144,15 @@ Deux systèmes de sauvegarde distincts, tous deux sur la carte SD de l'écran :
 - **Patch** (page PATCH, ligne SLOT) : moteur + patch + filtre + ADSR + algo/feedback Dexed d'**une seule piste**, dans l'un des 8 emplacements. A maintenu + GAUCHE (charge) ou DROITE (sauve) sur la ligne SLOT ; ou touchez directement SLOT/SAVE/LOAD.
 - **Projet** (page PROJET, ou bouton SAUVER du tracker) : **tout le morceau** — patterns, chaînage song, tempo, gamme, et le moteur/patch/réglages de chaque piste — dans l'un des 4 emplacements.
 
+La page **PROJETS** affiche les quatre fichiers de la SD ESP32 sous forme de liste. **HAUT/BAS** choisit un projet, **A** le charge, **D** lance la sauvegarde (un deuxième appui confirme si le slot contient déjà un fichier), **B** ouvre SONG et **C** revient. Les deux grands boutons tactiles CHARGER/SAUVER font les mêmes actions ; toucher une ligne la sélectionne. Un message en bas confirme le résultat ou indique l'erreur.
+
 Les deux utilisent une écriture atomique (fichier temporaire puis renommage) : une coupure de courant en cours de sauvegarde ne peut pas corrompre le dernier fichier valide.
 
 ## 11. Page SONG
 
 Chaîner plusieurs patterns pour construire un morceau complet (intro / couplet / refrain...). Bascule entre boucle simple (comportement par défaut) et mode song ; une grille de 16 cases où chaque case pointe vers un pattern (0-7).
+
+Les pages SONG et PROJETS sont séparées pour que la grille ne recouvre plus les commandes de sauvegarde. Dans SONG, **HAUT/BAS** déplace la case choisie, **GAUCHE/DROITE** change son pattern, **A** bascule le mode, **D** règle la longueur, **B** ouvre PROJETS et **C** revient. Les cases, le mode, la longueur et le bouton PROJETS restent tactiles.
 
 ## 12. Page AUDIO (pads)
 

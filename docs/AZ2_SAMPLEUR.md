@@ -123,3 +123,15 @@ La zone dynamique est dimensionnée pour **30 secondes à 14 kHz mono 16 bits**,
 Cette intégration fournit un slot dynamique unique, « dernier GB Capture ». Elle ne remplace pas encore un gestionnaire de banque complet : navigation de dizaines/centaines de WAV, renommage, suppression, découpage, trim/normalisation et affectation de plusieurs captures restent des évolutions.
 
 Le code doit encore être qualifié sur le Teensy réel avec PSRAM et carte SD avant d'être considéré comme une fonction matérielle validée.
+
+## Mise à jour 2026-09-19 — éditeur de kits de pads
+
+Dans **AUDIO > SAMPLEUR**, la grille compacte de 16 pads sert à choisir et écouter un pad. La liste de droite respecte l'arborescence réelle de `/samples` sur la carte SD du Teensy : elle affiche six fichiers ou dossiers du niveau courant. Toucher un dossier ou appuyer sur A l'ouvre ; C ou « < » remonte au parent, puis revient à AUDIO depuis la racine. Dans un dossier, choisir un WAV puis **AFFECTER**, ou le glisser vers un pad, l'assigne. La croix haut/bas parcourt la liste, gauche/droite choisit le pad, A ouvre/affecte et B joue. Le choix devient jouable dès que le Teensy confirme `PADSAMPLE:...:READY`.
+
+Quatre kits indépendants sont enregistrables sur la carte SD de l'écran dans `/kits/0.kit` à `/kits/3.kit`. **SAUVER** écrit le kit choisi avec version et CRC via la sauvegarde temporaire ; **CHARGER** remet les 16 pads à zéro puis recharge les affectations. Le projet global sauvegarde aussi ces affectations. La page **SONG** regroupe le chaînage ; la page **PROJETS** présente séparément les quatre slots avec **CHARGER** et **SAUVER**.
+
+Formats affichés : WAV mono PCM 16 bits, 8–48 kHz, dans la capacité du buffer de chaque pad. Les chemins de 63 caractères ou plus ne sont pas présentés par la liste. La navigation ouvre autant de niveaux de sous-dossiers que le chemin le permet. Les essais tactiles et le cycle réel de sauvegarde/chargement restent à vérifier sur le prototype.
+
+La nouvelle navigation hiérarchique est vérifiée par le protocole sur le Teensy réel : la racine retourne deux WAV puis les dossiers `BASS`, `CYMBALS`, `KICKS`, `LOOPS` ; `/samples/BASS` retourne ses WAV. Le firmware écran correspondant est compilé, mais son flash attend une nouvelle entrée manuelle en mode BOOT après l'échec automatique `0x14`.
+
+Validation du protocole sur le prototype : le Teensy flashé renvoie six vrais chemins pour `SAMPLELIST:0`, puis `SAMPLELIST:DONE:7:6` sans parcourir toute la bibliothèque. `PADSAMPLE?` renvoie les huit samples du kit de démarrage et confirme que les pads 8–15 sont vides. Après entrée manuelle en mode BOOT par l'utilisateur, l'écran ESP32-S3 a été flashé avec succès (hachage vérifié). Navigation simulée par boutons jusqu'à AUDIO > SAMPLEUR : l'écran demande et reçoit bien les deux réponses. Le fichier `/samples/BASS/Bass_26.wav` a été affecté au pad 8 vide ; le Teensy a répondu `PADSAMPLE:8:READY`. B déclenche `PAD:08:DOWN` puis `UP`, et le Teensy confirme `LED:08:ON/OFF`. L'écoute et le rendu tactile restent à confirmer humainement ; aucun kit ni projet n'a été écrasé pour cet essai.

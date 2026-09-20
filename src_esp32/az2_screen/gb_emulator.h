@@ -50,6 +50,13 @@ struct GbRuntimeStats {
   uint16_t fpsX10 = 0;          // cadence observee x10 sur ~1 seconde
   uint32_t avgWorkUs = 0;       // CPU emulation + paquet audio, moyenne fenetre
   uint32_t maxWorkUs = 0;       // pire frame de la fenetre
+  uint32_t p99WorkUs = 0;       // 99e percentile de la fenetre
+  uint32_t avgCoreUs = 0;       // coeur GB + rendu LCD
+  uint32_t avgDisplayUs = 0;    // temps passe dans le driver RGB
+  uint32_t avgAudioUs = 0;      // generation/conversion/envoi audio
+  uint32_t maxCoreUs = 0;
+  uint32_t maxDisplayUs = 0;
+  uint32_t maxAudioUs = 0;
   uint32_t totalFrames = 0;
   uint16_t autosaveFailures = 0;
 };

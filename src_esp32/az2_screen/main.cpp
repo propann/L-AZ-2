@@ -27,6 +27,8 @@
 
 #include <Arduino.h>
 #include <Arduino_GFX_Library.h>
+#include <databus/Arduino_ESP32RGBPanel.h>
+#include <esp_cache.h>
 #include <AZ2_Protocol.h>
 #include <Wire.h>
 #include <math.h>
@@ -34,6 +36,9 @@
 #include <SD.h>
 #include <Preferences.h>
 #include "gb_emulator.h"
+
+void drawGbViewportFrame();
+uint8_t gbDisplayScale = 2;
 
 namespace {
 
@@ -197,7 +202,7 @@ bool inBox(int16_t x, int16_t y, int16_t bx, int16_t by, int16_t bw, int16_t bh)
 // ---------------------------------------------------------------------
 // Etat partage entre les pages / le lien Teensy
 // ---------------------------------------------------------------------
-enum class Screen : uint8_t { Menu, Controls, Audio, Sequencer, Engines, Retro, Config, Links, About, Patch, Song, Project, Mixer };
+enum class Screen : uint8_t { Menu, Controls, Audio, Sampler, Sequencer, Engines, Retro, Config, Links, About, Patch, Song, Project, Mixer };
 Screen currentScreen = Screen::Menu;
 // "Retour" (2026-09-19, "il faut pas que ca revienne aux menu general
 // il faut que ca revienne d'un etage seulement") -- UN SEUL niveau
@@ -205,8 +210,6 @@ Screen currentScreen = Screen::Menu;
 // (voir plus bas) : suffit pour "revenir d'ou on vient" partout, sans
 // la complexite d'une vraie pile d'historique.
 Screen navPrevious = Screen::Menu;
-
-bool teensyLinked = false;
 
 constexpr uint8_t kLogLines = 8;
 String logBuf[kLogLines];
@@ -245,21 +248,6 @@ constexpr int16_t kStatusY = kScreenSize - 30;
 // qui nous empeche de voir les dernieres lignes") -- meme raisonnement,
 // la page defile deja (voir patchScroll) et a besoin de tout l'espace
 // vertical disponible.
-bool drawLinkStatusExcluded() {
-  return currentScreen == Screen::Sequencer || currentScreen == Screen::Patch;
-}
-
-void drawLinkStatus() {
-  if (drawLinkStatusExcluded()) {
-    return;
-  }
-  gfx->fillRect(kMargin, kStatusY, kScreenSize - 2 * kMargin, 22, RGB565_BLACK);
-  gfx->setTextSize(1);
-  gfx->setTextColor(teensyLinked ? RGB565(90, 220, 120) : kDim);
-  gfx->setCursor(kMargin, kStatusY + 4);
-  gfx->print(teensyLinked ? "TEENSY: relie" : "TEENSY: en attente...");
-}
-
 void drawSubHeader(const char *title, uint16_t accent) {
   gfx->fillScreen(RGB565_BLACK);
   gfx->setTextColor(accent);
@@ -268,7 +256,6 @@ void drawSubHeader(const char *title, uint16_t accent) {
   gfx->print("< ");
   gfx->print(title);
   gfx->drawFastHLine(kMargin, 60, kScreenSize - 2 * kMargin, kFaint);
-  drawLinkStatus();
 }
 
 bool hitBack(int16_t x, int16_t y) {
@@ -324,7 +311,7 @@ struct CategoryInfo {
 };
 
 constexpr CategoryInfo kCategories[kMenuCatCount] = {
-    {"MUSIQUE", "sequenceur, moteurs, audio"},
+    {"AZ-TRACKER", "sequenceur, moteurs, audio"},
     {"JEUX", "emulateur Game Boy / GBC"},
     {"CONFIG", "reglages, croix/boutons"},
     {"DOC", "journal serie, a propos"},
@@ -342,8 +329,8 @@ constexpr MenuItem kMenuItems[] = {
     {"MOTEURS", "moteur + patch par piste", Screen::Engines, MenuCat::Musique},
     {"PATCH", "filtre + ADSR + forme d'onde", Screen::Patch, MenuCat::Musique},
     {"MIXER", "volume de toutes les pistes", Screen::Mixer, MenuCat::Musique},
-    {"SONG", "chainer les patterns", Screen::Song, MenuCat::Musique},
-    {"PROJET", "sauvegarder / charger tout le morceau", Screen::Project, MenuCat::Musique},
+    {"SONG", "chaine les patterns", Screen::Song, MenuCat::Musique},
+    {"PROJETS", "liste, charger et sauver", Screen::Project, MenuCat::Musique},
     {"AUDIO", "jouer le Teensy depuis l'ecran", Screen::Audio, MenuCat::Musique},
     {"JEUX", "Game Boy / GBC (ROM sur carte SD)", Screen::Retro, MenuCat::Jeux},
     {"CONFIGURATION", "ecran de veille, reglages", Screen::Config, MenuCat::Config},
@@ -369,6 +356,7 @@ uint8_t categoryItems(MenuCat cat, uint8_t *out) {
 // la categorie choisie. Remis a -1 a chaque entree sur Screen::Menu
 // depuis un autre ecran (voir goTo()) -- toujours revenir a l'accueil.
 int8_t menuCategory = -1;
+int8_t menuReturnCategory = -1;
 // Ligne/carte survolee par la croix (voir NAV: dans handleTeensyLine())
 // -- demande 2026-09-15 ("il faut que ca serve dans les menus") : la
 // croix + le bouton A pilotent le menu, pas seulement le tactile.
@@ -440,7 +428,6 @@ void drawMenu() {
     for (uint8_t i = 0; i < kMenuCatCount; ++i) {
       drawCategoryCard(i);
     }
-    drawLinkStatus();
   } else {
     drawSubHeader(kCategories[menuCategory].label, kPalette[menuCategory % kPaletteCount]);
     uint8_t items[kMenuItemCount];
@@ -479,10 +466,10 @@ int8_t hitTestMenuSubRow(int16_t x, int16_t y, uint8_t count) {
 // partagee avec la page AUDIO plus bas (touche = jouer le Teensy) --
 // gardee ici meme si la page PADS & LEDS d'origine (qui les a introduits)
 // a ete remplacee par CONTROLES ci-dessous.
-constexpr int16_t kGridLeft = 60;
-constexpr int16_t kGridTop = 90;
-constexpr int16_t kGridCell = 80;
-constexpr int16_t kGridGap = 10;
+constexpr int16_t kGridLeft = 8;
+constexpr int16_t kGridTop = 28;
+constexpr int16_t kGridCell = 104;
+constexpr int16_t kGridGap = 4;
 
 void padCellRect(uint8_t pad, int16_t &x, int16_t &y) {
   const uint8_t row = pad / 4;
@@ -663,6 +650,10 @@ void drawAudioCell(uint8_t pad, bool pressed) {
 // pour ne jamais ecraser une composition par accident en jouant
 // simplement sur les pads.
 bool padEditsStep = false;
+bool padMenuOpen = false;
+uint8_t padMenuIndex = 0;
+constexpr uint8_t kPadMenuCount = 5;
+const char *const kPadMenuItems[kPadMenuCount] = {"JEU LIBRE", "ARP", "GAMME", "ACCORD", "OCTAVE"};
 // -1 = generique (voix live Dexed fixe, comportement d'origine) ; sinon
 // = piste dont les pads jouent le VRAI moteur/patch (2026-09-19, "on
 // ajoute un bouton dans la fenetre du tracker pour ... joue
@@ -680,30 +671,162 @@ int8_t padTargetTrack = -1;
 // directement ici : reste ainsi TOUJOURS synchronise avec ce qui est
 // reellement charge, que l'assignation vienne d'ici, du kit de depart
 // au boot du Teensy, ou d'un chargement de projet.
-char padSamplePath[az2::kPadCount][48] = {};
+char padSamplePath[az2::kPadCount][64] = {};
 extern int8_t selectedSeqTrack;  // definie plus bas, avec le reste de l'etat du sequenceur
 extern int8_t selectedSeqStep;
 
 void drawAudioPage() {
-  char title[56];
-  if (padTargetTrack >= 0) {
-    if (padEditsStep) {
-      snprintf(title, sizeof(title), "AUDIO - piste %d, pose sur pas %d (D)", padTargetTrack + 1, selectedSeqStep);
-    } else {
-      snprintf(title, sizeof(title), "AUDIO - piste %d (D=poser sur pas)", padTargetTrack + 1);
-    }
-  } else if (padEditsStep) {
-    // piste +1 (2026-09-19, "plus musicien") -- affichage seulement.
-    snprintf(title, sizeof(title), "AUDIO - pose sur piste %d pas %d (D)", selectedSeqTrack + 1, selectedSeqStep);
-  } else {
-    snprintf(title, sizeof(title), "AUDIO - touche pour jouer (D=poser sur pas)");
-  }
-  drawSubHeader(title, kPalette[2]);
+  gfx->fillScreen(RGB565_BLACK);
   for (uint8_t pad = 0; pad < az2::kPadCount; ++pad) {
     drawAudioCell(pad, false);
   }
   heldAudioPad[0] = -1;
   heldAudioPad[1] = -1;
+}
+
+void drawPadMenu() {
+  constexpr int16_t x = 54;
+  constexpr int16_t y = 62;
+  constexpr int16_t w = 372;
+  constexpr int16_t h = 350;
+  gfx->fillRect(x, y, w, h, RGB565_BLACK);
+  gfx->drawRect(x, y, w, h, kPalette[2]);
+  gfx->setTextSize(2);
+  gfx->setTextColor(kPalette[2]);
+  gfx->setCursor(x + 18, y + 18);
+  gfx->print("PAD 4X4");
+  gfx->setTextSize(1);
+  for (uint8_t i = 0; i < kPadMenuCount; ++i) {
+    const int16_t rowY = static_cast<int16_t>(y + 58 + i * 52);
+    const bool selected = i == padMenuIndex;
+    if (selected) gfx->fillRect(x + 12, rowY - 4, w - 24, 38, kPalette[1]);
+    gfx->setTextColor(selected ? RGB565_BLACK : RGB565_WHITE);
+    gfx->setCursor(x + 28, rowY + 8);
+    gfx->print(kPadMenuItems[i]);
+  }
+  gfx->setTextColor(kDim);
+  gfx->setCursor(x + 18, y + h - 24);
+  gfx->print("ENC 1: choisir   APPUI: valider/fermer");
+}
+
+constexpr uint8_t kSamplerRows = 6;
+char samplerFiles[kSamplerRows][64] = {};
+bool samplerIsDir[kSamplerRows] = {};
+char samplerFolder[64] = "/samples";
+uint16_t samplerOffset = 0;
+uint16_t samplerTotal = 0;
+uint8_t samplerVisible = 0;
+uint8_t samplerSelectedRow = 0;
+uint8_t samplerSelectedPad = 0;
+uint8_t samplerKitSlot = 0;
+bool samplerNeedsRedraw = false;
+int8_t heldSamplerFile[2] = {-1, -1};
+char samplerUiStatus[40] = {};
+void saveSamplerKit();
+void loadSamplerKit();
+extern bool screensaverActive;
+void drawSamplerPage();
+void goTo(Screen s);
+
+void requestSamplerList() {
+  for (uint8_t i = 0; i < kSamplerRows; ++i) {
+    samplerFiles[i][0] = '\0';
+    samplerIsDir[i] = false;
+  }
+  samplerVisible = 0;
+  char msg[96];
+  snprintf(msg, sizeof(msg), "SAMPLELIST:%s:%u", samplerFolder, samplerOffset);
+  sendToTeensy(msg);
+}
+
+void samplerOpenSelected() {
+  if (samplerSelectedRow >= samplerVisible || !samplerIsDir[samplerSelectedRow]) return;
+  snprintf(samplerFolder, sizeof(samplerFolder), "%s", samplerFiles[samplerSelectedRow]);
+  samplerOffset = 0;
+  samplerSelectedRow = 0;
+  requestSamplerList();
+  drawSamplerPage();
+}
+
+void samplerGoUp() {
+  if (strcmp(samplerFolder, "/samples") == 0) {
+    goTo(Screen::Audio);
+    return;
+  }
+  char *slash = strrchr(samplerFolder, '/');
+  if (slash && slash > samplerFolder) *slash = '\0';
+  else snprintf(samplerFolder, sizeof(samplerFolder), "/samples");
+  samplerOffset = 0;
+  samplerSelectedRow = 0;
+  requestSamplerList();
+  drawSamplerPage();
+}
+
+void drawSamplerPage() {
+  drawSubHeader("SAMPLEUR", kPalette[2]);
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(20, 72);
+  gfx->print("PAD   toucher pour jouer / choisir");
+  gfx->setCursor(242, 72);
+  gfx->print(String(samplerFolder).substring(0, 35));
+  for (uint8_t pad = 0; pad < az2::kPadCount; ++pad) {
+    const int16_t x = 20 + (pad % 4) * 49;
+    const int16_t y = 96 + (pad / 4) * 49;
+    const bool selected = pad == samplerSelectedPad;
+    gfx->fillRect(x, y, 44, 44, selected ? kPalette[2] : RGB565_BLACK);
+    gfx->drawRect(x, y, 44, 44, selected ? RGB565_WHITE : kFaint);
+    gfx->setTextColor(selected ? RGB565_BLACK : RGB565_WHITE);
+    gfx->setCursor(x + 10, y + 5);
+    gfx->printf("%02u", pad);
+    gfx->setCursor(x + 6, y + 23);
+    gfx->print(padSamplePath[pad][0] ? "WAV" : "---");
+  }
+  for (uint8_t row = 0; row < kSamplerRows; ++row) {
+    const int16_t y = 96 + row * 43;
+    gfx->fillRect(240, y, 220, 39, row == samplerSelectedRow ? RGB565(35, 55, 75) : RGB565_BLACK);
+    gfx->drawRect(240, y, 220, 39, row == samplerSelectedRow ? kPalette[2] : kFaint);
+    gfx->setTextColor(samplerFiles[row][0] ? RGB565_WHITE : kDim);
+    gfx->setCursor(246, y + 5);
+    const char *name = strrchr(samplerFiles[row], '/');
+    if (samplerFiles[row][0]) {
+      if (samplerIsDir[row]) gfx->print("[DOSSIER] ");
+      gfx->print(String(name ? name + 1 : samplerFiles[row]).substring(0, samplerIsDir[row] ? 24 : 34));
+    } else if (row == 0 && samplerVisible == 0) gfx->print("Dossier vide / actualiser");
+    gfx->setCursor(246, y + 21);
+    if (samplerFiles[row][0]) gfx->printf("%u  %.31s", samplerOffset + row + 1, samplerFiles[row]);
+  }
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(20, 310);
+  gfx->printf("PAD %02u : %.55s", samplerSelectedPad,
+              padSamplePath[samplerSelectedPad][0] ? padSamplePath[samplerSelectedPad] : "aucun sample");
+  gfx->setTextColor(kDim);
+  gfx->setCursor(20, 336);
+  gfx->print(samplerUiStatus[0] ? samplerUiStatus : "Glisser WAV vers pad");
+  gfx->drawRect(20, 354, 95, 42, kFaint);
+  gfx->drawRect(123, 354, 95, 42, kFaint);
+  gfx->drawRect(240, 354, 220, 42, kPalette[2]);
+  gfx->setCursor(39, 369); gfx->print("< LISTE");
+  gfx->setCursor(145, 369); gfx->print("LISTE >");
+  gfx->setCursor(298, 369);
+  gfx->print(samplerIsDir[samplerSelectedRow] ? "OUVRIR (A)" : "AFFECTER (A)");
+  gfx->drawRect(20, 408, 145, 38, kFaint);
+  gfx->drawRect(170, 408, 135, 38, kPalette[2]);
+  gfx->drawRect(310, 408, 150, 38, kPalette[3]);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(31, 422); gfx->printf("KIT %u / 4", samplerKitSlot + 1);
+  gfx->setCursor(207, 422); gfx->print("SAUVER");
+  gfx->setCursor(360, 422); gfx->print("CHARGER");
+}
+
+void samplerAssignSelected() {
+  if (samplerSelectedRow >= samplerVisible || samplerIsDir[samplerSelectedRow] ||
+      !samplerFiles[samplerSelectedRow][0]) return;
+  char msg[96];
+  snprintf(msg, sizeof(msg), "PADSAMPLE:%u:%s", samplerSelectedPad, samplerFiles[samplerSelectedRow]);
+  sendToTeensy(msg);
+  snprintf(samplerUiStatus, sizeof(samplerUiStatus), "Chargement pad %u...", samplerSelectedPad);
+  drawSamplerPage();
 }
 
 int8_t hitTestAudioPad(int16_t x, int16_t y) {
@@ -776,6 +899,7 @@ bool songMode = false;
 const uint16_t kStepFxColors[] = {kDim, kPalette[1], kPalette[2], kPalette[3]};
 uint8_t seqCurrentStep = 0;
 bool seqPlaying = false;
+bool seqRecording = false;
 float seqBpm = 120.0f;
 uint8_t seqStepsPerBeat = 4;
 bool metronomeOn = false;  // 2026-09-19, voir METRO: cote Teensy
@@ -801,6 +925,10 @@ bool seqDetailMode = true;
 // 2026-09-17) -- voir detailColX()/drawDetailRow() pour l'affichage et
 // le switch(seqDetailCol) dans le gestionnaire de croix pour l'edition.
 int8_t seqDetailCol = 0;
+// Focus clavier du panneau latéral du tracker. Faux = grille NOTE/INST/...
+// ; vrai = boutons MOTEUR/PATCH/EFFET/CLAVIER/METRO/SAUVER.
+bool seqSideFocus = false;
+uint8_t seqSideIndex = 0;
 
 // ---------------------------------------------------------------------
 // Vue tracker (colonnes NOTE/INST/FX/VAL/PROB/COND d'une piste, voir
@@ -902,8 +1030,15 @@ void drawDetailRow(uint8_t step) {
 
   // kDetailGridRight (bord de la grille), PAS kSeqRightEdge (bord de
   // l'ECRAN, recouvrait le panneau lateral -- voir son commentaire).
+  // Le pas lu doit rester visible sur la grille noire. L'ancien décalage
+  // de luminosité (4) écrasait presque entièrement la couleur RGB565 : le
+  // Teensy envoyait bien CLOCK, mais le curseur semblait absent.
   gfx->fillRect(kDetailLeft, y, kDetailGridRight - kDetailLeft, kDetailRowH,
-                playhead ? dimColor(accent, 4) : RGB565_BLACK);
+                playhead ? dimColor(accent, 1) : RGB565_BLACK);
+  if (playhead) {
+    gfx->drawRect(kDetailLeft, y, kDetailGridRight - kDetailLeft, kDetailRowH,
+                  RGB565_WHITE);
+  }
 
   char buf[8];
   gfx->setTextSize(1);
@@ -1036,15 +1171,18 @@ constexpr int16_t kTrkControlsY = kDetailTop + kSeqStepCount * (kDetailRowH + kD
 // LATERAL (voir drawTrkSidePanel()), pas ici.
 constexpr int16_t kTrkControlsH = 34;
 constexpr int16_t kTrkControlsW = kScreenSize - 2 * kMargin;
-constexpr int16_t kTrkPlayW = kTrkControlsW / 3;
-constexpr int16_t kTrkBpmX = kMargin + kTrkPlayW;
-constexpr int16_t kTrkBpmW = kTrkControlsW / 3;
+constexpr int16_t kTrkPlayW = kTrkControlsW / 4;
+constexpr int16_t kTrkRecX = kMargin + kTrkPlayW;
+constexpr int16_t kTrkRecW = kTrkControlsW / 4;
+constexpr int16_t kTrkBpmX = kTrkRecX + kTrkRecW;
+constexpr int16_t kTrkBpmW = kTrkControlsW / 4;
 constexpr int16_t kTrkDivX = kTrkBpmX + kTrkBpmW;
-constexpr int16_t kTrkDivW = kTrkControlsW - kTrkPlayW - kTrkBpmW;
+constexpr int16_t kTrkDivW = kTrkControlsW - kTrkPlayW - kTrkRecW - kTrkBpmW;
 
 void drawTrkControls() {
   gfx->fillRect(kMargin, kTrkControlsY, kTrkControlsW, kTrkControlsH, RGB565_BLACK);
   gfx->drawRect(kMargin, kTrkControlsY, kTrkPlayW, kTrkControlsH, kFaint);
+  gfx->drawRect(kTrkRecX, kTrkControlsY, kTrkRecW, kTrkControlsH, seqRecording ? RGB565_RED : kFaint);
   gfx->drawRect(kTrkBpmX, kTrkControlsY, kTrkBpmW, kTrkControlsH, kFaint);
   gfx->drawRect(kTrkDivX, kTrkControlsY, kTrkDivW, kTrkControlsH, kFaint);
 
@@ -1052,6 +1190,10 @@ void drawTrkControls() {
   gfx->setTextColor(seqPlaying ? kPalette[1] : RGB565_WHITE);
   gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(kTrkControlsY + 8));
   gfx->print(seqPlaying ? "STOP" : "PLAY");
+  gfx->setTextColor(seqRecording ? RGB565_RED : RGB565_WHITE);
+  gfx->setCursor(static_cast<int16_t>(kTrkRecX + 8), static_cast<int16_t>(kTrkControlsY + 8));
+  gfx->print("REC");
+
 
   gfx->setTextSize(1);
   gfx->setTextColor(kDim);
@@ -1076,6 +1218,9 @@ void drawTrkControls() {
 
 bool hitTestTrkPlay(int16_t x, int16_t y) {
   return inBox(x, y, kMargin, kTrkControlsY, kTrkPlayW, kTrkControlsH);
+}
+bool hitTestTrkRec(int16_t x, int16_t y) {
+  return inBox(x, y, kTrkRecX, kTrkControlsY, kTrkRecW, kTrkControlsH);
 }
 // -1 = aucun, 0 = moitie gauche (-5 BPM), 1 = moitie droite (+5 BPM).
 int8_t hitTestTrkBpm(int16_t x, int16_t y) {
@@ -1129,7 +1274,7 @@ constexpr int16_t kTrkSideH = kSeqStepCount * (kDetailRowH + kDetailRowGap);
 // pour le moteur et patch") -- l'ancien resume texte (moteur/patch/
 // cutoff/reso/adsr) disparait completement, remplace par 5 boutons
 // PLEINE LARGEUR empiles qui couvrent toute la hauteur du panneau :
-// MOTEUR, PATCH, EFFET, CLAVIER, METRONOME. Chacun ouvre directement
+// MOTEUR, PATCH, EFFET, PAD 4X4, METRONOME. Chacun ouvre directement
 // la page correspondante pour la piste du tracker actuellement
 // affichee (sauf METRONOME, une simple bascule, et EFFET qui reste
 // dans le tracker mais amene le focus croix sur la colonne FX).
@@ -1167,11 +1312,11 @@ void drawTrkSidePanel() {
   gfx->fillRect(kTrkSideX, kDetailTop, kTrkSideW, kTrkSideH, RGB565_BLACK);
   gfx->drawRect(kTrkSideX, kDetailTop, kTrkSideW, kTrkSideH, accent);
 
-  drawTrkSideBtn(0, accent, false, "MOTEUR");
-  drawTrkSideBtn(1, accent, true, "PATCH");
-  drawTrkSideBtn(2, kPalette[2], false, "EFFET");
-  drawTrkSideBtn(3, kPalette[5], false, "CLAVIER");
-  drawTrkSideBtn(4, metronomeOn ? kPalette[3] : kFaint, metronomeOn, "METRO");
+  drawTrkSideBtn(0, accent, seqSideFocus && seqSideIndex == 0, "MOTEUR");
+  drawTrkSideBtn(1, accent, seqSideFocus && seqSideIndex == 1, "PATCH");
+  drawTrkSideBtn(2, kPalette[2], seqSideFocus && seqSideIndex == 2, "EFFET");
+  drawTrkSideBtn(3, kPalette[4], seqSideFocus && seqSideIndex == 3, "PAD 4X4");
+  drawTrkSideBtn(4, metronomeOn ? kPalette[3] : kFaint, seqSideFocus && seqSideIndex == 4, "METRO");
   // 2026-09-19, "dans le tracker il manque le bouton sauvegarder" --
   // sauvegarde tout le morceau (voir saveProject()) dans l'emplacement
   // PROJET actuellement choisi (projectSlot, meme emplacement que la
@@ -1179,7 +1324,7 @@ void drawTrkSidePanel() {
   // tracker. Rempli en vert un court instant apres l'appui (voir le
   // hitTest correspondant plus bas) -- seul retour visuel disponible,
   // la sauvegarde elle-meme reste quasi instantanee.
-  drawTrkSideBtn(5, RGB565(60, 200, 90), false, "SAUVER");
+  drawTrkSideBtn(5, RGB565(60, 200, 90), seqSideFocus && seqSideIndex == 5, "SAUVER");
 }
 
 void drawSeqDetailPage() {
@@ -1799,7 +1944,9 @@ void queryPatchExtra(uint8_t track) {
 }
 
 uint8_t scopeSamples[az2::kScopeSamplesPerPacket] = {};
+uint8_t scopeRenderedSamples[az2::kScopeSamplesPerPacket] = {};
 bool scopeHasData = false;
+bool scopeRendered = false;
 
 constexpr int16_t kPatchTrackRowY = 66;
 constexpr int16_t kPatchScopeTop = 96;
@@ -1833,9 +1980,28 @@ void drawPatchTrackRow() {
 // scintillement genant ("la fenetre patch ... elle scintille un peu
 // trop").
 void drawPatchScope() {
-  gfx->fillRect(static_cast<int16_t>(kMargin + 1), static_cast<int16_t>(kPatchScopeTop + 1),
-                static_cast<int16_t>(kScreenSize - 2 * kMargin - 2), static_cast<int16_t>(kPatchScopeH - 2),
-                RGB565_BLACK);
+  const int16_t w = static_cast<int16_t>(kScreenSize - 2 * kMargin);
+  auto pointX = [w](uint8_t i) -> int16_t {
+    return static_cast<int16_t>(kMargin + (i * w) / (az2::kScopeSamplesPerPacket - 1));
+  };
+  auto pointY = [](uint8_t sample) -> int16_t {
+    return static_cast<int16_t>(kPatchScopeTop + 1 +
+                                ((255 - sample) * (kPatchScopeH - 2)) / 255);
+  };
+  // Efface uniquement l'ancienne courbe. Le fond et le cadre restent
+  // immobiles, ce qui évite le scintillement visible à chaque paquet.
+  if (scopeRendered) {
+    int16_t prevX = pointX(0);
+    int16_t prevY = pointY(scopeRenderedSamples[0]);
+    for (uint8_t i = 1; i < az2::kScopeSamplesPerPacket; ++i) {
+      const int16_t x = pointX(i);
+      const int16_t y = pointY(scopeRenderedSamples[i]);
+      gfx->drawLine(prevX, prevY, x, y, RGB565_BLACK);
+      prevX = x;
+      prevY = y;
+    }
+    scopeRendered = false;
+  }
   if (!scopeHasData) {
     gfx->setTextSize(1);
     gfx->setTextColor(kDim);
@@ -1843,19 +2009,19 @@ void drawPatchScope() {
     gfx->print("(silence -- joue une note sur cette piste)");
     return;
   }
-  const int16_t w = static_cast<int16_t>(kScreenSize - 2 * kMargin);
-  int16_t prevX = kMargin, prevY = static_cast<int16_t>(kPatchScopeTop + kPatchScopeH / 2);
+  int16_t prevX = pointX(0), prevY = pointY(scopeSamples[0]);
   const uint16_t traceColor = kPalette[patchTrack % kPaletteCount];
   for (uint8_t i = 0; i < az2::kScopeSamplesPerPacket; ++i) {
-    const int16_t x = static_cast<int16_t>(kMargin + (i * w) / (az2::kScopeSamplesPerPacket - 1));
-    const int16_t y = static_cast<int16_t>(kPatchScopeTop + 1 +
-                                            ((255 - scopeSamples[i]) * (kPatchScopeH - 2)) / 255);
+    const int16_t x = pointX(i);
+    const int16_t y = pointY(scopeSamples[i]);
     if (i > 0) {
       gfx->drawLine(prevX, prevY, x, y, traceColor);
     }
     prevX = x;
     prevY = y;
+    scopeRenderedSamples[i] = scopeSamples[i];
   }
+  scopeRendered = true;
 }
 
 // Nombre de lignes VISUELLES affichees a l'ecran en meme temps --
@@ -2152,12 +2318,53 @@ bool hitTestPatchSlotLoad(int16_t x, int16_t y) {
 // (meme principe partout ou ce fichier sauvegarde quelque chose sur
 // la carte SD -- patch, projet) : ecrit dans "<path>.tmp", verifie
 // une taille non nulle, deplace l'ancien fichier (s'il existe) vers
-// "<path>.bak", puis renomme le "tmp" vers le nom final. A aucun
-// moment le fichier "final" n'est absent ou tronque -- soit l'ancien
-// est encore la, soit le nouveau y est deja completement.
+// "<path>.bak", puis renomme le "tmp" vers le nom final. Le fichier
+// final peut etre momentanement absent entre les deux renommages ;
+// l'ancien contenu reste alors dans .bak.
 // `content` : callback qui ecrit dans le fichier ouvert (permet de
 // reutiliser cette fonction pour un patch (1 ligne) ou un projet
 // (bien plus long) sans dupliquer la logique tmp/bak/rename).
+bool projectStructureValid(File &f);
+
+uint32_t savedFileCrc(File &f, size_t byteCount) {
+  uint32_t crc = 0xFFFFFFFFUL;
+  f.seek(0);
+  for (size_t i = 0; i < byteCount; ++i) {
+    const int value = f.read();
+    if (value < 0) return 0;
+    crc ^= static_cast<uint8_t>(value);
+    for (uint8_t bit = 0; bit < 8; ++bit) {
+      crc = (crc >> 1) ^ ((crc & 1) ? 0xEDB88320UL : 0);
+    }
+  }
+  return ~crc;
+}
+
+// Les anciens fichiers sans CRC restent lisibles. Les nouveaux portent
+// un pied de 18 octets : AZ2CRC32:XXXXXXXX\n.
+bool savedFileCrcValid(File &f) {
+  const size_t size = f.size();
+  if (size == 0) return false;
+  char header[7] = {};
+  f.seek(0);
+  const bool versioned = size >= 6 && f.readBytes(header, 6) == 6 && strncmp(header, "AZ2V2\n", 6) == 0;
+  if (size < 18) return !versioned;
+  f.seek(size - 18);
+  char footer[19] = {};
+  if (f.readBytes(footer, 18) != 18) return false;
+  if (strncmp(footer, "AZ2CRC32:", 9) != 0) return !versioned;
+  if (footer[17] != '\n') return false;
+  uint32_t expected = 0;
+  for (uint8_t i = 9; i < 17; ++i) {
+    const char c = footer[i];
+    expected <<= 4;
+    if (c >= '0' && c <= '9') expected |= c - '0';
+    else if (c >= 'A' && c <= 'F') expected |= c - 'A' + 10;
+    else return false;
+  }
+  return savedFileCrc(f, size - 18) == expected;
+}
+
 template <typename WriteFn>
 bool atomicSaveFile(const char *path, WriteFn writeContent) {
   char tmpPath[40];
@@ -2168,6 +2375,11 @@ bool atomicSaveFile(const char *path, WriteFn writeContent) {
   SD.remove(tmpPath);  // reste eventuel d'une tentative precedente avortee
   File f = SD.open(tmpPath, FILE_WRITE);
   if (!f) {
+    return false;
+  }
+  if (f.print("AZ2V2\n") != 6) {
+    f.close();
+    SD.remove(tmpPath);
     return false;
   }
   writeContent(f);
@@ -2193,18 +2405,143 @@ bool atomicSaveFile(const char *path, WriteFn writeContent) {
     return false;
   }
 
+  File payload = SD.open(tmpPath);
+  if (!payload) return false;
+  const uint32_t crc = savedFileCrc(payload, written);
+  payload.close();
+  File footer = SD.open(tmpPath, FILE_APPEND);
+  if (!footer) return false;
+  const size_t footerBytes = footer.printf("AZ2CRC32:%08lX\n", static_cast<unsigned long>(crc));
+  footer.close();
+  File complete = SD.open(tmpPath);
+  const bool valid = complete && footerBytes == 18 && complete.size() == written + 18 &&
+                     savedFileCrcValid(complete) &&
+                     (strncmp(path, "/projects/", 10) != 0 || projectStructureValid(complete));
+  if (complete) complete.close();
+  if (!valid) {
+    SD.remove(tmpPath);
+    return false;
+  }
+
+  bool previousMovedToBackup = false;
   if (SD.exists(path)) {
-    SD.remove(bakPath);  // .bak precedent, si un jour restaure manuellement puis jamais nettoye
-    SD.rename(path, bakPath);
+    File previous = SD.open(path);
+    const bool previousValid = previous && savedFileCrcValid(previous) &&
+                               (strncmp(path, "/projects/", 10) != 0 || projectStructureValid(previous));
+    if (previous) previous.close();
+    if (previousValid) {
+      // La version courante est la derniere copie sure : elle remplace
+      // l'ancien backup seulement apres verification du nouveau tmp.
+      if ((SD.exists(bakPath) && !SD.remove(bakPath)) || !SD.rename(path, bakPath)) {
+        SD.remove(tmpPath);
+        return false;
+      }
+      previousMovedToBackup = true;
+    } else {
+      // Si le fichier principal est corrompu, le .bak peut etre la seule
+      // copie valide. Ne jamais l'ecraser avec ce fichier corrompu.
+      if (!SD.remove(path)) {
+        SD.remove(tmpPath);
+        return false;
+      }
+    }
   }
   if (!SD.rename(tmpPath, path)) {
     // Echec du dernier renommage : restaure l'ancien fichier depuis le
     // backup plutot que de laisser "path" absent.
-    SD.rename(bakPath, path);
+    if (previousMovedToBackup) SD.rename(bakPath, path);
     SD.remove(tmpPath);
     return false;
   }
   return true;
+}
+
+File openSavedFile(const char *path) {
+  File f = SD.open(path);
+  if (f && savedFileCrcValid(f)) {
+    f.seek(0);
+    return f;
+  }
+  if (f) f.close();
+  char bakPath[40];
+  snprintf(bakPath, sizeof(bakPath), "%s.bak", path);
+  // Coupure entre renommages, ou fichier principal incomplet/corrompu.
+  File backup = SD.open(bakPath);
+  if (backup && savedFileCrcValid(backup)) backup.seek(0);
+  else {
+    if (backup) backup.close();
+    return File();
+  }
+  return backup;
+}
+
+void samplerKitPath(char *path, size_t size) {
+  snprintf(path, size, "/kits/%u.kit", samplerKitSlot);
+}
+
+void saveSamplerKit() {
+  SD.mkdir("/kits");
+  char path[24];
+  samplerKitPath(path, sizeof(path));
+  const bool ok = atomicSaveFile(path, [&](File &f) {
+    f.print("KIT:1\n");
+    for (uint8_t pad = 0; pad < az2::kPadCount; ++pad)
+      if (padSamplePath[pad][0]) f.printf("PAD:%u:%s\n", pad, padSamplePath[pad]);
+  });
+  Serial.printf(ok ? "KIT_SAVED:%s\n" : "KIT_SAVE_ERROR:%s\n", path);
+  snprintf(samplerUiStatus, sizeof(samplerUiStatus), ok ? "Kit %u sauve" : "Erreur sauvegarde kit %u", samplerKitSlot + 1);
+  if (currentScreen == Screen::Sampler) drawSamplerPage();
+}
+
+void loadSamplerKit() {
+  char path[24];
+  samplerKitPath(path, sizeof(path));
+  File f = openSavedFile(path);
+  if (!f) {
+    Serial.printf("KIT_LOAD_EMPTY:%s\n", path);
+    snprintf(samplerUiStatus, sizeof(samplerUiStatus), "Kit %u vide", samplerKitSlot + 1);
+    drawSamplerPage();
+    return;
+  }
+  String line = f.readStringUntil('\n');
+  if (line == "AZ2V2") line = f.readStringUntil('\n');
+  bool seen[az2::kPadCount] = {};
+  bool valid = line == "KIT:1";
+  while (f.available() && valid) {
+    line = f.readStringUntil('\n');
+    if (line.startsWith("AZ2CRC32:")) break;
+    if (!line.startsWith("PAD:")) { valid = false; break; }
+    const int colon = line.indexOf(':', 4);
+    const int pad = line.substring(4, colon).toInt();
+    const String wav = line.substring(colon + 1);
+    valid = colon > 4 && pad >= 0 && pad < az2::kPadCount && !seen[pad] &&
+            wav.startsWith("/samples/") && wav.length() < 64;
+    if (valid) seen[pad] = true;
+  }
+  if (!valid) {
+    f.close();
+    Serial.printf("KIT_LOAD_BADFILE:%s\n", path);
+    snprintf(samplerUiStatus, sizeof(samplerUiStatus), "Kit %u invalide", samplerKitSlot + 1);
+    drawSamplerPage();
+    return;
+  }
+  f.seek(0);
+  char msg[96];
+  for (uint8_t pad = 0; pad < az2::kPadCount; ++pad) {
+    snprintf(msg, sizeof(msg), "PADSAMPLE:%u:-", pad);
+    sendToTeensy(msg);
+    padSamplePath[pad][0] = '\0';
+  }
+  while (f.available()) {
+    line = f.readStringUntil('\n');
+    if (!line.startsWith("PAD:")) continue;
+    snprintf(msg, sizeof(msg), "PADSAMPLE:%s", line.substring(4).c_str());
+    sendToTeensy(msg);
+  }
+  f.close();
+  Serial.printf("KIT_LOADED:%s\n", path);
+  snprintf(samplerUiStatus, sizeof(samplerUiStatus), "Kit %u charge", samplerKitSlot + 1);
+  if (currentScreen == Screen::Sampler && !screensaverActive) drawSamplerPage();
 }
 
 void savePatchSlot(uint8_t slot) {
@@ -2236,13 +2573,14 @@ void savePatchSlot(uint8_t slot) {
 void loadPatchSlot(uint8_t slot) {
   char path[24];
   snprintf(path, sizeof(path), "/patches/%d.txt", slot);
-  File f = SD.open(path);
+  File f = openSavedFile(path);
   if (!f) {
     Serial.print("PATCH_LOAD_EMPTY:");
     Serial.println(path);
     return;
   }
-  const String line = f.readStringUntil('\n');
+  String line = f.readStringUntil('\n');
+  if (line == "AZ2V2") line = f.readStringUntil('\n');
   f.close();
 
   int vals[10] = {};
@@ -2639,7 +2977,10 @@ constexpr int16_t kSongGridTop = kSongLenRowY + kSongRowH + 12;
 constexpr uint8_t kSongCols = 4;
 constexpr int16_t kSongSlotGap = 6;
 constexpr int16_t kSongSlotW = (kScreenSize - 2 * kMargin - (kSongCols - 1) * kSongSlotGap) / kSongCols;
-constexpr int16_t kSongSlotH = 56;
+constexpr int16_t kSongSlotH = 46;
+constexpr int16_t kSongProjectsY = 408;
+constexpr int16_t kSongProjectsH = 42;
+uint8_t songSelectedSlot = 0;
 
 void drawSongModeRow() {
   gfx->fillRect(kMargin, kSongModeRowY, kScreenSize - 2 * kMargin, kSongRowH, RGB565_BLACK);
@@ -2686,7 +3027,7 @@ void drawSongSlot(uint8_t i) {
   const uint8_t patt = songPatterns[i];
 
   gfx->fillRect(x, y, kSongSlotW, kSongSlotH, active ? kPalette[patt % kPaletteCount] : RGB565_BLACK);
-  gfx->drawRect(x, y, kSongSlotW, kSongSlotH, kFaint);
+  gfx->drawRect(x, y, kSongSlotW, kSongSlotH, i == songSelectedSlot ? RGB565_WHITE : kFaint);
 
   gfx->setTextSize(1);
   gfx->setTextColor(active ? RGB565_BLACK : kDim);
@@ -2714,6 +3055,20 @@ void drawSongPage() {
   for (uint8_t i = 0; i < kSongLength; ++i) {
     drawSongSlot(i);
   }
+  gfx->fillRect(kMargin, kSongProjectsY, kScreenSize - 2 * kMargin, kSongProjectsH, RGB565_BLACK);
+  gfx->drawRect(kMargin, kSongProjectsY, kScreenSize - 2 * kMargin, kSongProjectsH, kPalette[3]);
+  gfx->setTextSize(2);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(kMargin + 28, kSongProjectsY + 10);
+  gfx->print("PROJETS  >   B");
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(kMargin, 457);
+  gfx->print("Croix: case/pattern  A: mode  D: longueur  C: retour");
+}
+
+bool hitTestSongProjects(int16_t x, int16_t y) {
+  return inBox(x, y, kMargin, kSongProjectsY, kScreenSize - 2 * kMargin, kSongProjectsH);
 }
 
 bool hitTestSongMode(int16_t x, int16_t y) {
@@ -2906,7 +3261,12 @@ void drawRetroPage() {
     // Le rendu du jeu lui-meme vient de gbBlitLine(), appelee par
     // gbRunFrame() depuis loop() -- ici on affiche juste le cadre/titre
     // une fois, le jeu se dessine par-dessus a chaque frame.
-    gfx->fillScreen(RGB565_BLACK);
+    // Ne pas utiliser fillScreen() ici : après la lecture de la ROM et de la
+    // SRAM, un flush complet du framebuffer PSRAM rendait visible un flash
+    // noir dans la liste des ROM. On efface seulement la zone de jeu et le
+    // bandeau, puis les premières lignes GB remplissent le reste.
+    gfx->fillRect(0, 24, kScreenSize, 432, RGB565_BLACK);
+    gfx->fillRect(0, 0, kScreenSize, 24, RGB565_BLACK);
     gfx->setTextSize(1);
     gfx->setTextColor(kDim);
     gfx->setCursor(kMargin, 4);
@@ -2921,6 +3281,24 @@ void drawRetroPage() {
 
   if (gbRomCount > 0) {
     drawSubHeader("JEUX - choisis une ROM", kPalette[2]);
+    // Choix du rendu avant le lancement : 2× garde le plein débit, 3×
+    // remplit la largeur de l'écran. Le choix reste actif pour la ROM
+    // suivante jusqu'à ce que l'utilisateur le change.
+    gfx->setTextSize(1);
+    gfx->setTextColor(kDim);
+    gfx->setCursor(kMargin, 70);
+    gfx->print("AFFICHAGE");
+    const bool scale2 = gbDisplayScale == 2;
+    gfx->fillRect(120, 64, 110, 24, scale2 ? kPalette[1] : RGB565_BLACK);
+    gfx->drawRect(120, 64, 110, 24, kPalette[1]);
+    gfx->setTextColor(scale2 ? RGB565_BLACK : RGB565_WHITE);
+    gfx->setCursor(138, 72);
+    gfx->print("X2 60FPS");
+    gfx->fillRect(244, 64, 110, 24, scale2 ? RGB565_BLACK : kPalette[1]);
+    gfx->drawRect(244, 64, 110, 24, kPalette[1]);
+    gfx->setTextColor(scale2 ? RGB565_WHITE : RGB565_BLACK);
+    gfx->setCursor(262, 72);
+    gfx->print("X3 ECRAN");
     if (gbRomScroll > 0 && gbRomScroll >= gbRomCount) {
       gbRomScroll = 0;  // securite si la liste a change depuis (rescan)
     }
@@ -3266,57 +3644,116 @@ bool hitTestSwingPlus(int16_t x, int16_t y) {
 // ---------------------------------------------------------------------
 constexpr uint8_t kProjectSlotCount = 4;
 uint8_t projectSlot = 0;
-constexpr int16_t kProjectSlotY = 120;
-constexpr int16_t kProjectSlotH = 40;
-constexpr int16_t kProjectBtnW = (kScreenSize - 2 * kMargin) / 3;
+char projectStatus[64] = "Choisir un projet avec la croix";
+int8_t projectSaveArmedSlot = -1;
+uint32_t projectSaveArmedUntilMs = 0;
+constexpr int16_t kProjectListY = 90;
+constexpr int16_t kProjectRowH = 64;
+constexpr int16_t kProjectRowGap = 9;
+constexpr int16_t kProjectActionY = 390;
+constexpr int16_t kProjectActionH = 52;
+constexpr int16_t kProjectActionGap = 8;
+constexpr int16_t kProjectActionW = (kScreenSize - 2 * kMargin - kProjectActionGap) / 2;
+
+void projectPath(uint8_t slot, char *path, size_t size) {
+  snprintf(path, size, "/projects/%u.proj", slot);
+}
+
+void drawProjectRow(uint8_t slot) {
+  const int16_t y = static_cast<int16_t>(kProjectListY + slot * (kProjectRowH + kProjectRowGap));
+  const bool selected = slot == projectSlot;
+  char path[24];
+  projectPath(slot, path, sizeof(path));
+  File f = SD.open(path);
+  const bool present = static_cast<bool>(f);
+  const size_t bytes = present ? f.size() : 0;
+  if (f) f.close();
+  const uint16_t accent = selected ? kPalette[3] : kFaint;
+  gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, kProjectRowH, RGB565_BLACK);
+  gfx->drawRect(kMargin, y, kScreenSize - 2 * kMargin, kProjectRowH, accent);
+  if (selected) gfx->fillRect(kMargin + 1, y + 1, 5, kProjectRowH - 2, accent);
+  gfx->setTextSize(2);
+  gfx->setTextColor(selected ? RGB565_WHITE : kDim);
+  gfx->setCursor(kMargin + 15, y + 8);
+  gfx->printf("%u  PROJET %u", slot + 1, slot);
+  gfx->setTextSize(1);
+  gfx->setTextColor(present ? kPalette[1] : kDim);
+  gfx->setCursor(kMargin + 17, y + 37);
+  if (present) gfx->printf("%s  -  %lu Ko sur SD ESP32", path, static_cast<unsigned long>((bytes + 1023) / 1024));
+  else gfx->printf("%s  -  emplacement vide", path);
+}
 
 void drawProjectPage() {
-  drawSubHeader("PROJET", kPalette[3]);
-
-  const int16_t saveX = static_cast<int16_t>(kMargin + kProjectBtnW);
-  const int16_t loadX = static_cast<int16_t>(kMargin + 2 * kProjectBtnW);
-  gfx->fillRect(kMargin, kProjectSlotY, kScreenSize - 2 * kMargin, kProjectSlotH, RGB565_BLACK);
-  gfx->drawRect(kMargin, kProjectSlotY, kProjectBtnW, kProjectSlotH, kFaint);
-  gfx->drawRect(saveX, kProjectSlotY, kProjectBtnW, kProjectSlotH, kFaint);
-  gfx->drawRect(loadX, kProjectSlotY, kProjectBtnW, kProjectSlotH, kFaint);
-
+  drawSubHeader("PROJETS - SD ESP32", kPalette[3]);
+  for (uint8_t slot = 0; slot < kProjectSlotCount; ++slot) drawProjectRow(slot);
+  const int16_t loadX = kMargin;
+  const int16_t saveX = static_cast<int16_t>(kMargin + kProjectActionW + kProjectActionGap);
+  gfx->fillRect(kMargin, kProjectActionY, kScreenSize - 2 * kMargin, kProjectActionH, RGB565_BLACK);
+  gfx->drawRect(loadX, kProjectActionY, kProjectActionW, kProjectActionH, kPalette[1]);
+  gfx->drawRect(saveX, kProjectActionY, kProjectActionW, kProjectActionH, kPalette[2]);
   gfx->setTextSize(2);
   gfx->setTextColor(RGB565_WHITE);
-  char buf[12];
-  snprintf(buf, sizeof(buf), "SLOT %d", projectSlot);
-  gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(kProjectSlotY + 10));
-  gfx->print(buf);
-  gfx->setTextColor(kPalette[1 % kPaletteCount]);
-  gfx->setCursor(static_cast<int16_t>(saveX + 16), static_cast<int16_t>(kProjectSlotY + 10));
-  gfx->print("SAVE");
-  gfx->setTextColor(kPalette[2 % kPaletteCount]);
-  gfx->setCursor(static_cast<int16_t>(loadX + 16), static_cast<int16_t>(kProjectSlotY + 10));
-  gfx->print("LOAD");
-
+  gfx->setCursor(loadX + 31, kProjectActionY + 14);
+  gfx->print("CHARGER A");
+  gfx->setCursor(saveX + 39, kProjectActionY + 14);
+  gfx->print("SAUVER D");
   gfx->setTextSize(1);
   gfx->setTextColor(kDim);
-  const char *lines[] = {
-      "Sauvegarde TOUT le morceau : patterns,",
-      "chainage song, tempo/division, gamme,",
-      "moteur/patch/filtre/ADSR de chaque piste.",
-      "",
-      "4 emplacements -- /projects/N.proj sur",
-      "la carte SD de l'ecran.",
-  };
-  for (uint8_t i = 0; i < sizeof(lines) / sizeof(lines[0]); ++i) {
-    gfx->setCursor(kMargin, static_cast<int16_t>(kProjectSlotY + kProjectSlotH + 20 + i * 18));
-    gfx->print(lines[i]);
-  }
+  gfx->setCursor(kMargin, 450);
+  gfx->print(projectStatus);
+  gfx->setCursor(kMargin, 466);
+  gfx->print("Haut/Bas: choisir  B: song  C: retour");
 }
 
-bool hitTestProjectSlotNum(int16_t x, int16_t y) {
-  return inBox(x, y, kMargin, kProjectSlotY, kProjectBtnW, kProjectSlotH);
+int8_t hitTestProjectRow(int16_t x, int16_t y) {
+  if (x < kMargin || x >= kScreenSize - kMargin) return -1;
+  for (uint8_t slot = 0; slot < kProjectSlotCount; ++slot) {
+    const int16_t top = static_cast<int16_t>(kProjectListY + slot * (kProjectRowH + kProjectRowGap));
+    if (y >= top && y < top + kProjectRowH) return static_cast<int8_t>(slot);
+  }
+  return -1;
 }
-bool hitTestProjectSlotSave(int16_t x, int16_t y) {
-  return inBox(x, y, static_cast<int16_t>(kMargin + kProjectBtnW), kProjectSlotY, kProjectBtnW, kProjectSlotH);
+
+bool hitTestProjectLoad(int16_t x, int16_t y) {
+  return inBox(x, y, kMargin, kProjectActionY, kProjectActionW, kProjectActionH);
 }
-bool hitTestProjectSlotLoad(int16_t x, int16_t y) {
-  return inBox(x, y, static_cast<int16_t>(kMargin + 2 * kProjectBtnW), kProjectSlotY, kProjectBtnW, kProjectSlotH);
+
+bool hitTestProjectSave(int16_t x, int16_t y) {
+  return inBox(x, y, static_cast<int16_t>(kMargin + kProjectActionW + kProjectActionGap),
+               kProjectActionY, kProjectActionW, kProjectActionH);
+}
+
+void saveProject(uint8_t slot);
+void loadProject(uint8_t slot);
+
+void selectProjectSlot(uint8_t slot) {
+  projectSlot = slot;
+  projectSaveArmedSlot = -1;
+  snprintf(projectStatus, sizeof(projectStatus), "Projet %u selectionne", slot + 1);
+  drawProjectPage();
+}
+
+void requestProjectSave() {
+  char path[24];
+  projectPath(projectSlot, path, sizeof(path));
+  const uint32_t now = millis();
+  if (SD.exists(path) && (projectSaveArmedSlot != static_cast<int8_t>(projectSlot) ||
+                          static_cast<int32_t>(projectSaveArmedUntilMs - now) <= 0)) {
+    projectSaveArmedSlot = static_cast<int8_t>(projectSlot);
+    projectSaveArmedUntilMs = now + 5000;
+    snprintf(projectStatus, sizeof(projectStatus), "Projet %u existe : D/SAUVER encore pour remplacer", projectSlot + 1);
+    drawProjectPage();
+    return;
+  }
+  projectSaveArmedSlot = -1;
+  saveProject(projectSlot);
+  drawProjectPage();
+}
+
+void requestProjectLoad() {
+  projectSaveArmedSlot = -1;
+  loadProject(projectSlot);
+  drawProjectPage();
 }
 
 void saveProject(uint8_t slot) {
@@ -3374,10 +3811,12 @@ void saveProject(uint8_t slot) {
   if (!ok) {
     Serial.print("PROJECT_SAVE_ERROR:");
     Serial.println(path);
+    snprintf(projectStatus, sizeof(projectStatus), "Erreur sauvegarde %s", path);
     return;
   }
   Serial.print("PROJECT_SAVED:");
   Serial.println(path);
+  snprintf(projectStatus, sizeof(projectStatus), "Projet %u sauvegarde sur SD", slot + 1);
 }
 
 // Coupe une ligne "cle:reste" -- renvoie "reste" (String vide si pas de
@@ -3389,17 +3828,144 @@ String afterColon(const String &line) {
   return (i < 0) ? String("") : line.substring(i + 1);
 }
 
+bool projectNumber(const String &text, int low, int high, int &value) {
+  if (text.isEmpty()) return false;
+  char *end = nullptr;
+  const long parsed = strtol(text.c_str(), &end, 10);
+  if (*end != '\0' || parsed < low || parsed > high) return false;
+  value = static_cast<int>(parsed);
+  return true;
+}
+
+bool projectCsv(const String &text, int *values, uint8_t minCount, uint8_t maxCount, uint8_t &count) {
+  count = 0;
+  int start = 0;
+  for (int i = 0; i <= text.length(); ++i) {
+    if (i != text.length() && text.charAt(i) != ',') continue;
+    if (count >= maxCount || !projectNumber(text.substring(start, i), 0, 255, values[count])) return false;
+    ++count;
+    start = i + 1;
+  }
+  return count >= minCount;
+}
+
+bool projectStructureValid(File &f) {
+  f.seek(0);
+  uint16_t tracks = 0;
+  uint16_t steps = 0;
+  bool hasBpm = false;
+  bool hasSongLen = false;
+  bool seenSongSet[kSongLength] = {};
+  bool seenPadSample[az2::kPadCount] = {};
+  bool seenTrack[kSeqTrackCount] = {};
+  bool seenStep[kPatternCount][kSeqTrackCount][kSeqStepCount] = {};
+  bool valid = true;
+  while (f.available()) {
+    const String line = f.readStringUntil('\n');
+    int v = 0;
+    int values[13] = {};
+    uint8_t count = 0;
+    if (line.startsWith("BPM:")) {
+      hasBpm = projectNumber(afterColon(line), 30, 300, v);
+      valid &= hasBpm;
+    } else if (line.startsWith("DIV:")) {
+      valid &= projectNumber(afterColon(line), 1, 255, v);
+      bool supported = false;
+      for (uint8_t i = 0; i < az2::kDivisionOptionCount; ++i)
+        supported |= v == az2::kDivisionOptions[i].stepsPerBeat;
+      valid &= supported;
+    } else if (line.startsWith("SCALE:")) {
+      valid &= projectNumber(afterColon(line), 0, kScaleCount - 1, v);
+    } else if (line.startsWith("SWING:")) {
+      valid &= projectNumber(afterColon(line), 0, 127, v);
+    } else if (line.startsWith("SONGMODE:")) {
+      valid &= projectNumber(afterColon(line), 0, 1, v);
+    } else if (line.startsWith("SONGLEN:")) {
+      hasSongLen = projectNumber(afterColon(line), 0, kSongLength, v);
+      valid &= hasSongLen;
+    } else if (line.startsWith("SONGSET:")) {
+      const String rest = afterColon(line);
+      const int colon = rest.indexOf(':');
+      int pattern = 0;
+      const bool entryValid = colon > 0 && projectNumber(rest.substring(0, colon), 0, kSongLength - 1, v) &&
+                              projectNumber(rest.substring(colon + 1), 0, kPatternCount - 1, pattern) &&
+                              !seenSongSet[v];
+      valid &= entryValid;
+      if (entryValid) seenSongSet[v] = true;
+    } else if (line.startsWith("PADSAMPLE:")) {
+      const String rest = afterColon(line);
+      const int colon = rest.indexOf(':');
+      const String wav = colon > 0 ? rest.substring(colon + 1) : String();
+      const bool entryValid = colon > 0 && projectNumber(rest.substring(0, colon), 0, az2::kPadCount - 1, v) &&
+                              !seenPadSample[v] && wav.startsWith("/samples/") &&
+                              wav.length() < sizeof(padSamplePath[0]);
+      valid &= entryValid;
+      if (entryValid) seenPadSample[v] = true;
+    } else if (line.startsWith("TRACK:")) {
+      if (!projectCsv(afterColon(line), values, 11, 13, count)) { valid = false; continue; }
+      const int t = values[0];
+      if (t >= kSeqTrackCount || seenTrack[t] || values[1] >= az2::kEngineCount ||
+          values[2] >= az2::enginePatchCount(values[1]) ||
+          values[9] > 31 || values[10] > 7 ||
+          (count >= 12 && values[11] > 127) || (count >= 13 && values[12] > 1)) {
+        valid = false;
+        continue;
+      }
+      seenTrack[t] = true;
+      ++tracks;
+    } else if (line.startsWith("STEP:")) {
+      if (!projectCsv(afterColon(line), values, 8, 10, count) || (count != 8 && count != 10)) {
+        valid = false;
+        continue;
+      }
+      const int p = values[0], t = values[1], s = values[2];
+      if (p >= kPatternCount || t >= kSeqTrackCount || s >= kSeqStepCount || seenStep[p][t][s] ||
+          values[3] > 1 || values[4] > 127 || values[6] > 3 ||
+          (count == 10 && values[8] > 100)) {
+        valid = false;
+        continue;
+      }
+      seenStep[p][t][s] = true;
+      ++steps;
+    }
+  }
+  f.seek(0);
+  return valid && hasBpm && hasSongLen && tracks == kSeqTrackCount &&
+         steps == static_cast<uint16_t>(kPatternCount) * kSeqTrackCount * kSeqStepCount;
+}
+
 void loadProject(uint8_t slot) {
   char path[24];
   snprintf(path, sizeof(path), "/projects/%d.proj", slot);
-  File f = SD.open(path);
+  File f = openSavedFile(path);
   if (!f) {
     Serial.print("PROJECT_LOAD_EMPTY:");
     Serial.println(path);
+    snprintf(projectStatus, sizeof(projectStatus), "Projet %u absent de la SD", slot + 1);
     return;
+  }
+  if (!projectStructureValid(f)) {
+    f.close();
+    char bakPath[40];
+    snprintf(bakPath, sizeof(bakPath), "%s.bak", path);
+    f = SD.open(bakPath);
+    if (!f || !savedFileCrcValid(f) || !projectStructureValid(f)) {
+      if (f) f.close();
+      Serial.print("PROJECT_LOAD_BADFILE:");
+      Serial.println(path);
+      snprintf(projectStatus, sizeof(projectStatus), "Projet %u invalide (voir journal)", slot + 1);
+      return;
+    }
   }
 
   char msg[32];
+  // Un projet sans ligne PADSAMPLE pour un pad signifie "pad vide".
+  // Repartir d'un kit neutre avant de rejouer les assignations.
+  for (uint8_t pad = 0; pad < az2::kPadCount; ++pad) {
+    snprintf(msg, sizeof(msg), "PADSAMPLE:%u:-", pad);
+    sendToTeensy(msg);
+    padSamplePath[pad][0] = '\0';
+  }
   // PAS static -- doit repartir de -1 a CHAQUE appel de loadProject(),
   // sinon un second chargement dont le premier pattern coinciderait
   // avec le dernier pattern du fichier precedent sauterait a tort le
@@ -3448,7 +4014,7 @@ void loadProject(uint8_t slot) {
       const String rest = afterColon(line);
       const int c = rest.indexOf(':');
       if (c >= 0) {
-        char padMsg[64];
+        char padMsg[96];
         snprintf(padMsg, sizeof(padMsg), "PADSAMPLE:%s:%s", rest.substring(0, c).c_str(), rest.substring(c + 1).c_str());
         sendToTeensy(padMsg);
       }
@@ -3557,6 +4123,7 @@ void loadProject(uint8_t slot) {
   sendToTeensy(msg);
   Serial.print("PROJECT_LOADED:");
   Serial.println(path);
+  snprintf(projectStatus, sizeof(projectStatus), "Projet %u charge", slot + 1);
 }
 
 // ---------------------------------------------------------------------
@@ -3701,6 +4268,7 @@ void drawScreen(Screen s) {
     case Screen::Menu: drawMenu(); return;
     case Screen::Controls: drawControlsPage(); return;
     case Screen::Audio: drawAudioPage(); return;
+    case Screen::Sampler: drawSamplerPage(); return;
     case Screen::Sequencer: drawSequencerPage(); return;
     case Screen::Engines: drawEnginesPage(); return;
     case Screen::Retro: drawRetroPage(); return;
@@ -3749,6 +4317,14 @@ void goTo(Screen s) {
     gbRomScroll = 0;
     selectedRomIndex = 0;
   }
+  if (s == Screen::Sampler) {
+    snprintf(samplerFolder, sizeof(samplerFolder), "/samples");
+    samplerOffset = 0;
+    samplerSelectedRow = 0;
+    samplerUiStatus[0] = '\0';
+    sendToTeensy("PADSAMPLE?");
+    requestSamplerList();
+  }
 
   // Page MOTEURS (2026-09-19) : aligne le defilement de la liste PATCH
   // sur le patch REELLEMENT charge de la piste affichee -- sinon un
@@ -3765,7 +4341,8 @@ void goTo(Screen s) {
   // grille des 4 categories, jamais au milieu d'une sous-liste --
   // simple, pas d'etat perime a gerer (voir la page Menu plus haut).
   if (s == Screen::Menu) {
-    menuCategory = -1;
+    menuCategory = menuReturnCategory >= 0 ? menuReturnCategory : -1;
+    menuReturnCategory = -1;
     menuSelected = 0;
   }
 
@@ -3808,8 +4385,28 @@ void handleTeensyLine(const String &line) {
   }
   Serial.print("TEENSY:");
   Serial.println(line);
-  teensyLinked = true;
   pushLog(line);
+
+  if (line.startsWith("SAMPLEFILE:") || line.startsWith("SAMPLEDIR:")) {
+    const bool isDir = line.startsWith("SAMPLEDIR:");
+    const int prefixLen = isDir ? 10 : 11;
+    const int colon = line.indexOf(':', prefixLen);
+    if (colon > prefixLen) {
+      const int row = line.substring(prefixLen, colon).toInt();
+      if (row >= 0 && row < kSamplerRows) {
+        line.substring(colon + 1).toCharArray(samplerFiles[row], sizeof(samplerFiles[row]));
+        samplerIsDir[row] = isDir;
+        if (row + 1 > samplerVisible) samplerVisible = row + 1;
+      }
+    }
+    return;
+  }
+  if (line.startsWith("SAMPLELIST:DONE:")) {
+    const int colon = line.indexOf(':', 16);
+    samplerTotal = static_cast<uint16_t>(line.substring(16, colon).toInt());
+    samplerNeedsRedraw = true;
+    return;
+  }
 
   if (line.startsWith("NAV:")) {
     const int firstColon = line.indexOf(':');
@@ -3831,6 +4428,49 @@ void handleTeensyLine(const String &line) {
 
       if (index >= 0) {
         navState[index] = pressed;
+        if (pressed && currentScreen == Screen::Sampler && !screensaverActive) {
+          if (index == 0) {
+            if (samplerSelectedRow > 0) --samplerSelectedRow;
+            else if (samplerOffset >= kSamplerRows) {
+              samplerOffset -= kSamplerRows;
+              samplerSelectedRow = kSamplerRows - 1;
+              requestSamplerList();
+            }
+          } else if (index == 1) {
+            if (samplerSelectedRow + 1 < samplerVisible) ++samplerSelectedRow;
+            else if (samplerOffset + kSamplerRows < samplerTotal) {
+              samplerOffset += kSamplerRows;
+              samplerSelectedRow = 0;
+              requestSamplerList();
+            }
+          } else {
+            samplerSelectedPad = static_cast<uint8_t>((samplerSelectedPad + (index == 3 ? 1 : 15)) % 16);
+          }
+          drawSamplerPage();
+        }
+        if (pressed && currentScreen == Screen::Project && !screensaverActive) {
+          const int8_t delta = (index == 0 || index == 2) ? -1 : 1;
+          selectProjectSlot(static_cast<uint8_t>((projectSlot + kProjectSlotCount + delta) % kProjectSlotCount));
+        }
+        if (pressed && currentScreen == Screen::Song && !screensaverActive) {
+          if (index == 0 || index == 1) {
+            const int next = constrain(static_cast<int>(songSelectedSlot) + (index == 0 ? -4 : 4), 0, kSongLength - 1);
+            songSelectedSlot = static_cast<uint8_t>(next);
+          } else {
+            const uint8_t slot = songSelectedSlot;
+            songPatterns[slot] = static_cast<uint8_t>((songPatterns[slot] + (index == 2 ? kPatternCount - 1 : 1)) % kPatternCount);
+            if (slot >= songLen) {
+              songLen = slot + 1;
+              char lenMsg[16];
+              snprintf(lenMsg, sizeof(lenMsg), "SONGLEN:%u", songLen);
+              sendToTeensy(lenMsg);
+            }
+            char msg[20];
+            snprintf(msg, sizeof(msg), "SONGSET:%u:%u", slot, songPatterns[slot]);
+            sendToTeensy(msg);
+          }
+          drawSongPage();
+        }
         if (currentScreen == Screen::Controls && !screensaverActive) {
           drawNavBox(static_cast<uint8_t>(index));
         }
@@ -3998,12 +4638,29 @@ void handleTeensyLine(const String &line) {
         if (pressed && currentScreen == Screen::Sequencer && selectedSeqTrack >= 0 && selectedSeqStep >= 0) {
           const uint8_t t = static_cast<uint8_t>(selectedSeqTrack);
           const uint8_t s = static_cast<uint8_t>(selectedSeqStep);
-          {
+          if (seqSideFocus) {
+            if (index == 0 || index == 1) {
+              const int delta = index == 0 ? -1 : 1;
+              seqSideIndex = static_cast<uint8_t>(constrain(static_cast<int>(seqSideIndex) + delta, 0, 5));
+              drawTrkSidePanel();
+            } else if (index == 2) {
+              seqSideFocus = false;
+              seqDetailCol = 5;
+              drawTrkSidePanel();
+              drawDetailRow(s);
+            }
+          } else {
             if (index == 2 || index == 3) {
-              const int8_t prevCol = seqDetailCol;
-              seqDetailCol = static_cast<int8_t>((seqDetailCol + (index == 3 ? 1 : 5)) % 6);
-              if (seqDetailCol != prevCol) {
-                drawDetailRow(s);
+              if ((index == 3 && seqDetailCol == 5) || (index == 2 && seqDetailCol == 0)) {
+                seqSideFocus = true;
+                seqSideIndex = index == 3 ? 0 : 5;
+                drawTrkSidePanel();
+              } else {
+                const int8_t prevCol = seqDetailCol;
+                seqDetailCol = static_cast<int8_t>((seqDetailCol + (index == 3 ? 1 : 5)) % 6);
+                if (seqDetailCol != prevCol) {
+                  drawDetailRow(s);
+                }
               }
             } else if ((index == 0 || index == 1) && !btnState[0]) {
               const int8_t prevStep = selectedSeqStep;
@@ -4246,12 +4903,24 @@ void handleTeensyLine(const String &line) {
       if (currentScreen == Screen::Controls && !screensaverActive) {
         drawBtnBox(static_cast<uint8_t>(index));
       }
+      if (pressed && currentScreen == Screen::Sampler && !screensaverActive) {
+        if (letter == 'A') {
+          if (samplerIsDir[samplerSelectedRow]) samplerOpenSelected();
+          else samplerAssignSelected();
+        }
+        else if (letter == 'B') {
+          char msg[32];
+          snprintf(msg, sizeof(msg), "PAD:%02u:DOWN:vel=100", samplerSelectedPad);
+          sendToTeensy(msg);
+        }
+      } else if (!pressed && currentScreen == Screen::Sampler && letter == 'B') {
+        char msg[24];
+        snprintf(msg, sizeof(msg), "PAD:%02u:UP", samplerSelectedPad);
+        sendToTeensy(msg);
+      }
       // Page JEUX : A/B -> boutons Game Boy A/B. SELECT/START sont
-      // passes aux encodeurs 2/3 (voir ENC: plus bas) -- demande
-      // 2026-09-15 ("les boutons start select faut les config sur les
-      // encodeurs ... comme ca on a a/b, start/select et les
-      // gachettes") : C/D se liberent pour un futur role de gachette
-      // (pas encore assigne).
+      // passes aux encodeurs 2/3 (voir ENC: plus bas). C/D restent
+      // libres dans l'emulateur pour les futurs roles de gachette.
       const bool inGbGame = (currentScreen == Screen::Retro && gbIsLoaded());
       if (inGbGame && index < 2) {
         static const GbButton kGbMap[2] = {GbButton::A, GbButton::B};
@@ -4263,31 +4932,11 @@ void handleTeensyLine(const String &line) {
       if (pressed && letter == 'A' && currentScreen == Screen::Retro && !gbIsLoaded() && gbRomCount > 0) {
         if (gbLoadRom(gbRomNames[selectedRomIndex])) {
           drawRetroPage();
+          drawGbViewportFrame();
         }
       }
-      // Sortir d'une partie : demande 2026-09-17 ("il faut un truc pour
-      // sortir de l'emulateur cote code") -- B est deja pris par le jeu
-      // (voir plus bas) donc pas utilisable comme "retour" ici. La Game
-      // Boy d'origine n'a pas de boutons L/R : C et D restent donc
-      // libres meme en pleine partie (voir AZ2_TODO_PICO.md, "gachette"
-      // jamais assignee) -- C sert a quitter proprement (goTo()
-      // sauvegarde la RAM cartouche via gbUnload() avant de liberer la
-      // ROM, meme chemin que changer de page) -- vers navPrevious
-      // (2026-09-19, meme convention "retour d'un etage" que partout
-      // ailleurs desormais), pas force au menu.
-      if (pressed && letter == 'C' && inGbGame) {
-        goTo(navPrevious);
-      }
-      // Sauvegarde manuelle LSDJ/GB : D force l'ecriture de la SRAM
-      // sans quitter la partie. Le message tient dans la bande de titre.
-      if (pressed && letter == 'D' && inGbGame) {
-        const bool saved = gbSaveNow();
-        gfx->fillRect(0, 0, kScreenSize, 22, RGB565_BLACK);
-        gfx->setTextSize(1);
-        gfx->setTextColor(saved ? kDim : RGB565_RED);
-        gfx->setCursor(kMargin, 5);
-        gfx->print(saved ? "GB SAVE OK" : "GB SAVE ERROR - D:RETRY");
-      }
+      // C/D ne quittent plus la partie et ne declenchent plus de sauvegarde:
+      // ils restent reserves aux futures gachettes dans l'emulateur.
       // Menu principal : A confirme la selection surlignee par la
       // croix (voir menuSelected ci-dessus) -- demande 2026-09-15.
       // Grille de categories -> entre dans la categorie ; sous-liste ->
@@ -4295,6 +4944,74 @@ void handleTeensyLine(const String &line) {
       if (pressed && letter == 'A' && currentScreen == Screen::Config) {
         configChangeRow(1);
       }
+      if (pressed && letter == 'A' && currentScreen == Screen::Audio) {
+        goTo(Screen::Sampler);
+      }
+      if (pressed && currentScreen == Screen::Project) {
+        if (letter == 'A') requestProjectLoad();
+        else if (letter == 'B') goTo(Screen::Song);
+        else if (letter == 'D') requestProjectSave();
+      }
+      if (pressed && currentScreen == Screen::Song) {
+        if (letter == 'A') {
+          songMode = !songMode;
+          char msg[16];
+          snprintf(msg, sizeof(msg), "SONGMODE:%u", songMode ? 1 : 0);
+          sendToTeensy(msg);
+          drawSongPage();
+        } else if (letter == 'B') {
+          goTo(Screen::Project);
+        } else if (letter == 'D') {
+          songLen = static_cast<uint8_t>((songLen + 1) % (kSongLength + 1));
+          char msg[16];
+          snprintf(msg, sizeof(msg), "SONGLEN:%u", songLen);
+          sendToTeensy(msg);
+          drawSongPage();
+        }
+      }
+      // A confirme le bouton latéral actuellement sélectionné par la
+      // croix dans le tracker. Les boutons tactiles gardent leur action
+      // directe ; ce chemin rend les mêmes fonctions accessibles sans
+      // toucher l'écran.
+      if (pressed && letter == 'A' && currentScreen == Screen::Sequencer && seqSideFocus) {
+        switch (seqSideIndex) {
+          case 0:
+            selectedEngineTrack = selectedSeqTrack;
+            goTo(Screen::Engines);
+            break;
+          case 1:
+            patchTrack = selectedSeqTrack;
+            scopeHasData = false;
+            goTo(Screen::Patch);
+            break;
+          case 2:
+            seqSideFocus = false;
+            seqDetailCol = 2;
+            drawTrkSidePanel();
+            drawDetailRow(static_cast<uint8_t>(selectedSeqStep));
+            break;
+          case 3:
+            padEditsStep = true;
+            padTargetTrack = selectedSeqTrack;
+            goTo(Screen::Audio);
+            break;
+          case 4: {
+            char msg[12];
+            snprintf(msg, sizeof(msg), "METRO:%d", metronomeOn ? 0 : 1);
+            sendToTeensy(msg);
+            break;
+          }
+          case 5:
+            saveProject(projectSlot);
+            break;
+        }
+      }
+      // Page SEQUENCEUR : les boutons physiques donnent accès aux pages
+      // moteur/patch et au transport sans devoir toucher le petit panneau
+      // lateral. B ouvre MOTEURS sur la piste du tracker ; dans cette page
+      // la croix GAUCHE/DROITE choisit MOTEUR ou PATCH, HAUT/BAS change la
+      // selection, et A ouvre ensuite le detail du patch. C est reserve a
+      // PLAY/STOP ; D reste le FILL tant qu'il est maintenu.
       if (pressed && letter == 'A' && currentScreen == Screen::Menu) {
         if (menuCategory < 0) {
           menuCategory = menuSelected;
@@ -4314,6 +5031,7 @@ void handleTeensyLine(const String &line) {
               padTargetTrack = -1;
               padEditsStep = false;
             }
+            menuReturnCategory = menuCategory;
             goTo(kMenuItems[items[menuSelected]].target);
           }
         }
@@ -4347,8 +5065,17 @@ void handleTeensyLine(const String &line) {
         menuSelected = 0;
         drawMenu();
       }
-      if (pressed && letter == 'C' && currentScreen != Screen::Menu && !inGbGame) {
-        goTo(navPrevious);
+      if (pressed && letter == 'C' && currentScreen == Screen::Sampler) {
+        samplerGoUp();
+      } else if (pressed && letter == 'C' && currentScreen != Screen::Menu && !inGbGame) {
+        // Toute page ouverte depuis une catégorie revient à cette
+        // catégorie, même après un détour par MOTEURS, PATCH ou AUDIO.
+        // Les pages ouvertes hors menu gardent le retour d'un niveau.
+        if (menuReturnCategory >= 0) {
+          goTo(Screen::Menu);
+        } else {
+          goTo(navPrevious);
+        }
       }
       // Page PATCH : B joue/coupe une note de test DIRECTEMENT sur la
       // piste affichee (2026-09-19, "il faut utiliser le bouton B pour
@@ -4463,7 +5190,11 @@ void handleTeensyLine(const String &line) {
       // soir pour les effets par piste, meme esprit ici).
       if (index == 1 || index == 2) {
         const uint8_t slot = static_cast<uint8_t>(index - 1);
-        if (currentScreen == Screen::Mixer) {
+        if (currentScreen == Screen::Audio && slot == 0 && padMenuOpen) {
+          padMenuIndex = static_cast<uint8_t>((static_cast<uint16_t>(value) * kPadMenuCount) / 128);
+          if (padMenuIndex >= kPadMenuCount) padMenuIndex = kPadMenuCount - 1;
+          drawPadMenu();
+        } else if (currentScreen == Screen::Mixer) {
           if (slot == 0) {
             const int track = (static_cast<int>(value) * kSeqTrackCount) / 128;
             selectedMixerTrack = static_cast<int8_t>(constrain(track, 0, kSeqTrackCount - 1));
@@ -4558,6 +5289,20 @@ void handleTeensyLine(const String &line) {
             // demarrer/arreter -- l'etat visuel n'est mis a jour qu'a
             // l'echo REC:STARTED:/REC:STOPPED: du Teensy, pas ici.
             sendToTeensy(gbRecActive ? "REC:STOP" : "REC:START");
+          }
+          // Sortie volontaire et difficile a declencher par erreur:
+          // START + SELECT maintenus simultanement.
+          if ((index == 1 || index == 2) && encSwState[1] && encSwState[2]) {
+            goTo(navPrevious);
+          }
+        }
+        if (currentScreen == Screen::Audio && index == 1 && pressed) {
+          if (padMenuOpen) {
+            padMenuOpen = false;
+            drawAudioPage();
+          } else {
+            padMenuOpen = true;
+            drawPadMenu();
           }
         }
       }
@@ -4864,6 +5609,12 @@ void handleTeensyLine(const String &line) {
         }
       }
     }
+  } else if (line.startsWith("PADSAMPLE:") && line.endsWith(":CLEARED")) {
+    const int pad = line.substring(10, line.indexOf(':', 10)).toInt();
+    if (pad >= 0 && pad < az2::kPadCount) {
+      padSamplePath[pad][0] = '\0';
+      samplerNeedsRedraw = true;
+    }
   } else if (line.startsWith("PADSAMPLE:") && line.indexOf(":READY:path=") > 0) {
     // Echo de l'assignation d'un sample a un pad (voir
     // loadWavIntoPadSampler() cote Teensy) -- garde padSamplePath[] a
@@ -4880,6 +5631,8 @@ void handleTeensyLine(const String &line) {
       if (pad < az2::kPadCount) {
         const String path = line.substring(pathIdx + 5);
         path.toCharArray(padSamplePath[pad], sizeof(padSamplePath[pad]));
+        snprintf(samplerUiStatus, sizeof(samplerUiStatus), "Pad %u pret", pad);
+        samplerNeedsRedraw = true;
       }
     }
   } else if (line.startsWith("MUTE:") || line.startsWith("SOLO:")) {
@@ -5008,18 +5761,6 @@ void handleTeensyLine(const String &line) {
 
   if (currentScreen == Screen::Links) {
     drawLinksPage();
-  }
-  // Bug trouve le 2026-09-17 ("bug d'affichage quand ca commence a
-  // demarrer l'emulation") : drawLinkStatus() se dessine en bas de
-  // l'ecran (kStatusY = kScreenSize-30 = 450) -- ca chevauche le bas de
-  // l'image du jeu (kGbScreenTop=24 a 24+432=456, voir gbBlitLine()).
-  // Cette fonction tourne a CHAQUE ligne recue du Teensy, y compris
-  // STATUS: envoye ~1x/s en continu -- une barre noire + texte
-  // s'incrustait donc sur le bas de l'ecran de jeu toutes les secondes
-  // pendant qu'une partie tournait. Exclu en plus de Controls/Links.
-  const bool gbPlaying = (currentScreen == Screen::Retro && gbIsLoaded());
-  if (currentScreen != Screen::Controls && currentScreen != Screen::Links && !gbPlaying) {
-    drawLinkStatus();
   }
 }
 
@@ -5215,9 +5956,27 @@ void runIntro() {
 // nom non qualifiee, valide pour le reste du fichier apres la fermeture
 // du namespace). 160x144 -> mise a l'echelle x3 = 480x432, centree
 // verticalement (24px de marge haut/bas).
-constexpr int16_t kGbScaledW = 160 * 3;
-constexpr int16_t kGbScaledH = 144 * 3;
-constexpr int16_t kGbScreenTop = (kScreenSize - kGbScaledH) / 2;
+constexpr int16_t kGbMaxScaledW = 160 * 3;
+constexpr int16_t kGbMaxScaledRowsPerBand = 8 * 3;
+int16_t gbScaledW() { return static_cast<int16_t>(160 * gbDisplayScale); }
+int16_t gbScaledH() { return static_cast<int16_t>(144 * gbDisplayScale); }
+int16_t gbScreenLeft() { return static_cast<int16_t>((kScreenSize - gbScaledW()) / 2); }
+int16_t gbScreenTop() { return static_cast<int16_t>((kScreenSize - gbScaledH()) / 2); }
+
+void drawGbViewportFrame() {
+  constexpr int16_t kFrame = 4;
+  const int16_t x = static_cast<int16_t>(gbScreenLeft() - kFrame);
+  const int16_t y = static_cast<int16_t>(gbScreenTop() - kFrame);
+  const int16_t w = static_cast<int16_t>(gbScaledW() + 2 * kFrame);
+  const int16_t h = static_cast<int16_t>(gbScaledH() + 2 * kFrame);
+  gfx->drawRect(x, y, w, h, kPalette[2]);
+  gfx->drawRect(static_cast<int16_t>(x + 1), static_cast<int16_t>(y + 1),
+                static_cast<int16_t>(w - 2), static_cast<int16_t>(h - 2), kFaint);
+  if (uint16_t *framebuffer = gfx->getFramebuffer(); framebuffer != nullptr) {
+    esp_cache_msync(framebuffer, static_cast<size_t>(kScreenSize * kScreenSize * sizeof(uint16_t)),
+                    ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  }
+}
 
 // Le rendu est regroupe par bandes de 8 lignes GB : 160x8 pixels deviennent
 // un bloc 480x24. Cela ramene une image de 144 a 18 appels au pilote RGB,
@@ -5237,30 +5996,104 @@ constexpr int16_t kGbScreenTop = (kScreenSize - kGbScaledH) / 2;
 // Prehistorik Man") -- accepte comme compromis connu, pas un bug AZ-2.
 void gbBlitLine(int line, const uint16_t *row) {
   constexpr int16_t kGbSourceRowsPerBand = 8;
-  constexpr int16_t kGbScaledRowsPerBand = kGbSourceRowsPerBand * 3;
-  static uint16_t scaledBand[kGbScaledW * kGbScaledRowsPerBand];
+  const int16_t scale = gbDisplayScale;
+  const int16_t scaledW = gbScaledW();
+  const int16_t scaledTop = gbScreenTop();
+  const int16_t screenLeft = gbScreenLeft();
+  static uint16_t scaledBand[kGbMaxScaledW * kGbMaxScaledRowsPerBand];
+  static uint32_t displayFrameUs = 0;
+  static uint32_t scaleFrameUs = 0;
+  static uint32_t copyFrameUs = 0;
+  static uint32_t flushFrameUs = 0;
   const int16_t sourceRowInBand = static_cast<int16_t>(line % kGbSourceRowsPerBand);
-  uint16_t *scaledRow = scaledBand + sourceRowInBand * 3 * kGbScaledW;
+  uint16_t *scaledRow = scaledBand + sourceRowInBand * scale * scaledW;
 
-  for (int x = 0; x < 160; ++x) {
-    const uint16_t c = row[x];
-    const int16_t base = static_cast<int16_t>(x * 3);
-    scaledRow[base] = c;
-    scaledRow[base + 1] = c;
-    scaledRow[base + 2] = c;
+  const uint32_t scaleStartUs = micros();
+  // Ecriture sequentielle des lignes deja inversees : elle evite le calcul
+  // d'offset et la boucle interne pour les deux modes reels X2/X3.
+  if (scale == 3) {
+    uint16_t *dst = scaledRow;
+    for (int x = 159; x >= 0; --x) {
+      const uint16_t c = row[x];
+      *dst++ = c;
+      *dst++ = c;
+      *dst++ = c;
+    }
+  } else if (scale == 2) {
+    uint16_t *dst = scaledRow;
+    for (int x = 159; x >= 0; --x) {
+      const uint16_t c = row[x];
+      *dst++ = c;
+      *dst++ = c;
+    }
+  } else {
+    for (int x = 0; x < 160; ++x) {
+      scaledRow[159 - x] = row[x];
+    }
   }
   // Les 2 autres rangees de sortie sont identiques a la premiere.
-  memcpy(scaledRow + kGbScaledW, scaledRow, kGbScaledW * sizeof(uint16_t));
-  memcpy(scaledRow + kGbScaledW * 2, scaledRow, kGbScaledW * sizeof(uint16_t));
+  for (int16_t dy = 1; dy < scale; ++dy) {
+    memcpy(scaledRow + scaledW * dy, scaledRow, scaledW * sizeof(uint16_t));
+  }
+  scaleFrameUs += micros() - scaleStartUs;
 
   const bool bandComplete = sourceRowInBand == (kGbSourceRowsPerBand - 1) || line == 143;
   if (bandComplete) {
     const int16_t sourceBandStart = static_cast<int16_t>(line - sourceRowInBand);
     const int16_t sourceRows = static_cast<int16_t>(sourceRowInBand + 1);
-    const int16_t y = static_cast<int16_t>(kGbScreenTop + sourceBandStart * 3);
-    gfx->draw16bitRGBBitmap(0, y, scaledBand, kGbScaledW, sourceRows * 3);
+    const int16_t y = static_cast<int16_t>(scaledTop + sourceBandStart * scale);
+    const uint32_t drawStartUs = micros();
+    // Le chemin générique Arduino_GFX refait les contrôles de clipping et la
+    // rotation 180 degrés pour chaque bande. Le panneau RGB expose déjà son
+    // framebuffer PSRAM : on écrit directement les lignes inversées, puis on
+    // invalide uniquement leur plage de cache. Le rendu reste identique,
+    // mais évite une copie intermédiaire et ses pics de latence.
+    uint16_t *framebuffer = gfx->getFramebuffer();
+    const int16_t outputRows = static_cast<int16_t>(sourceRows * scale);
+    const uint32_t copyStartUs = micros();
+    if (framebuffer != nullptr) {
+      for (int16_t srcY = 0; srcY < outputRows; ++srcY) {
+        const int16_t dstY = static_cast<int16_t>(kScreenSize - 1 - (y + srcY));
+        uint16_t *dst = framebuffer + dstY * kScreenSize + screenLeft;
+        const uint16_t *src = scaledBand + srcY * scaledW;
+        memcpy(dst, src, scaledW * sizeof(uint16_t));
+      }
+    } else {
+      // Sécurité pour un autre pilote d’écran qui ne fournirait pas de
+      // framebuffer accessible.
+      gfx->draw16bitRGBBitmap(screenLeft, y, scaledBand, scaledW, outputRows);
+    }
+    copyFrameUs += micros() - copyStartUs;
+    const uint32_t flushStartUs = micros();
+    if (framebuffer != nullptr) {
+      const int16_t firstDstY = static_cast<int16_t>(kScreenSize - 1 - (y + outputRows - 1));
+      esp_cache_msync(framebuffer + firstDstY * kScreenSize,
+                      static_cast<size_t>(outputRows * kScreenSize * sizeof(uint16_t)),
+                      ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    }
+    flushFrameUs += micros() - flushStartUs;
+    displayFrameUs += micros() - drawStartUs;
+    if (line == 143) {
+      extern volatile uint32_t gGbDisplayLastUs;
+      extern volatile uint32_t gGbBlitScaleLastUs;
+      extern volatile uint32_t gGbBlitCopyLastUs;
+      extern volatile uint32_t gGbBlitFlushLastUs;
+      gGbDisplayLastUs = displayFrameUs;
+      gGbBlitScaleLastUs = scaleFrameUs;
+      gGbBlitCopyLastUs = copyFrameUs;
+      gGbBlitFlushLastUs = flushFrameUs;
+      displayFrameUs = 0;
+      scaleFrameUs = 0;
+      copyFrameUs = 0;
+      flushFrameUs = 0;
+    }
   }
 }
+
+volatile uint32_t gGbDisplayLastUs = 0;
+volatile uint32_t gGbBlitScaleLastUs = 0;
+volatile uint32_t gGbBlitCopyLastUs = 0;
+volatile uint32_t gGbBlitFlushLastUs = 0;
 
 void setup() {
   Serial.begin(230400);
@@ -5320,6 +6153,7 @@ void setup() {
   Serial1.begin(az2::kControlBaud, SERIAL_8N1, kTeensyRxPin, kTeensyTxPin);
   gbSetAudioV2Ready(false);
   sendToTeensy(az2::kHelloControl);
+  sendToTeensy("PADSAMPLE?");
   if (az2::kGbAudioV2PilotEnabled) {
     sendToTeensy(az2::kGbAudioV2Query);
   }
@@ -5353,7 +6187,9 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
     // -- toucher cycle le pattern EDITE (voir currentPattern, demande
     // 2026-09-16 "il faut un tracker complet").
     switchToPattern(static_cast<uint8_t>(currentPattern + 1));
-  } else if (currentScreen != Screen::Menu && hitBack(x, y)) {
+  } else if (currentScreen == Screen::Sampler && hitBack(x, y)) {
+    samplerGoUp();
+  } else if (currentScreen != Screen::Menu && currentScreen != Screen::Audio && hitBack(x, y)) {
     goTo(Screen::Menu);
   } else if (currentScreen == Screen::Menu) {
     if (menuCategory < 0) {
@@ -5382,10 +6218,14 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
           padTargetTrack = -1;
           padEditsStep = false;
         }
+        menuReturnCategory = menuCategory;
         goTo(kMenuItems[items[hit]].target);
       }
     }
   } else if (currentScreen == Screen::Audio) {
+    if (padMenuOpen) {
+      return;
+    }
     const int8_t pad = hitTestAudioPad(x, y);
     if (pad >= 0 && pad != heldAudioPad[0] && pad != heldAudioPad[1]) {
       heldAudioPad[slot] = pad;
@@ -5419,6 +6259,52 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
           snprintf(msg, sizeof(msg), "PAD:%02d:DOWN:vel=100", pad);
         }
         sendToTeensy(msg);
+      }
+      if (seqRecording && padEditsStep && padTargetTrack >= 0) {
+        selectedSeqStep = static_cast<int8_t>((selectedSeqStep + 1) % kSeqStepCount);
+      }
+    }
+  } else if (currentScreen == Screen::Sampler) {
+    if (inBox(x, y, 20, 408, 145, 38)) {
+      samplerKitSlot = static_cast<uint8_t>((samplerKitSlot + 1) % 4);
+      drawSamplerPage();
+    } else if (inBox(x, y, 170, 408, 135, 38)) {
+      saveSamplerKit();
+    } else if (inBox(x, y, 310, 408, 150, 38)) {
+      loadSamplerKit();
+    } else if (inBox(x, y, 20, 354, 95, 42)) {
+      samplerOffset = samplerOffset >= kSamplerRows ? samplerOffset - kSamplerRows : 0;
+      samplerSelectedRow = 0;
+      requestSamplerList();
+      drawSamplerPage();
+    } else if (inBox(x, y, 123, 354, 95, 42)) {
+      if (samplerOffset + kSamplerRows < samplerTotal) samplerOffset += kSamplerRows;
+      samplerSelectedRow = 0;
+      requestSamplerList();
+      drawSamplerPage();
+    } else if (inBox(x, y, 240, 354, 220, 42)) {
+      if (samplerIsDir[samplerSelectedRow]) samplerOpenSelected();
+      else samplerAssignSelected();
+    } else if (inBox(x, y, 20, 96, 191, 191)) {
+      const int col = (x - 20) / 49;
+      const int row = (y - 96) / 49;
+      if (col < 4 && row < 4 && (x - 20) % 49 < 44 && (y - 96) % 49 < 44) {
+        samplerSelectedPad = static_cast<uint8_t>(row * 4 + col);
+        char msg[32];
+        snprintf(msg, sizeof(msg), "PAD:%02u:DOWN:vel=100", samplerSelectedPad);
+        sendToTeensy(msg);
+        heldAudioPad[slot] = samplerSelectedPad;
+        drawSamplerPage();
+      }
+    } else if (inBox(x, y, 240, 96, 220, 254)) {
+      const int row = (y - 96) / 43;
+      if (row < kSamplerRows && samplerFiles[row][0]) {
+        samplerSelectedRow = static_cast<uint8_t>(row);
+        if (samplerIsDir[row]) samplerOpenSelected();
+        else {
+          heldSamplerFile[slot] = static_cast<int8_t>(row);
+          drawSamplerPage();
+        }
       }
     }
   } else if (currentScreen == Screen::Sequencer) {
@@ -5481,6 +6367,9 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       drawTrkSideBtn(5, RGB565(60, 200, 90), true, "SAUVER");
       saveProject(projectSlot);
       drawTrkSideBtn(5, RGB565(60, 200, 90), false, "SAUVER");
+    } else if (hitTestTrkRec(x, y)) {
+      seqRecording = !seqRecording;
+      drawTrkControls();
     } else if (hitTestTrkPlay(x, y)) {
       sendToTeensy(seqPlaying ? az2::kStop : az2::kPlay);
     } else if (hitTestTrkBpm(x, y) >= 0) {
@@ -5623,7 +6512,9 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       toggleMixerMuteSolo(false);
     }
   } else if (currentScreen == Screen::Song) {
-    if (hitTestSongMode(x, y)) {
+    if (hitTestSongProjects(x, y)) {
+      goTo(Screen::Project);
+    } else if (hitTestSongMode(x, y)) {
       songMode = !songMode;
       char msg[12];
       snprintf(msg, sizeof(msg), "SONGMODE:%d", songMode ? 1 : 0);
@@ -5649,6 +6540,7 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
     } else {
       const int8_t slot = hitTestSongSlot(x, y);
       if (slot >= 0) {
+        songSelectedSlot = static_cast<uint8_t>(slot);
         songPatterns[slot] = static_cast<uint8_t>((songPatterns[slot] + 1) % kPatternCount);
         if (slot >= songLen) {
           songLen = static_cast<uint8_t>(slot + 1);
@@ -5657,24 +6549,14 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
         char msg[16];
         snprintf(msg, sizeof(msg), "SONGSET:%d:%d", slot, songPatterns[slot]);
         sendToTeensy(msg);
-        drawSongSlot(static_cast<uint8_t>(slot));
+        drawSongPage();
       }
     }
   } else if (currentScreen == Screen::Project) {
-    if (hitTestProjectSlotNum(x, y)) {
-      projectSlot = static_cast<uint8_t>((projectSlot + 1) % kProjectSlotCount);
-      drawProjectPage();
-    } else if (hitTestProjectSlotSave(x, y)) {
-      saveProject(projectSlot);
-    } else if (hitTestProjectSlotLoad(x, y)) {
-      loadProject(projectSlot);
-      // Les tableaux locaux (trackEngine[]/seqStepOn[]/etc.) sont mis a
-      // jour par loadProject() ET par les echos normaux du Teensy au
-      // fur et a mesure -- redessiner une fois de plus a la fin est
-      // juste pour rafraichir CETTE page (rien de son contenu ne
-      // depend des donnees chargees).
-      drawProjectPage();
-    }
+    const int8_t row = hitTestProjectRow(x, y);
+    if (row >= 0) selectProjectSlot(static_cast<uint8_t>(row));
+    else if (hitTestProjectLoad(x, y)) requestProjectLoad();
+    else if (hitTestProjectSave(x, y)) requestProjectSave();
   } else if (currentScreen == Screen::Config) {
     if (hitTestSaverStyle(x, y)) {
       configSelectedRow = 0;
@@ -5704,6 +6586,16 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
     }
   } else if (currentScreen == Screen::Retro && !gbIsLoaded()) {
     if (gbRomCount > 0) {
+      if (y >= 64 && y < 90 && x >= 120 && x < 230) {
+        gbDisplayScale = 2;
+        drawRetroPage();
+        return;
+      }
+      if (y >= 64 && y < 90 && x >= 244 && x < 354) {
+        gbDisplayScale = 3;
+        drawRetroPage();
+        return;
+      }
       // Liste de ROM affichee : toucher une ligne la charge et demarre
       // le jeu (demande 2026-09-15, "une liste de rom pas uniquement
       // un jeux"). Pagination (2026-09-17) : fleches +/- une page.
@@ -5718,6 +6610,7 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
         if (rowIndex >= 0) {
           if (gbLoadRom(gbRomNames[rowIndex])) {
             drawRetroPage();
+            drawGbViewportFrame();
           }
         }
       }
@@ -5730,9 +6623,21 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
   }
 }
 
-void handleTouchUp(uint8_t slot) {
-  if (currentScreen == Screen::Audio && heldAudioPad[slot] >= 0) {
-    drawAudioCell(static_cast<uint8_t>(heldAudioPad[slot]), false);
+void handleTouchUp(uint8_t slot, int16_t x, int16_t y) {
+  if (currentScreen == Screen::Sampler && heldSamplerFile[slot] >= 0 &&
+      inBox(x, y, 20, 96, 191, 191)) {
+    const int col = (x - 20) / 49;
+    const int row = (y - 96) / 49;
+    if (col < 4 && row < 4 && (x - 20) % 49 < 44 && (y - 96) % 49 < 44) {
+      samplerSelectedRow = static_cast<uint8_t>(heldSamplerFile[slot]);
+      samplerSelectedPad = static_cast<uint8_t>(row * 4 + col);
+      samplerAssignSelected();
+      drawSamplerPage();
+    }
+  }
+  heldSamplerFile[slot] = -1;
+  if ((currentScreen == Screen::Audio || currentScreen == Screen::Sampler) && heldAudioPad[slot] >= 0) {
+    if (currentScreen == Screen::Audio) drawAudioCell(static_cast<uint8_t>(heldAudioPad[slot]), false);
     char msg[24];
     if (padTargetTrack >= 0) {
       snprintf(msg, sizeof(msg), "PAD:%02d:UP:track=%d", heldAudioPad[slot], padTargetTrack);
@@ -5747,6 +6652,8 @@ void handleTouchUp(uint8_t slot) {
 void loop() {
   static uint32_t lastHeartbeatMs = 0;
   static bool wasActive[2] = {false, false};
+  static int16_t lastTouchX[2] = {};
+  static int16_t lastTouchY[2] = {};
   // Anti-rebond bruit I2C (voir "il apparait des que je touche un
   // bouton" -- 2026-09-15) : le bus tactile (GPIO40/41) peut capter du
   // bruit electrique d'un switch pas encore fixe proprement -- un seul
@@ -5757,24 +6664,38 @@ void loop() {
   // plus longtemps qu'un tour de loop(), un blip electrique non.
   static bool pendingActive[2] = {false, false};
   const uint32_t now = millis();
+  const bool gbGameActive = (currentScreen == Screen::Retro && gbIsLoaded());
 
   readTeensyStatus();
+  if (!gbGameActive && samplerNeedsRedraw && currentScreen == Screen::Sampler && !screensaverActive) {
+    samplerNeedsRedraw = false;
+    drawSamplerPage();
+  }
   // Dessin du tracer scope differe hors de readTeensyStatus() -- voir
   // commentaire ScopeRxState/scopeNeedsRedraw plus haut : dessiner un
   // paquet a la fois DANS la boucle de lecture Serial1 bloquait la
   // lecture assez longtemps pour perdre des octets a 921600 bauds.
-  if (scopeNeedsRedraw) {
+  if (!gbGameActive && scopeNeedsRedraw) {
     scopeNeedsRedraw = false;
     if (currentScreen == Screen::Patch && !screensaverActive) {
       drawPatchScope();
     }
   }
 
-  TouchPoint touches[2];
-  readTouches(touches);
+  TouchPoint touches[2] = {};
+  if (!gbGameActive) readTouches(touches);
 
   for (uint8_t slot = 0; slot < 2; ++slot) {
+    if (gbGameActive) {
+      pendingActive[slot] = false;
+      wasActive[slot] = false;
+      continue;
+    }
     const bool rawActive = touches[slot].active;
+    if (rawActive) {
+      lastTouchX[slot] = touches[slot].x;
+      lastTouchY[slot] = touches[slot].y;
+    }
     const bool active = rawActive && (wasActive[slot] || pendingActive[slot]);
     pendingActive[slot] = rawActive;
 
@@ -5787,7 +6708,7 @@ void loop() {
       }
     } else if (!active && wasActive[slot]) {
       if (!screensaverActive) {
-        handleTouchUp(slot);
+        handleTouchUp(slot, lastTouchX[slot], lastTouchY[slot]);
       }
     }
     wasActive[slot] = active;
@@ -5804,7 +6725,19 @@ void loop() {
   // redeclenchant la veille instantanement dans le MEME tour de boucle.
   // Fix : relire millis() ici, apres tout traitement d'activite.
   const uint32_t nowForIdle = millis();
-  if (!screensaverActive && screensaverTimeoutSec > 0 &&
+  // Inhibe l'ENTREE en veille tant qu'une ROM GB est chargee
+  // (2026-09-19, "audit de faisabilite des racks logiciels", R1 :
+  // "la veille peut arreter le jeu a l'issue du delai sans interaction,
+  // meme si une ROM est chargee") -- bug reel confirme en relisant le
+  // code : gbRunFrame() lui-meme est conditionne par !screensaverActive
+  // (voir plus bas), la veille ne se contente donc pas de cacher le
+  // jeu, elle le MET EN PAUSE completement. Rester idle 60s (le delai
+  // par defaut) sans toucher a un bouton pendant une scene calme d'un
+  // jeu est un scenario parfaitement normal, pas une vraie inactivite.
+  // Le delai d'inactivite normal reprend normalement des qu'on quitte
+  // la page JEUX ou decharge la ROM (currentScreen/gbIsLoaded()
+  // reevalues a chaque tour de boucle, rien a reinitialiser).
+  if (!screensaverActive && !gbGameActive && screensaverTimeoutSec > 0 &&
       (nowForIdle - lastActivityMs) >= static_cast<uint32_t>(screensaverTimeoutSec) * 1000UL) {
     screensaverEnter();
   }
@@ -5815,7 +6748,7 @@ void loop() {
   // Efface le temoin de potard (voir drawPotToast()) apres son delai --
   // relance un rendu complet de la page courante plutot que de retenir
   // ce qu'il y avait sous la bande, plus simple/robuste.
-  if (potToastActive && (nowForIdle - potToastLastMs) >= kPotToastTimeoutMs) {
+  if (!gbGameActive && potToastActive && (nowForIdle - potToastLastMs) >= kPotToastTimeoutMs) {
     potToastActive = false;
     if (!screensaverActive) {
       drawScreen(currentScreen);
@@ -5829,6 +6762,10 @@ void loop() {
   constexpr uint32_t kGbFramePeriodUs = 16742;
   constexpr uint32_t kGbFrameRemainder = 2962432;
   constexpr uint32_t kGbClockHz = 4194304;
+  // Le bandeau de diagnostic est utile en qualification, mais inutile en
+  // jeu et provoque un rafraichissement parasite chaque seconde. Les mesures
+  // restent envoyees sur le port serie pour les tests.
+  constexpr bool kGbPerfOverlay = false;
   static uint32_t nextGbFrameUs = 0;
   static uint32_t gbFrameFraction = 0;
   static uint32_t gbFrameCount = 0;
@@ -5876,30 +6813,60 @@ void loop() {
                                                            fpsElapsedMs)
                                    : 0;
       const uint32_t frameAvgUs = (gbFrameCount > 0) ? gbFrameTimeTotalUs / gbFrameCount : 0;
+      const GbRuntimeStats runtime = gbRuntimeStats();
+      const uint32_t cpuX100 = static_cast<uint32_t>(
+          (static_cast<uint64_t>(frameAvgUs) * 10000ULL) / 16743ULL);
       Serial.print("GB:PERF:fps_x100=");
       Serial.print(fpsX100);
       Serial.print(":frame_us_avg=");
       Serial.print(frameAvgUs);
       Serial.print(":frame_us_max=");
       Serial.print(gbFrameTimeMaxUs);
+      Serial.print(":work_p99_us=");
+      Serial.print(runtime.p99WorkUs);
+      Serial.print(":core_avg_us=");
+      Serial.print(runtime.avgCoreUs);
+      Serial.print(":display_avg_us=");
+      Serial.print(runtime.avgDisplayUs);
+      Serial.print(":audio_avg_us=");
+      Serial.print(runtime.avgAudioUs);
+      Serial.print(":core_max_us=");
+      Serial.print(runtime.maxCoreUs);
+      Serial.print(":display_max_us=");
+      Serial.print(runtime.maxDisplayUs);
+      Serial.print(":audio_max_us=");
+      Serial.print(runtime.maxAudioUs);
+      Serial.print(":blit_scale_us=");
+      Serial.print(gGbBlitScaleLastUs);
+      Serial.print(":blit_copy_us=");
+      Serial.print(gGbBlitCopyLastUs);
+      Serial.print(":blit_flush_us=");
+      Serial.print(gGbBlitFlushLastUs);
+      Serial.print(":cpu_x100=");
+      Serial.print(cpuX100);
+      Serial.print(":heap_free_kb=");
+      Serial.print(ESP.getFreeHeap() / 1024U);
+      Serial.print(":psram_free_kb=");
+      Serial.print(ESP.getFreePsram() / 1024U);
       Serial.print(":missed=");
       Serial.println(gbMissedFrames);
 
-      // Diagnostic discret dans la bande superieure reservee au mode GB.
-      // Ne touche jamais aux 432 px de l'image du jeu (y=24..455).
-      const GbRuntimeStats runtime = gbRuntimeStats();
-      gfx->fillRect(120, 0, 270, 22, RGB565_BLACK);
-      gfx->setTextSize(1);
-      gfx->setTextColor(gbMissedFrames == 0 ? kDim : RGB565_RED);
-      gfx->setCursor(120, 5);
-      char perfLabel[48];
-      snprintf(perfLabel, sizeof(perfLabel), "%lu.%02luFPS %luus M%lu S%u",
-               static_cast<unsigned long>(fpsX100 / 100),
-               static_cast<unsigned long>(fpsX100 % 100),
-               static_cast<unsigned long>(frameAvgUs),
-               static_cast<unsigned long>(gbMissedFrames),
-               static_cast<unsigned>(runtime.autosaveFailures));
-      gfx->print(perfLabel);
+      if (kGbPerfOverlay) {
+        // Diagnostic discret dans la bande superieure reservee au mode GB.
+        // Ne touche jamais aux 432 px de l'image du jeu (y=24..455).
+        gfx->fillRect(120, 0, 270, 22, RGB565_BLACK);
+        gfx->setTextSize(1);
+        gfx->setTextColor(gbMissedFrames == 0 ? kDim : RGB565_RED);
+        gfx->setCursor(120, 5);
+        char perfLabel[48];
+        snprintf(perfLabel, sizeof(perfLabel), "%lu.%02luFPS %luus M%lu S%u",
+                 static_cast<unsigned long>(fpsX100 / 100),
+                 static_cast<unsigned long>(fpsX100 % 100),
+                 static_cast<unsigned long>(frameAvgUs),
+                 static_cast<unsigned long>(gbMissedFrames),
+                 static_cast<unsigned>(runtime.autosaveFailures));
+        gfx->print(perfLabel);
+      }
       gbFrameCount = 0;
       gbFrameTimeTotalUs = 0;
       gbFrameTimeMaxUs = 0;
