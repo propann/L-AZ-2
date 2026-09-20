@@ -119,3 +119,7 @@ ni redémarrage n'est apparu, mais la copie est montée à `25..29 ms` et reste
 moins régulière. Le réglage 16 MHz est conservé comme meilleur compromis à ce
 stade ; le firmware principal reste à 12 MHz tant que l'intégration n'est pas
 validée visuellement.
+
+Le palier 19 MHz a ensuite été mesuré à `27..32 ms` pour le plein écran et
+`1,60 ms` pour une bande, sans avantage mesurable. Le probe est donc revenu à
+16 MHz dans les sources, qui reste le candidat à flasher pour la suite.

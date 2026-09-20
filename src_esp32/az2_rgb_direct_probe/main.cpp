@@ -9,7 +9,7 @@ Arduino_DataBus *bus = new Arduino_SWSPI(GFX_NOT_DEFINED, 39, 48, 47, GFX_NOT_DE
 const int kDataPins[16] = {15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0};
 AZ2RgbDirect driver(bus, gc9503v_type1_init_operations,
                     sizeof(gc9503v_type1_init_operations),
-                    18, 17, 16, 21, kDataPins, W, H, 18000000);
+                    18, 17, 16, 21, kDataPins, W, H, 16000000);
 AZ2RgbDirectOutput output(&driver);
 Arduino_Canvas canvas(W, H, &output);
 uint16_t band[480 * 24];
