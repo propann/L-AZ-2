@@ -44,14 +44,17 @@ void loop() {
   canvas.setTextColor(RGB565(255, 255, 255));
   canvas.setCursor(70, 200);
   canvas.print("RGB x2");
+  const uint32_t copyStartUs = micros();
   canvas.flush();
+  const uint32_t copyUs = micros() - copyStartUs;
   phase = !phase;
   const uint32_t now = millis();
   if (now - last >= 1000) {
     last = now;
-    Serial.printf("AZ2:RGB_DIRECT_PROBE:STAT:frames=%lu:write=%u\n",
+    Serial.printf("AZ2:RGB_DIRECT_PROBE:STAT:frames=%lu:write=%u:flush_us=%lu\n",
                   (unsigned long)driver.completedFrames(),
-                  (unsigned)driver.writableIndex());
+                  (unsigned)driver.writableIndex(),
+                  (unsigned long)copyUs);
   }
   delay(250);
 }
