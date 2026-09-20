@@ -127,52 +127,13 @@ Les commandes de simulation `SIMNAV` et `SIMBTN` sont une bonne idée pour autom
 Dans `loadProject()`, une valeur `INST` égale à `0xFF` n’est pas envoyée au Teensy :
 
 ```cpp
-if (vals[5] != 0xFF) {
-  snprintf(msg, sizeof(msg), "INST:%d:%d:%d", t, s, vals[5]);
-  sendToTeensy(msg);
-}
-```
+### Défauts prioritaires
 
-Conséquence : si la mémoire courante contient déjà un override d’instrument sur ce pas, charger un projet où le pas vaut `0xFF` laisse l’ancienne valeur dans le Teensy. Le projet chargé n’est donc pas forcément identique au projet sauvegardé.
+#### ✅ P1 — Le chargement d’un projet ne remet pas les instruments de pas à leur valeur par défaut (RÉSOLU)
 
-Le défaut est aujourd’hui partiellement masqué parce que la colonne INST est stockée mais pas encore appliquée en temps réel dans l’ISR. Il deviendra audible dès que l’override par pas sera activé.
+#### ✅ P1 — Les sauvegardes projet et patch ne sont pas atomiques (RÉSOLU)
 
-**Correction recommandée :** transmettre systématiquement `INST`, y compris `255`, et tester le cycle save → modification → load → query.
-
-### P1 — Les sauvegardes projet et patch ne sont pas atomiques
-
-Le code supprime le fichier existant avant d’ouvrir le nouveau :
-
-```cpp
-SD.remove(path);
-File f = SD.open(path, FILE_WRITE);
-```
-
-Une coupure de courant, une erreur SD ou un plantage entre ces deux opérations peut détruire la dernière sauvegarde valide. Le même risque existe pendant une écriture partielle.
-
-**Correction recommandée :**
-
-1. écrire dans `nom.tmp` ;
-2. fermer et vérifier la taille/contenu minimal ;
-3. renommer l’ancien fichier en `nom.bak` ;
-4. renommer le temporaire vers le nom final ;
-5. restaurer le backup en cas d’échec.
-
-### P1 — La sauvegarde Game Boy dépend de la sortie propre du jeu
-
-La RAM cartouche est écrite uniquement dans `gbUnload()`. Une coupure directe de l’alimentation pendant une partie perd toute la progression depuis le dernier chargement.
-
-**Correction recommandée :** sauvegarde périodique limitée, sauvegarde à la demande, et/ou détection de tension avec arrêt propre. Écrire de façon atomique pour ne pas corrompre le fichier `.sav`.
-
-### P2 — Trop de travail et d’état partagé dans l’interruption du séquenceur
-
-`advanceTick()` tourne dans un `IntervalTimer` et appelle notamment :
-
-- `allTrackNotesOff()` ;
-- `trackNoteOn()` / `trackNoteOff()` ;
-- le métronome ;
-- `random()` ;
-- plusieurs moteurs audio.
+#### ✅ P1 — La sauvegarde Game Boy dépend de la sortie propre du jeu (RÉSOLU)
 
 En parallèle, la boucle principale modifie les moteurs, les patches et les structures du tracker sans section critique générale. Les accès unitaires en 8 bits sont atomiques, mais une commande composée peut être observée dans un état intermédiaire.
 

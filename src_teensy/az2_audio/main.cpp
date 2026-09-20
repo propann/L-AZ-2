@@ -1,3 +1,4 @@
+#include <cstdint>
 // AZ-2 - Moteur audio Teensy v1 : multi-voix + sequenceur 16 pas.
 //
 // Architecture reprise de MicroDexed-touch (voir
@@ -23,6 +24,9 @@
 #include <synth_mda_epiano.h>
 #include <synth_braids.h>
 #include <malloc.h>  // mallinfo() -- voir checkHeap(), diagnostic 2026-09-18
+
+volatile uint32_t maxIsrTime = 0;
+
 
 // Rempli par le coeur Teensyduino au boot (startup.c) en sommant les 2
 // puces PSRAM soudees au dos du Teensy 4.1 : 0 si aucune detectee, sinon
