@@ -36,8 +36,12 @@
 #include <SD.h>
 #include <Preferences.h>
 #include "gb_emulator.h"
+#ifdef AZ2_DIRECT_PANEL
+#include "AZ2_RGB_Direct.h"
+#endif
 
 void drawGbViewportFrame();
+void flushUiCanvas();
 uint8_t gbDisplayScale = 2;
 
 namespace {
@@ -69,6 +73,7 @@ Arduino_DataBus *bus = new Arduino_SWSPI(
     GFX_NOT_DEFINED /* DC (inutilise, 3-wire) */, 39 /* CS */, 48 /* SCK */,
     47 /* SDA */, GFX_NOT_DEFINED /* MISO */);
 
+#ifndef AZ2_DIRECT_PANEL
 Arduino_ESP32RGBPanel *rgbPanel = new Arduino_ESP32RGBPanel(
     18 /* DE */, 17 /* VSYNC */, 16 /* HSYNC */, 21 /* PCLK */,
     4 /* R0 */, 3 /* R1 */, 2 /* R2 */, 1 /* R3 */, 0 /* R4 */,
@@ -82,6 +87,17 @@ Arduino_ESP32RGBPanel *rgbPanel = new Arduino_ESP32RGBPanel(
 Arduino_RGB_Display *gfx = new Arduino_RGB_Display(
     kScreenSize, kScreenSize, rgbPanel, 2 /* rotation: ecran tete-en-bas */,
     true, bus, GFX_NOT_DEFINED, gc9503v_type1_init_operations, sizeof(gc9503v_type1_init_operations));
+#else
+const int kDirectDataPins[16] = {15, 14, 13, 12, 11, 10, 9, 8,
+                                 7, 6, 5, 4, 3, 2, 1, 0};
+AZ2RgbDirect directPanel(bus, gc9503v_type1_init_operations,
+                          sizeof(gc9503v_type1_init_operations),
+                          18, 17, 16, 21, kDirectDataPins,
+                          kScreenSize, kScreenSize, 16000000);
+AZ2RgbDirectOutput directOutput(&directPanel);
+Arduino_Canvas directCanvas(kScreenSize, kScreenSize, &directOutput);
+Arduino_GFX *gfx = &directCanvas;
+#endif
 
 const uint16_t kPalette[] = {
     RGB565(255, 60, 172), RGB565(70, 220, 255), RGB565(255, 170, 50),
@@ -4265,21 +4281,22 @@ void noteActivity() {
 
 void drawScreen(Screen s) {
   switch (s) {
-    case Screen::Menu: drawMenu(); return;
-    case Screen::Controls: drawControlsPage(); return;
-    case Screen::Audio: drawAudioPage(); return;
-    case Screen::Sampler: drawSamplerPage(); return;
-    case Screen::Sequencer: drawSequencerPage(); return;
-    case Screen::Engines: drawEnginesPage(); return;
-    case Screen::Retro: drawRetroPage(); return;
-    case Screen::Config: drawConfigPage(); return;
-    case Screen::Links: drawLinksPage(); return;
-    case Screen::About: drawAboutPage(); return;
-    case Screen::Patch: drawPatchPage(); return;
-    case Screen::Song: drawSongPage(); return;
-    case Screen::Project: drawProjectPage(); return;
-    case Screen::Mixer: drawMixerPage(); return;
+    case Screen::Menu: drawMenu(); break;
+    case Screen::Controls: drawControlsPage(); break;
+    case Screen::Audio: drawAudioPage(); break;
+    case Screen::Sampler: drawSamplerPage(); break;
+    case Screen::Sequencer: drawSequencerPage(); break;
+    case Screen::Engines: drawEnginesPage(); break;
+    case Screen::Retro: drawRetroPage(); break;
+    case Screen::Config: drawConfigPage(); break;
+    case Screen::Links: drawLinksPage(); break;
+    case Screen::About: drawAboutPage(); break;
+    case Screen::Patch: drawPatchPage(); break;
+    case Screen::Song: drawSongPage(); break;
+    case Screen::Project: drawProjectPage(); break;
+    case Screen::Mixer: drawMixerPage(); break;
   }
+  flushUiCanvas();
 }
 
 void goTo(Screen s) {
@@ -5963,6 +5980,12 @@ int16_t gbScaledH() { return static_cast<int16_t>(144 * gbDisplayScale); }
 int16_t gbScreenLeft() { return static_cast<int16_t>((kScreenSize - gbScaledW()) / 2); }
 int16_t gbScreenTop() { return static_cast<int16_t>((kScreenSize - gbScaledH()) / 2); }
 
+#ifdef AZ2_DIRECT_PANEL
+void flushUiCanvas() { directCanvas.flush(); }
+#else
+void flushUiCanvas() {}
+#endif
+
 void drawGbViewportFrame() {
   constexpr int16_t kFrame = 4;
   const int16_t x = static_cast<int16_t>(gbScreenLeft() - kFrame);
@@ -5972,10 +5995,14 @@ void drawGbViewportFrame() {
   gfx->drawRect(x, y, w, h, kPalette[2]);
   gfx->drawRect(static_cast<int16_t>(x + 1), static_cast<int16_t>(y + 1),
                 static_cast<int16_t>(w - 2), static_cast<int16_t>(h - 2), kFaint);
+#ifdef AZ2_DIRECT_PANEL
+  flushUiCanvas();
+#else
   if (uint16_t *framebuffer = gfx->getFramebuffer(); framebuffer != nullptr) {
     esp_cache_msync(framebuffer, static_cast<size_t>(kScreenSize * kScreenSize * sizeof(uint16_t)),
                     ESP_CACHE_MSYNC_FLAG_DIR_C2M);
   }
+#endif
 }
 
 // Le rendu est regroupe par bandes de 8 lignes GB : 160x8 pixels deviennent
@@ -6013,7 +6040,18 @@ void gbBlitLine(int line, const uint16_t *row) {
   // d'offset et la boucle interne pour les deux modes reels X2/X3.
   if (scale == 3) {
     uint16_t *dst = scaledRow;
-    for (int x = 159; x >= 0; --x) {
+    for (int x =
+#ifdef AZ2_DIRECT_PANEL
+             0;
+#else
+             159;
+#endif
+         ;
+#ifdef AZ2_DIRECT_PANEL
+         ++x) {
+#else
+         --x) {
+#endif
       const uint16_t c = row[x];
       *dst++ = c;
       *dst++ = c;
@@ -6021,7 +6059,18 @@ void gbBlitLine(int line, const uint16_t *row) {
     }
   } else if (scale == 2) {
     uint16_t *dst = scaledRow;
-    for (int x = 159; x >= 0; --x) {
+    for (int x =
+#ifdef AZ2_DIRECT_PANEL
+             0;
+#else
+             159;
+#endif
+         ;
+#ifdef AZ2_DIRECT_PANEL
+         ++x) {
+#else
+         --x) {
+#endif
       const uint16_t c = row[x];
       *dst++ = c;
       *dst++ = c;
@@ -6048,9 +6097,12 @@ void gbBlitLine(int line, const uint16_t *row) {
     // framebuffer PSRAM : on écrit directement les lignes inversées, puis on
     // invalide uniquement leur plage de cache. Le rendu reste identique,
     // mais évite une copie intermédiaire et ses pics de latence.
-    uint16_t *framebuffer = gfx->getFramebuffer();
     const int16_t outputRows = static_cast<int16_t>(sourceRows * scale);
     const uint32_t copyStartUs = micros();
+#ifdef AZ2_DIRECT_PANEL
+    directPanel.copyRotatedRgb565(scaledBand, screenLeft, y, scaledW, outputRows);
+#else
+    uint16_t *framebuffer = gfx->getFramebuffer();
     if (framebuffer != nullptr) {
       for (int16_t srcY = 0; srcY < outputRows; ++srcY) {
         const int16_t dstY = static_cast<int16_t>(kScreenSize - 1 - (y + srcY));
@@ -6063,14 +6115,17 @@ void gbBlitLine(int line, const uint16_t *row) {
       // framebuffer accessible.
       gfx->draw16bitRGBBitmap(screenLeft, y, scaledBand, scaledW, outputRows);
     }
+#endif
     copyFrameUs += micros() - copyStartUs;
     const uint32_t flushStartUs = micros();
+#ifndef AZ2_DIRECT_PANEL
     if (framebuffer != nullptr) {
       const int16_t firstDstY = static_cast<int16_t>(kScreenSize - 1 - (y + outputRows - 1));
       esp_cache_msync(framebuffer + firstDstY * kScreenSize,
                       static_cast<size_t>(outputRows * kScreenSize * sizeof(uint16_t)),
                       ESP_CACHE_MSYNC_FLAG_DIR_C2M);
     }
+#endif
     flushFrameUs += micros() - flushStartUs;
     displayFrameUs += micros() - drawStartUs;
     if (line == 143) {
