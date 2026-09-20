@@ -110,3 +110,12 @@ Une variante 64 bits alignée a ensuite été testée sur le probe. Elle donne
 `flush_us=22044..23623` us et `band_us=1100..1351` us sur plusieurs cycles,
 sans erreur série ni redémarrage. Le gain supplémentaire est modeste mais la
 voie reste compatible avec le repli 32 bits pour les adresses non alignées.
+
+## Balayage PCLK
+
+Le probe 16 MHz est resté stable pendant plusieurs secondes, avec des copies
+à `23..26 ms` et des bandes autour de `1,33 ms`. À 18 MHz, aucune erreur série
+ni redémarrage n'est apparu, mais la copie est montée à `25..29 ms` et reste
+moins régulière. Le réglage 16 MHz est conservé comme meilleur compromis à ce
+stade ; le firmware principal reste à 12 MHz tant que l'intégration n'est pas
+validée visuellement.
