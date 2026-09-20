@@ -47,3 +47,13 @@ La version ESP-IDF livrée avec la carte fournit bien
 récupérer plusieurs adresses. Le prototype peut donc rester entièrement local
 et ne dépend pas d'un fork externe ; l'intégration devra seulement remplacer la
 création du `Arduino_RGB_Display` par une façade compatible avec le framebuffer.
+
+## Probe compilée
+
+Un environnement séparé `screen_esp_rgb_direct_probe` a été ajouté avec
+`src_esp32/az2_rgb_direct_probe/main.cpp`. Il initialise directement
+`esp_lcd`, alloue deux buffers PSRAM, enregistre `on_frame_buf_complete` et
+alterne des aplats de couleur pour vérifier la synchronisation. La compilation
+PlatformIO est validée le 20/09/2026 ; le probe n'est pas flashé sur la machine
+principale tant que l'on n'a pas décidé de remplacer temporairement l'interface
+AZ-Tracker.
