@@ -78,10 +78,26 @@ bool AZ2RgbDirect::copyRotatedRgb565(const uint16_t *bitmap, int16_t x,
   if (!bitmap || x < 0 || y < 0 || x + w > _width || y + h > _height) return false;
   auto *dst = static_cast<uint16_t *>(writableFrameBuffer());
   for (int16_t row = 0; row < h; ++row) {
-    for (int16_t col = 0; col < w; ++col) {
+    const int16_t dstY = _height - 1 - (y + row);
+    const uint16_t *src = bitmap + row * w;
+    uint16_t *dstRow = dst + dstY * _width;
+    // The panel is rotated 180 degrees.  Pair adjacent pixels so the
+    // reversed destination can be written as one aligned 32-bit store.
+    int16_t col = 0;
+    for (; col + 1 < w; col += 2) {
+      const int16_t dstX = _width - 1 - (x + col + 1);
+      const uint32_t pair = static_cast<uint32_t>(src[col + 1]) |
+                            (static_cast<uint32_t>(src[col]) << 16);
+      if ((reinterpret_cast<uintptr_t>(dstRow + dstX) & 3u) == 0) {
+        *reinterpret_cast<uint32_t *>(dstRow + dstX) = pair;
+      } else {
+        dstRow[dstX] = src[col + 1];
+        dstRow[dstX + 1] = src[col];
+      }
+    }
+    if (col < w) {
       const int16_t dstX = _width - 1 - (x + col);
-      const int16_t dstY = _height - 1 - (y + row);
-      dst[dstY * _width + dstX] = bitmap[row * w + col];
+      dstRow[dstX] = src[col];
     }
   }
   const int16_t firstDstY = _height - (y + h);
