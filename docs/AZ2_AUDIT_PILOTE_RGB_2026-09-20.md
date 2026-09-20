@@ -173,3 +173,11 @@ Arduino_GFX demande un seul buffer et n'expose pas de bascule VSYNC. Le prochain
 prototype doit donc être un pilote RGB local basé sur `esp_lcd`, avec deux
 buffers PSRAM et un échange synchronisé. Aucun changement expérimental n'est
 laissé dans la base flashée tant que ce prototype n'est pas compilé et vérifié.
+
+## Référence avant probe RGB direct — Zelda actif
+
+Mesure relevée sur le firmware stable à 12 MHz pendant le jeu lancé :
+`fps_x100=3118..3275` (31,18–32,75 FPS), `core_avg_us=22978..23945`,
+`display_avg_us=16470..16515`, `blit_copy_us=8649..8810`,
+`blit_flush_us=7725..7796`. Le compteur `missed` est resté à 16 après la
+première fenêtre de mesure. Cette série sert de référence pour le probe direct.
