@@ -66,3 +66,11 @@ fenêtres successives, soit environ 42 callbacks/s. Les deux adresses sont
 utilisées par l'alternance `write=0/1`. Le test valide donc l'allocation et la
 rotation matérielle des deux buffers à PCLK 12 MHz. Il reste à restaurer le
 firmware AZ-Tracker, puis à intégrer cette mécanique dans la façade graphique.
+
+## Résultat Canvas sur panneau réel
+
+Le probe `Arduino_Canvas` a bien affiché l'alternance des deux buffers, mais le
+panneau réel a montré une image inversée avec des aplats vert/brun. Le problème
+vient de la rotation 180° et de l'ordre des composantes appliqués par la façade,
+pas de l'allocation double buffer. Le probe est conservé comme test de
+synchronisation, sans être promu dans le firmware principal.
