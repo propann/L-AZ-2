@@ -2,6 +2,7 @@
 
 - [Feuille de route du rack audio physique](AZ2_ROADMAP_RACK_AUDIO_PHYSIQUE.md)
 - [Câblage du rack de moteurs externes](AZ2_CABLAGE_RACK_MOTEURS_EXTERNES.md)
+- [Pinout canonique Teensy / ESP32-S3 / DAC](AZ2_RACK_PINOUT.md)
 
 ## Pour reconstruire et utiliser la machine actuelle
 

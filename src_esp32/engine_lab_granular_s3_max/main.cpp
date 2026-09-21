@@ -1,6 +1,9 @@
 #include <Arduino.h>
+#include <ESP_I2S.h>
 #include <esp_heap_caps.h>
 #include <math.h>
+
+#include "rack_pins.h"
 
 namespace {
 
@@ -9,6 +12,7 @@ constexpr size_t kSourceSamples = kSampleRate * 30U;  // 30 s mono, 2.52 Mio
 constexpr size_t kBlockSamples = 128;
 constexpr size_t kWindowSize = 2048;
 constexpr uint16_t kMaxGrains = 192;
+constexpr uint16_t kRealtimeGrains = 64;
 constexpr uint8_t kBenchmarkSeconds = 3;
 constexpr uint16_t kTestCounts[] = {64, 80, 96, 112, 128, 160, 192};
 
@@ -32,6 +36,7 @@ TaskHandle_t mainTask = nullptr;
 TaskHandle_t workerTask = nullptr;
 volatile uint16_t workerCount = 0;
 uint32_t generations[2] = {1, 0x6d2b79f5U};
+I2SClass i2s;
 
 uint32_t fastHash(uint32_t value) {
   value ^= value >> 16;
@@ -131,6 +136,38 @@ void runMatrix() {
   Serial.println("GMAX:READY");
 }
 
+void runRealtimeI2S(uint32_t seconds) {
+  constexpr uint32_t blockBudgetUs = (1000000UL * kBlockSamples) / kSampleRate;
+  i2s.setPins(az2::rack::kI2sBclkPin, az2::rack::kI2sWsPin, az2::rack::kI2sDataOutPin);
+  if (!i2s.begin(I2S_MODE_STD, kSampleRate, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO)) {
+    Serial.printf("GMAX:I2S:FAIL:error=%d\n", i2s.lastError());
+    return;
+  }
+
+  initialiseGrains(kRealtimeGrains);
+  const uint32_t targetBlocks = (kSampleRate * seconds) / kBlockSamples;
+  uint32_t lateBlocks = 0;
+  uint32_t shortWrites = 0;
+  uint32_t maxRenderUs = 0;
+  const uint32_t started = millis();
+  for (uint32_t block = 0; block < targetBlocks; ++block) {
+    const uint32_t renderStart = micros();
+    renderBlockDual(kRealtimeGrains);
+    const uint32_t renderUs = micros() - renderStart;
+    if (renderUs > maxRenderUs) maxRenderUs = renderUs;
+    if (renderUs > blockBudgetUs) ++lateBlocks;
+    const size_t bytes = sizeof(outputInterleaved);
+    if (i2s.write(outputInterleaved, bytes) != bytes) ++shortWrites;
+  }
+  const uint32_t elapsed = millis() - started;
+  Serial.printf("GMAX:I2S:RESULT:grains=%u:seconds=%lu:elapsed_ms=%lu:blocks=%lu:late=%lu:short=%lu:max_render_us=%lu:budget_us=%lu\n",
+                kRealtimeGrains, static_cast<unsigned long>(seconds),
+                static_cast<unsigned long>(elapsed), static_cast<unsigned long>(targetBlocks),
+                static_cast<unsigned long>(lateBlocks), static_cast<unsigned long>(shortWrites),
+                static_cast<unsigned long>(maxRenderUs), static_cast<unsigned long>(blockBudgetUs));
+  i2s.end();
+}
+
 }  // namespace
 
 void setup() {
@@ -169,12 +206,16 @@ void setup() {
   }
   Serial.println("GMAX:DUALCORE:READY:main=1:worker=0");
   runMatrix();
+  runRealtimeI2S(30);
+  Serial.println("GMAX:ALL_TESTS:READY");
 }
 
 void loop() {
   if (Serial.available()) {
     while (Serial.available()) Serial.read();
     runMatrix();
+    runRealtimeI2S(30);
+    Serial.println("GMAX:ALL_TESTS:READY");
   }
   delay(20);
 }
