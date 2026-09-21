@@ -63,3 +63,48 @@ avant le test autonome avec DAC séparé.
 - ne pas alimenter le rack depuis le 3,3 V du Teensy ;
 - couper l'alimentation avant toute modification de fils ;
 - ne jamais appliquer 5 V à une GPIO Teensy ou ESP32-S3.
+
+## Tableau global retenu — Teensy + S3 + WROOM
+
+Ce tableau décrit le faisceau cible. **Ne pas relier BCLK/LRCLK tant que le
+firmware WROOM n'est pas passé du mode maître au mode esclave** : deux maîtres
+sur les mêmes fils peuvent endommager ou bloquer les sorties.
+
+| Signal | Source | Destination | Rôle |
+|---|---|---|---|
+| BCLK commun | Teensy pin 21 | S3 GPIO7 + WROOM GPIO26 | horloge bits, Teensy seul maître |
+| LRCLK commun | Teensy pin 20 | S3 GPIO9 + WROOM GPIO25 | 44,1 kHz, Teensy seul maître |
+| Audio spectral | WROOM GPIO22 | S3 GPIO12 | PCM stéréo WROOM vers agrégateur |
+| Audio agrégé | S3 GPIO11 | Teensy pin 8 | GRANULAR + SPECTRAL vers mixeur Teensy |
+| Contrôle rack TX | Teensy pin 29 / TX7 | S3 GPIO18 / RX | commandes du maître |
+| Contrôle rack RX | S3 GPIO16 / TX | Teensy pin 28 / RX7 | état, métriques et erreurs |
+| Contrôle spectral | S3 GPIO4 / TX | WROOM GPIO16 / RX | commandes relayées au spectral |
+| Retour spectral | WROOM GPIO17 / TX | S3 GPIO5 / RX | état, métriques et erreurs |
+| Masse logique | GND Teensy | GND S3 + GND WROOM | référence commune obligatoire |
+
+Le bouton B doit quitter la pin 8 du Teensy et aller sur la pin 10 avant de
+connecter `Audio agrégé`. La sortie PCM5102A ne change pas : DATA pin 7,
+LRCLK pin 20 et BCLK pin 21.
+
+## MIDI DIN IN réservé au Teensy
+
+| Signal | Connexion |
+|---|---|
+| UART MIDI RX | sortie 6N138 pin 6 -> Teensy pin 34 / RX8 |
+| Pull-up sortie | 6N138 pin 6 -> 3,3 V, valeur à valider au schéma |
+| Alimentation logique | 6N138 pin 8 -> 3,3 V ; pin 5 -> GND logique |
+| Accélération | 6N138 pin 7 -> GND par résistance, valeur à valider |
+| Entrée optique | DIN MIDI pins 4/5 -> résistance + LED pins 2/3 du 6N138 |
+| Protection | diode antiparallèle sur la LED du 6N138 |
+| Blindage DIN | pin 2 DIN vers châssis si prévu, jamais vers la masse logique du récepteur |
+
+Serial8 fonctionne à 31250 bit/s, 8-N-1. La pin 35 / TX8 reste libre pour un
+éventuel MIDI OUT futur ; elle n'est pas nécessaire au MIDI IN.
+
+## Alimentation globale
+
+Le Teensy, le S3 et le WROOM doivent recevoir une alimentation correctement
+dimensionnée. Pour les ESP32, utiliser le 5 V/VIN prévu par leur carte de
+développement après vérification du marquage exact. Ne pas alimenter les deux
+ESP32 depuis la sortie 3,3 V du Teensy. Toutes les masses logiques sont
+communes, mais la boucle MIDI en amont du 6N138 reste isolée.
