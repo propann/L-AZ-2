@@ -1,5 +1,7 @@
 #pragma once
 
+#include "sampler_math.h"
+
 // AudioPlaySampler : lecture d'un sample PCM 16 bits mono FIXE (flash
 // ou PSRAM -- les deux sont directement adressables sur cette
 // architecture, pas besoin de pgm_read_word comme sur AVR) avec suivi
@@ -44,8 +46,8 @@ class AudioPlaySampler : public AudioStream {
       return;
     }
     pos_ = 0.0f;
-    step_ = (static_cast<float>(sampleRate_) / 44100.0f) *
-            (midiNoteToFreq(note) / midiNoteToFreq(rootNote_));
+    step_ = az2_sampler_math::samplerPlaybackStep(
+        sampleRate_, 44100, midiNoteToFreq(note), midiNoteToFreq(rootNote_));
     amp_ = static_cast<float>(velocity) / 127.0f;
     playing_ = true;
   }
@@ -87,9 +89,9 @@ class AudioPlaySampler : public AudioStream {
         break;
       }
       const float frac = pos_ - static_cast<float>(idx);
-      const float s0 = static_cast<float>(sampleData_[idx]);
-      const float s1 = static_cast<float>(sampleData_[idx + 1]);
-      const float interpolated = s0 + (s1 - s0) * frac;
+      const float interpolated =
+          az2_sampler_math::samplerLinearInterpolate(
+              sampleData_[idx], sampleData_[idx + 1], frac);
       block->data[i] = static_cast<int16_t>(constrain(interpolated * amp_, -32768.0f, 32767.0f));
       pos_ += step_;
     }

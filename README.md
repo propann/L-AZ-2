@@ -6,7 +6,7 @@
 
 **🌐 Documentation : [Français](docs/i18n/README.fr.md) · [English](docs/i18n/README.en.md) · [Español](docs/i18n/README.es.md)**
 
-**Une groovebox DIY à deux cerveaux : tracker 8 pistes, sept moteurs audio et Game Boy / Game Boy Color intégrée.**
+**Une groovebox DIY à deux cerveaux : tracker 8 pistes et sept moteurs audio. Un chantier d'émulation GB/GBC est présent dans le code, mais aucun émulateur n'est actuellement fonctionnel et validé sur la machine.**
 
 [![CI](https://github.com/propann/L-AZ-2/actions/workflows/ci.yml/badge.svg)](https://github.com/propann/L-AZ-2/actions/workflows/ci.yml)
 ![Statut](https://img.shields.io/badge/status-prototype%20alpha-f59e0b)
@@ -23,7 +23,7 @@
 
 | 🎛️ Créer | 🎮 Jouer | 🎚️ Transformer |
 | :-- | :-- | :-- |
-| Tracker 8 pistes, patterns, song, swing, effets par pas, mute/solo | Émulation GB/GBC sur écran tactile avec croix et boutons physiques | Mixage via Teensy et DAC I²S, capture WAV du son du jeu, sampleur one-shot |
+| Tracker 8 pistes, patterns, song, swing, effets par pas, mute/solo | Prototype d'émulation GB/GBC non fonctionnel à ce jour | Mixage via Teensy et DAC I²S, sampleur one-shot et infrastructure expérimentale de capture |
 | Dexed FM · ePiano · Braids · Karplus · Analog · Sampler · Drum | Navigateur de ROM sur carte SD, sauvegarde cartouche | Sept moteurs audio au choix par piste |
 
 **Intention produit :** composer au tracker, jouer à la Game Boy et faire dialoguer le son chiptune avec les synthétiseurs de la machine. La capture WAV est présente et le dernier enregistrement Game Boy peut désormais être chargé en PSRAM comme patch dynamique **SAMPLER / GB Capture** ; la gestion d'une vraie bibliothèque multi-captures reste à développer.
@@ -37,7 +37,7 @@
    ┌──────────────────────────────┐       UART 921600       ┌──────────────────────────────┐
    │ TEENSY 4.1 · MASTER AUDIO    │◄──────────────────────►│ ESP32-S3 · ÉCRAN / GB       │
    │ Tracker, synthés, mixage     │   commandes + audio GB │ Écran tactile 480×480, SD    │
-   │ Sampleur, MIDI, DAC I²S      │                        │ ROM GB/GBC, interface       │
+   │ Sampleur, MIDI, DAC I²S      │                        │ Interface + prototypes GB  │
    └───────────────┬──────────────┘                        └──────────────────────────────┘
                    ▼
              PCM5102A → AUDIO OUT
@@ -75,13 +75,13 @@ Le matériel Teensy et l'écran ESP32 disposent de configurations de compilation
 
 | Fonction | État |
 | :-- | :-- |
-| Cœur Walnut-CGB, chargement ROM depuis SD, commandes physiques | Intégré ; compatibilité à qualifier ROM par ROM |
-| Rendu sans frame-skip par défaut, dual-fetch, télémétrie FPS/temps/missed | Intégré ; cadence réelle à relever sur la machine |
+| Cœurs Walnut-CGB et GNUBOY | Prototypes présents ; **aucun émulateur GB/GBC fonctionnel et validé actuellement** |
+| Chargement ROM, rendu, commandes et sauvegardes | Code expérimental incomplet ; ne constitue pas une fonction livrée |
 | Audio V2 séquencé + CRC + L/R PCM8 stéréo | Intégré derrière un pilote désactivé ; sortie Teensy encore downmixée sur le bus mono actuel |
 | Sauvegarde SRAM périodique, SAVE NOW sur D, `.sav/.bak` et RTC MBC3 séparé | Intégré ; qualification coupure/RTC sur matériel encore nécessaire |
-| Audio GB vers Teensy | Intégré, actuellement **mono 8 bits / 14 kHz** |
+| Audio GB vers Teensy | Infrastructure intégrée, mais sans émulateur fonctionnel pour valider le chemin complet |
 | Audio haute fidélité, APU horodatée et sortie DAC réellement stéréo | **Non livré** ; le transport V2 stéréo est présent mais désactivé par défaut |
-| Capture GB → patch SAMPLER / GB Capture | **Intégré** (un slot dynamique PSRAM) ; qualification matérielle et bibliothèque multi-captures restantes |
+| Capture GB → patch SAMPLER / GB Capture | Infrastructure intégrée (un slot dynamique PSRAM), non validée de bout en bout faute d'émulateur fonctionnel |
 | Synchronisation musicale LSDJ ↔ tracker | **Non livré** |
 
 Pour le chantier en cours : [roadmap Game Boy / LSDJ détaillée](docs/AZ2_GB_ROADMAP_IMPLEMENTATION.md). Pour les limites de compatibilité : [audit émulation](docs/AZ2_AUDIT_EMULATION_LSDJ_TETRIS_MARIO.md). Pour comprendre pourquoi Walnut-CGB a été retenu : [étude des cœurs](docs/AZ2_ETUDE_COEURS_EMULATION_GB.md).

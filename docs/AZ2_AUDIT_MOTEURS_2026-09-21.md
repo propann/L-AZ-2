@@ -92,6 +92,11 @@ séparée et ne change pas avec le moteur de piste.
 - ajouter les contrôles CRUSH/DELAY à la page PATCH ;
 - centraliser un `PANIC` et un test de changement de moteur répété.
 
+Le protocole accepte désormais `PANIC`. Cette commande arrête le séquenceur,
+les moteurs des huit pistes, les one-shots Sampler, les seize pads et la voix
+DEXED live, puis confirme `PANIC:OK`. Elle doit rester accessible depuis le
+port USB même si l'interface ESP32 n'est pas disponible.
+
 ### 2. Ajouter un moteur léger en laboratoire
 
 Le meilleur prochain candidat est un **FM2** à deux opérateurs : famille sonore
@@ -115,3 +120,15 @@ déjà présents. Le laboratoire FM2 est maintenant présent dans
 `engine_lab_fm2`. Il reste monophonique et isolé tant que les mesures CPU/RAM
 et l'écoute sur le vrai DAC ne sont pas faites ; le firmware stable n'en
 dépend pas.
+
+## Outils de mesure ajoutés
+
+- `RACKSTATS?` sur le firmware principal affiche le nombre de pistes par
+  moteur ainsi que CPU, pic CPU, blocs audio courants et pic mémoire.
+- `engine_lab_dexed` isole une seule instance DEXED directement vers l'I2S.
+  Les commandes `LAB:CORE:MSFA`, `LAB:CORE:MKI`, `LAB:PATCH:<0-254>`,
+  `LAB:NOTE:<0-127>`, `LAB:OFF:<0-127>`, `LAB:PANIC`, `LAB:STATS?` et
+  `LAB:RESETMAX` permettent un A/B reproductible du souffle.
+- FM2 reste dans son laboratoire séparé. Son intégration au catalogue stable
+  est conditionnée par l'écoute réelle et les mesures CPU/RAM, conformément
+  à l'ordre de validation retenu.

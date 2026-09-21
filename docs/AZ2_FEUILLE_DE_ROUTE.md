@@ -168,7 +168,7 @@ ecarte au profit de Walnut-CGB). Statut reel condense :
 | 4 (ecran ESP32 480x480) | **Fait et tres etendu** -- ecran reel VIEWE UEDX48480040E-WB (pas ESP32-4848S040C_I suppose au debut), menu 4 categories, tracker, page PATCH+oscilloscope, page SONG, emulateur GB |
 | 5 (SD et Wi-Fi) | **SD fait** (roms GB + patches). **Wi-Fi jamais commence** (pas prioritaire, personne ne l'a redemande depuis) |
 | 6 (portage MicroDexed-touch) | **Fait autrement** -- moteur Dexed integre directement (pas de portage "boite noire"), + 4 autres moteurs ajoutes en plus (pas prevu au depart) |
-| 7 (Retro-Go / Game Boy) | **Fait, mais avec Walnut-CGB pas Retro-Go** (Retro-Go etudie et ecarte le 2026-09-14, ESP-IDF natif incompatible avec notre ecran RGB parallele) -- emulateur GB/GBC fonctionnel, son du jeu route vers le DAC Teensy |
+| 7 (Retro-Go / Game Boy) | **Non fonctionnel à ce jour.** Walnut-CGB et GNUBOY sont présents comme prototypes, mais aucun chemin complet ROM + vidéo + commandes + audio + sauvegarde n'est validé sur la machine. |
 
 Voir [AZ2_ETAT_DES_LIEUX.md](AZ2_ETAT_DES_LIEUX.md) pour le detail
 verifie-en-reel vs seulement-compile, et
@@ -640,7 +640,7 @@ Mise à jour du 20 septembre : [état vérifié et répartition des cartes SD](A
 | Interface écran, tactile, croix/boutons, tracker, PATCH, SONG, PROJETS | Très avancé et flashé sur le prototype ; une passe page par page reste nécessaire | Stabiliser les retours, zones tactiles et redessins |
 | Rack audio local Teensy | Présent : 8 pistes, six moteurs, mixage, séquenceur partagé et contrôle moteur/patch | Mesurer la charge avec `projects/4.proj` |
 | Sampleur | Pads et moteur SAMPLER par piste présents ; banque WAV, découpage et édition avancée restent à faire | Qualifier les 16 pads et la permutation des samples |
-| Émulation GB/GBC | Fonctionnelle pour lancer des ROM, afficher, commander, sauvegarder et capturer un WAV ; cadence, compatibilité et audio restent insuffisamment mesurés | La garder en validation, sans bloquer l'interface musicale |
+| Émulation GB/GBC | Non fonctionnelle et non validée actuellement ; plusieurs briques et prototypes existent sans former une fonction utilisable de bout en bout | La garder hors du périmètre audio immédiat et reprendre sa validation séparément |
 | Rack général multi-cartes | Architecture AZ-BUS étudiée pour AZ-3 ; le boîtier AZ-2 est déjà plein | Ne pas ajouter de matériel dans AZ-2 |
 
 Ordre retenu : (1) tester chaque page au tactile et aux boutons, (2) jouer le projet de charge et mesurer ISR/audio, (3) qualifier le sampler, (4) établir la matrice de dix ROMs GB/GBC, puis (5) reprendre les fonctions d'émulation qui apportent un gain musical direct. La synchronisation LSDJ ↔ tracker et le rack multi-cartes restent hors du chemin critique AZ-2.

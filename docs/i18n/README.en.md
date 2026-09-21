@@ -6,12 +6,12 @@
 
 ## Build an instrument
 
-AZ-2 combines a groovebox, an eight-track tracker, six synthesis/sample engines and a Game Boy / Game Boy Color console. The goal is to play, compose, capture game audio and turn a recording into a playable instrument. AZ-2 uses **two boards**, without a multiplexer or an extra ESP rack; the rack belongs to the separate AZ-3 project.
+AZ-2 combines a groovebox, an eight-track tracker and seven synthesis/sample engines. Game Boy / Game Boy Color prototypes are present in the repository, but **no emulator is currently functional and validated on the device**. Game-audio capture is therefore experimental infrastructure, not a delivered feature. AZ-2 uses **two boards**, without a multiplexer or an extra ESP rack; the rack belongs to the separate AZ-3 project.
 
 | Board | Responsibilities | Storage |
 | --- | --- | --- |
 | Teensy 4.1 | Tracker timing, audio engines, MIDI, WAV recording, sample playback, I²S output to the PCM5102A DAC | Its own SD card for recordings; PSRAM for the dynamic sample |
-| ESP32-S3 VIEWE UEDX48480040E-WB | 480×480 touch display, menus, GB/GBC emulation and ROM browser | Its own SD card for ROMs and game saves |
+| ESP32-S3 VIEWE UEDX48480040E-WB | 480×480 touch display, menus and unvalidated GB/GBC prototypes | Its own SD card for UI data and ROM experiments |
 
 Commands and Game Boy audio travel over a shared **921600-baud UART** link. The common contract lives in `lib/AZ2_Protocol/AZ2_Protocol.h`: **update both firmwares and their tests together**. The production audio path is still **V1, 14 kHz mono PCM8**. The stereo V2 pilot exists but is disabled.
 
@@ -35,7 +35,7 @@ Build both binaries from the **same Git commit**. Do not update only one board a
 
 ## Emulation, saves and music
 
-- **GB/GBC:** Walnut-CGB core, ROM selection from the ESP32 SD card and physical controls. Compatibility, actual frame rate and absence of glitches still require per-game testing, including LSDJ, Tetris and Mario.
+- **GB/GBC:** Walnut-CGB and GNUBOY are development prototypes. No core is currently considered functional on AZ-2; loading, rendering, controls, audio and saves must be validated together before claiming support.
 - **Cartridge SRAM:** periodic and manual saving to `.sav/.bak`. A save failure prevents unloading the cartridge so RAM modifications are not silently discarded.
 - **MBC3 RTC:** separate, versioned `.rtc` file with CRC32 and `.bak` recovery. Offline elapsed time is applied only when the ESP32 system clock is valid; power-loss resilience still needs hardware testing.
 - **GB audio:** V1 mono PCM8 at 14 kHz to Teensy. In experimental mode, V2 transports interleaved stereo PCM8 L/R at 14 kHz with CRC16, sequence numbers and negotiation; it is **disabled by default**. The Teensy output bus is still mono, even when V2 is used.

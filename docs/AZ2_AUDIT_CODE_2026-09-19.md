@@ -12,7 +12,7 @@
 - Deux défauts de données doivent être corrigés avant de considérer les projets comme sûrs.
 - Le souffle attribué à Dexed est résolu : la cause était le filtre partagé à 18 kHz, pas le cœur FM.
 - Les six moteurs audio sont intégrés au Teensy.
-- L’émulation GB/GBC est fonctionnelle, mais sa vitesse réelle et sa compatibilité doivent encore être mesurées méthodiquement.
+- Des prototypes d’émulation GB/GBC existent, mais aucun émulateur n’est actuellement fonctionnel et validé de bout en bout sur l’AZ-2.
 - Le sampleur est une bonne fondation, mais reste une démonstration à deux samples embarqués.
 
 ## Périmètre et méthode

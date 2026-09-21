@@ -18,6 +18,7 @@
 #include <unity.h>
 
 #include <AZ2_Protocol.h>
+#include "../../src_teensy/az2_audio/sampler_math.h"
 
 void test_step_condition_always_is_zero() {
   TEST_ASSERT_EQUAL_UINT8(0, az2::kStepCondAlways);
@@ -216,6 +217,36 @@ void test_engine_patch_count_and_name() {
   TEST_ASSERT_EQUAL_STRING("?", az2::engineName(99));  // moteur invalide -> pas de crash, "?" attendu
 }
 
+void test_sampler_modes_are_stable_wire_values() {
+  TEST_ASSERT_EQUAL_UINT8(0, az2::kSamplerModeOneShot);
+  TEST_ASSERT_EQUAL_UINT8(1, az2::kSamplerModeGate);
+  TEST_ASSERT_NOT_EQUAL(az2::kSamplerModeOneShot, az2::kSamplerModeGate);
+}
+
+void test_sampler_playback_step() {
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 1.0f,
+      az2_sampler_math::samplerPlaybackStep(44100, 44100, 440.0f, 440.0f));
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.5f,
+      az2_sampler_math::samplerPlaybackStep(22050, 44100, 440.0f, 440.0f));
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 2.0f,
+      az2_sampler_math::samplerPlaybackStep(44100, 44100, 880.0f, 440.0f));
+  TEST_ASSERT_EQUAL_FLOAT(0.0f,
+      az2_sampler_math::samplerPlaybackStep(0, 44100, 440.0f, 440.0f));
+}
+
+void test_sampler_linear_interpolation() {
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, -1000.0f,
+      az2_sampler_math::samplerLinearInterpolate(-1000, 1000, 0.0f));
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f,
+      az2_sampler_math::samplerLinearInterpolate(-1000, 1000, 0.5f));
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1000.0f,
+      az2_sampler_math::samplerLinearInterpolate(-1000, 1000, 1.0f));
+}
+
+void test_panic_command_is_stable() {
+  TEST_ASSERT_EQUAL_STRING("PANIC", az2::kPanic);
+}
+
 int main(int argc, char **argv) {
   UNITY_BEGIN();
   RUN_TEST(test_step_condition_always_is_zero);
@@ -227,6 +258,10 @@ int main(int argc, char **argv) {
   RUN_TEST(test_division_label_known_values);
   RUN_TEST(test_pad_id_and_valid_pad);
   RUN_TEST(test_engine_patch_count_and_name);
+  RUN_TEST(test_sampler_modes_are_stable_wire_values);
+  RUN_TEST(test_sampler_playback_step);
+  RUN_TEST(test_sampler_linear_interpolation);
+  RUN_TEST(test_panic_command_is_stable);
   RUN_TEST(test_gb_audio_v2_endian_helpers);
   RUN_TEST(test_gb_audio_v2_crc16_known_vector);
   RUN_TEST(test_gb_audio_v2_header_sanity);

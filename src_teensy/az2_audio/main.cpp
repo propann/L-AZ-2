@@ -685,6 +685,21 @@ bool readWavPcm16Mono(const char *path, int16_t *dst, uint32_t capacity, const c
 }
 
 bool loadCapturedWavIntoSampler(const char *path) {
+  // Le buffer GB Capture est partage par toutes les pistes qui utilisent
+  // SAMPLER/GB Capture. Il ne doit jamais etre reecrit pendant que l'ISR
+  // audio le lit. Contrairement aux pads, ces lecteurs sont multiples : on
+  // les arrête donc tous avant la lecture SD. readWavPcm16Mono() est bloquant
+  // et loop() ne peut pas redéclencher de note avant la fin du chargement.
+  AudioNoInterrupts();
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    if (trackEngine[t] == az2::kEngineSampler &&
+        trackPatch[t] == az2::kSamplerGbCapturePatch) {
+      trackSamplerEngine[t].stopNow();
+      trackAnalogEnv[t].noteOff();
+    }
+  }
+  AudioInterrupts();
+
   uint32_t sampleCount = 0;
   uint32_t sampleRate = 0;
   if (!readWavPcm16Mono(path, gbCapturedSampleBuffer, kGbCapturedSampleCapacity, "SAMPLER:GB_CAPTURE", sampleCount,
@@ -863,7 +878,14 @@ void applyTrackPatch(uint8_t track) {
       break;
     case az2::kEngineSampler: {
       const SamplerBankEntry &entry = kSamplerBank[patch % az2::kSamplerPatchCount];
+      // setSample() remplace plusieurs champs lus depuis l'ISR audio. Couper
+      // la lecture et effectuer la mutation sous verrou audio évite un état
+      // hybride (nouveau pointeur avec ancienne longueur, ou inversement)
+      // lors d'un changement de patch pendant un one-shot.
+      AudioNoInterrupts();
+      trackSamplerEngine[track].stopNow();
       trackSamplerEngine[track].setSample(entry.data, entry.len, entry.rootNote, entry.sampleRate);
+      AudioInterrupts();
       break;
     }
     case az2::kEngineDrum: {
@@ -1296,6 +1318,29 @@ void allTrackNotesOff() {
       tr.stepPlaying = false;
     }
   }
+}
+
+// Arret d'urgence global. Contrairement a allTrackNotesOff(), qui suit
+// seulement les notes connues du sequenceur, PANIC doit aussi couvrir les
+// pads de piste, le MIDI USB, la voix live et les one-shots encore actifs.
+void panicAllAudio() {
+  playing = false;
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    trackDexedEngine[t].panic();
+    for (uint8_t note = 0; note < 128; ++note)
+      trackEPianoEngine[t].noteOff(note);
+    trackKarplusEngine[t].noteOff(1.0f);
+    trackSamplerEngine[t].stopNow();
+    trackAnalogEnv[t].noteOff();
+    trackNoteHeld[t] = false;
+    SequencerTrack &tr = patterns[playingPattern][t];
+    tr.stepPlaying = false;
+    tr.activeFx = az2::kStepFxNone;
+    applyGroupGainNow(t);
+  }
+  liveVoice.panic();
+  for (uint8_t pad = 0; pad < az2::kPadCount; ++pad)
+    padSampler[pad].stopNow();
 }
 
 // Applique l'effet actif d'une piste sur le tick courant (ticksSinceTrigger
@@ -2490,6 +2535,30 @@ void reportCpuUsage() {
   Serial.println(kAudioMemoryBlocks);
 }
 
+void reportRackStats() {
+  uint8_t counts[az2::kEngineCount] = {};
+  for (uint8_t t = 0; t < kTrackCount; ++t)
+    if (trackEngine[t] < az2::kEngineCount) ++counts[trackEngine[t]];
+
+  Serial.print("AZ2:RACK:engines=");
+  for (uint8_t engine = 0; engine < az2::kEngineCount; ++engine) {
+    if (engine) Serial.print(',');
+    Serial.print(az2::engineName(engine));
+    Serial.print(':');
+    Serial.print(counts[engine]);
+  }
+  Serial.print(":cpu=");
+  Serial.print(AudioProcessorUsage(), 1);
+  Serial.print(":cpu_max=");
+  Serial.print(AudioProcessorUsageMax(), 1);
+  Serial.print(":mem=");
+  Serial.print(AudioMemoryUsage());
+  Serial.print(":mem_max=");
+  Serial.print(AudioMemoryUsageMax());
+  Serial.print(":mem_total=");
+  Serial.println(kAudioMemoryBlocks);
+}
+
 // ---------------------------------------------------------------------
 // Croix + 4 boutons + 3 potentiometres, cables DIRECTEMENT sur le Teensy
 // -- remplace le Pico/la matrice SparkFun, abandonnes le 2026-09-14
@@ -2864,6 +2933,15 @@ void handleCommand(const String &line) {
     return;
   }
 
+  if (line == az2::kPanic) {
+    AudioNoInterrupts();
+    panicAllAudio();
+    AudioInterrupts();
+    relayLine("PANIC:OK");
+    announceStatus(az2::kStatusStopped);
+    return;
+  }
+
   if (line.startsWith("PAD:")) {
     handlePadCommand(line);
     return;
@@ -3148,6 +3226,19 @@ void handleCommand(const String &line) {
 
   if (line == "CPU?") {
     reportCpuUsage();
+    return;
+}
+
+  if (line == "RACKSTATS?") {
+    reportRackStats();
+    return;
+  }
+
+  if (line == "RACKRESETMAX") {
+    AudioProcessorUsageMaxReset();
+    AudioMemoryUsageMaxReset();
+    maxIsrTime = 0;
+    relayLine("RACKRESETMAX:OK");
     return;
   }
 

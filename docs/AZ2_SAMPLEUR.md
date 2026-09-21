@@ -122,6 +122,10 @@ La zone dynamique est dimensionnée pour **30 secondes à 14 kHz mono 16 bits**,
 
 Cette intégration fournit un slot dynamique unique, « dernier GB Capture ». Elle ne remplace pas encore un gestionnaire de banque complet : navigation de dizaines/centaines de WAV, renommage, suppression, découpage, trim/normalisation et affectation de plusieurs captures restent des évolutions.
 
+Depuis le 21 septembre 2026, le rechargement de ce slot arrête d'abord, sous verrou audio, toutes les pistes qui lisent le buffer partagé. Le changement de patch Sampler coupe également le lecteur avant de remplacer son pointeur et sa longueur. Cela évite que l'interruption audio lise la PSRAM pendant son écrasement ou observe un état partiellement mis à jour.
+
+Le mode de lecture des pistes est explicite : `SMODE:<piste>:0` sélectionne le one-shot et `SMODE:<piste>:1` le gate. Les pads dédiés restent toujours one-shot.
+
 Le code doit encore être qualifié sur le Teensy réel avec PSRAM et carte SD avant d'être considéré comme une fonction matérielle validée.
 
 ## Mise à jour 2026-09-19 — éditeur de kits de pads

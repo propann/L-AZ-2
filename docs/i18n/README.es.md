@@ -6,12 +6,12 @@
 
 ## Construir un instrumento
 
-AZ-2 combina una groovebox, un tracker de ocho pistas, seis motores de síntesis/reproducción y una consola Game Boy / Game Boy Color. El objetivo es jugar, componer, capturar el audio del juego y convertir una grabación en un instrumento. AZ-2 utiliza **dos placas**, sin multiplexor ni rack de ESP adicional; ese rack pertenece al proyecto independiente AZ-3.
+AZ-2 combina una groovebox, un tracker de ocho pistas y siete motores de síntesis/reproducción. El repositorio contiene prototipos de Game Boy / Game Boy Color, pero **actualmente no hay ningún emulador funcional y validado en la máquina**. La captura del audio de juegos es, por tanto, infraestructura experimental y no una función entregada. AZ-2 utiliza **dos placas**, sin multiplexor ni rack de ESP adicional; ese rack pertenece al proyecto independiente AZ-3.
 
 | Placa | Funciones | Almacenamiento |
 | --- | --- | --- |
 | Teensy 4.1 | Temporización del tracker, motores de audio, MIDI, grabación WAV, reproducción de samples y salida I²S al DAC PCM5102A | Su propia tarjeta SD para grabaciones; PSRAM para el sample dinámico |
-| ESP32-S3 VIEWE UEDX48480040E-WB | Pantalla táctil 480×480, menús, emulación GB/GBC y explorador de ROMs | Su propia tarjeta SD para ROMs y partidas guardadas |
+| ESP32-S3 VIEWE UEDX48480040E-WB | Pantalla táctil 480×480, menús y prototipos GB/GBC sin validar | Su propia tarjeta SD para datos de interfaz y pruebas de ROM |
 
 Los comandos y el audio Game Boy comparten un enlace **UART a 921600 baudios**. El contrato común se define en `lib/AZ2_Protocol/AZ2_Protocol.h`: **actualiza ambos firmwares y sus pruebas juntos**. La ruta de audio de producción sigue siendo **V1, PCM8 mono a 14 kHz**. El piloto V2 estéreo está implementado, pero desactivado.
 
@@ -35,7 +35,7 @@ Compila los dos binarios desde el **mismo commit de Git**. No actualices una sol
 
 ## Emulación, partidas y música
 
-- **GB/GBC:** núcleo Walnut-CGB, selección de ROMs desde la SD del ESP32 y controles físicos. La compatibilidad, los FPS reales y la ausencia de fallos deben verificarse juego por juego, incluidos LSDJ, Tetris y Mario.
+- **GB/GBC:** Walnut-CGB y GNUBOY son prototipos de desarrollo. Actualmente ningún núcleo se considera funcional en AZ-2; carga, vídeo, controles, audio y guardado deben validarse juntos antes de anunciar compatibilidad.
 - **SRAM del cartucho:** guardado periódico y manual en `.sav/.bak`. Un error de escritura impide descargar el cartucho para no perder silenciosamente los cambios en RAM.
 - **RTC MBC3:** archivo `.rtc` independiente y versionado, con CRC32 y recuperación desde `.bak`. El tiempo transcurrido con la máquina apagada solo se aplica cuando el reloj del sistema ESP32 es válido; queda pendiente probar la resistencia a cortes de alimentación en el hardware.
 - **Audio GB:** V1 PCM8 mono a 14 kHz hacia Teensy. En modo experimental, V2 transporta PCM8 estéreo L/R entrelazado a 14 kHz con CRC16, números de secuencia y negociación; está **desactivado de forma predeterminada**. El bus de salida del Teensy sigue siendo mono incluso al usar V2.
