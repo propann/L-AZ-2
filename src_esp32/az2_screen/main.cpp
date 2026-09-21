@@ -265,6 +265,8 @@ Screen currentScreen = Screen::Menu;
 // (voir plus bas) : suffit pour "revenir d'ou on vient" partout, sans
 // la complexite d'une vraie pile d'historique.
 Screen navPrevious = Screen::Menu;
+Screen enginesReturnScreen = Screen::Menu;
+Screen patchReturnScreen = Screen::Engines;
 
 constexpr uint8_t kLogLines = 8;
 String logBuf[kLogLines];
@@ -4566,6 +4568,12 @@ void goTo(Screen s) {
     gfx->print("SD SAVE ERROR - C:RETRY");
     return;
   }
+  // Parents stables des pages imbriquees : entrer dans PATCH depuis
+  // MOTEURS doit permettre PATCH -> MOTEURS -> page d'origine, sans que
+  // le premier retour ecrase la destination du second.
+  if (s == Screen::Engines && currentScreen != Screen::Patch) enginesReturnScreen = currentScreen;
+  if (s == Screen::Patch) patchReturnScreen = currentScreen;
+
   // Memorise d'ou on vient (voir navPrevious plus haut) -- AVANT tout
   // le reste, pour que meme un "retour" (goTo(navPrevious)) enregistre
   // correctement l'etape precedente (permet de faire l'aller-retour
@@ -5373,7 +5381,11 @@ void handleTeensyLine(const String &line) {
         // Toute page ouverte depuis une catégorie revient à cette
         // catégorie, même après un détour par MOTEURS, PATCH ou AUDIO.
         // Les pages ouvertes hors menu gardent le retour d'un niveau.
-        if (menuReturnCategory >= 0) {
+        if (currentScreen == Screen::Patch) {
+          goTo(patchReturnScreen);
+        } else if (currentScreen == Screen::Engines) {
+          goTo(enginesReturnScreen);
+        } else if (menuReturnCategory >= 0) {
           goTo(Screen::Menu);
         } else {
           goTo(navPrevious);
@@ -6621,7 +6633,9 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
   } else if (currentScreen == Screen::Sampler && hitBack(x, y)) {
     samplerGoUp();
   } else if (currentScreen != Screen::Menu && currentScreen != Screen::Audio && hitBack(x, y)) {
-    goTo(Screen::Menu);
+    if (currentScreen == Screen::Patch) goTo(patchReturnScreen);
+    else if (currentScreen == Screen::Engines) goTo(enginesReturnScreen);
+    else goTo(Screen::Menu);
   } else if (currentScreen == Screen::Menu) {
     if (menuCategory < 0) {
       const int8_t hit = hitTestCategoryCard(x, y);
