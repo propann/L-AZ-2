@@ -6434,10 +6434,11 @@ void gbBlitLine(int line, const uint16_t *row) {
 #else
              159;
 #endif
-         ;
 #ifdef AZ2_DIRECT_PANEL
+         x < 160;
          ++x) {
 #else
+         x >= 0;
          --x) {
 #endif
       const uint16_t c = row[x];
@@ -6453,10 +6454,11 @@ void gbBlitLine(int line, const uint16_t *row) {
 #else
              159;
 #endif
-         ;
 #ifdef AZ2_DIRECT_PANEL
+         x < 160;
          ++x) {
 #else
+         x >= 0;
          --x) {
 #endif
       const uint16_t c = row[x];
