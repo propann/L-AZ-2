@@ -120,3 +120,29 @@ Conclusion provisoire : le moteur 16 grains tient largement sur cet ESP32.
 La prochaine validation devra produire le flux en temps réel par I2S et
 compter les éventuels underruns ; le benchmark actuel mesure uniquement le
 calcul DSP hors ligne.
+
+## 8. Moteur granulaire MAX sur ESP32-S3 N16R8
+
+La carte dédiée retenue est un ESP32-S3 double cœur 240 MHz avec 16 Mo de
+flash et 8 Mo de PSRAM. Le laboratoire partage chaque bloc stéréo de 128
+échantillons entre les deux cœurs : cœur 0 pour la première moitié des grains,
+cœur 1 pour la seconde, puis sommation avant sortie.
+
+Source de test : 30 secondes mono/16 bits/44,1 kHz en PSRAM, soit 2646000
+octets. Interpolation linéaire, fenêtre de Hann précalculée, pitch et position
+indépendants, panoramique stéréo par grain.
+
+| Grains simultanés | Charge murale double cœur | Décision |
+|---:|---:|---|
+| 64 | 60,4 % | cible MAX sûre |
+| 80 | 75,1 % | mode extrême, marge réduite |
+| 96 | 89,7 % | trop proche de la limite avec I2S |
+| 112 | 104,4 % | hors temps réel |
+| 128 | 119,1 % | hors temps réel |
+| 160 | 148,6 % | hors temps réel |
+| 192 | 178,6 % | hors temps réel |
+
+Après le test : 331716 octets de heap interne et 5697808 octets de PSRAM
+libres. La configuration produit retenue pour la suite est donc 64 grains,
+avec un mode 80 grains optionnel. La prochaine mesure devra inclure la sortie
+I2S DMA réelle et compter les underruns avant de figer cette limite.
