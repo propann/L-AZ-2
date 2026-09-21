@@ -1462,6 +1462,9 @@ bool trackSoloed[kSeqTrackCount] = {};
 // engPatchScroll pour savoir quelle partie de la liste (potentiellement
 // longue) est actuellement visible.
 int8_t selectedEngineTrack = 0;
+uint8_t engineParamBank = 0;
+uint32_t engineAnimFrame = 0;
+uint32_t engineAnimLastMs = 0;
 // false = focus croix sur la liste MOTEUR (gauche), true = liste PATCH
 // (droite) -- GAUCHE/DROITE bascule (spatial, plus intuitif qu'avant
 // avec de vraies colonnes cote a cote), HAUT/BAS deplace/choisit dans
@@ -1636,6 +1639,62 @@ void drawEngMiniPatch() {
   gfx->print(az2::enginePatchName(trackEngine[t], trackPatch[t]));
 }
 
+// Zone graphique compacte : une silhouette par moteur et deux valeurs
+// directement pilotables par les potentiometres 2/3. Elle reste dans le
+// bandeau existant pour conserver la navigation tactile actuelle.
+void drawEngVisualizer() {
+  const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
+  const uint16_t accent = kPalette[t % kPaletteCount];
+  const int16_t x = kMargin;
+  const int16_t y = kEngMiniY;
+  const int16_t w = static_cast<int16_t>(kScreenSize - 2 * kMargin);
+  const int16_t h = kEngMiniH;
+  const uint8_t phase = static_cast<uint8_t>(engineAnimFrame & 0x3f);
+  gfx->fillRect(x, y, w, h, RGB565_BLACK);
+  gfx->drawRect(x, y, w, h, accent);
+  const int16_t cx = static_cast<int16_t>(x + 32);
+  const int16_t cy = static_cast<int16_t>(y + h / 2 + 3);
+  gfx->drawCircle(cx, cy, 20, kFaint);
+  gfx->drawCircle(cx, cy, static_cast<int16_t>(10 + phase / 8), accent);
+  if (trackEngine[t] == az2::kEngineDexed) {
+    for (uint8_t i = 0; i < 4; ++i) {
+      gfx->drawLine(cx - 18 + i * 12, cy - 15, cx - 9 + i * 12, cy + 15, accent);
+    }
+  } else if (trackEngine[t] == az2::kEngineDrum) {
+    gfx->fillCircle(cx, cy, static_cast<int16_t>(5 + phase / 16), accent);
+    gfx->drawCircle(cx, cy, 15, accent);
+  } else if (trackEngine[t] == az2::kEngineSampler) {
+    gfx->drawLine(cx - 18, cy + 10, cx - 6, cy - 12, accent);
+    gfx->drawLine(cx - 6, cy - 12, cx + 8, cy + 5, accent);
+    gfx->drawLine(cx + 8, cy + 5, cx + 18, cy - 15, accent);
+  } else {
+    for (int16_t i = -18; i < 18; i += 3) {
+      gfx->drawPixel(static_cast<int16_t>(cx + i), static_cast<int16_t>(cy + ((i * 7 + phase * 3) % 18)), accent);
+    }
+  }
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 4));
+  gfx->print(engineParamBank == 0 ? "FILTRE  POT2/POT3" : "PATCH  POT2/POT3");
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 16));
+  gfx->print(az2::engineName(trackEngine[t]));
+  char buf[36];
+  if (engineParamBank == 0) {
+    snprintf(buf, sizeof(buf), "CUTOFF %3u  RESO %3u", trackCutoff[t], trackReso[t]);
+  } else if (trackEngine[t] == az2::kEngineDexed) {
+    snprintf(buf, sizeof(buf), "ALGO %2u  FDBK %u", static_cast<unsigned>(trackAlgo[t] + 1), trackFeedback[t]);
+  } else {
+    snprintf(buf, sizeof(buf), "ATTACK %3u  DECAY %3u", trackAttack[t], trackDecay[t]);
+  }
+  gfx->setTextColor(accent);
+  gfx->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 30));
+  gfx->print(buf);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 47));
+  gfx->print("B / ENC1 : changer de banque");
+}
+
 bool hitTestEngMini(int16_t x, int16_t y) {
   return inBox(x, y, kMargin, kEngMiniY, static_cast<int16_t>(kScreenSize - 2 * kMargin), kEngMiniH);
 }
@@ -1644,7 +1703,7 @@ void drawEnginesPage() {
   drawSubHeader("MOTEURS", kPalette[2]);
   drawEngTrackRow();
   drawEngLists();
-  drawEngMiniPatch();
+  drawEngVisualizer();
 }
 
 // Renvoie l'index de moteur (0-5) touche dans la liste GAUCHE, -1 si
@@ -5198,6 +5257,10 @@ void handleTeensyLine(const String &line) {
         sendToTeensy(msg);
         drawEngRow(t);
       }
+      if (pressed && currentScreen == Screen::Engines && letter == 'B') {
+        engineParamBank = static_cast<uint8_t>(engineParamBank ^ 1U);
+        drawEngVisualizer();
+      }
       // Page MIXER (2026-09-19, "le mixeur doit gerer le volume de
       // toutes les voix") : B = mute, D = solo sur la piste
       // actuellement selectionnee (GAUCHE/DROITE ou encodeur 1, voir le
@@ -5301,8 +5364,30 @@ void handleTeensyLine(const String &line) {
               sendPatchExtra(t, extraIdx);
               if (!screensaverActive) {
                 drawPatchExtraRow(static_cast<uint8_t>(row));
-              }
             }
+        } else if (currentScreen == Screen::Engines && !screensaverActive) {
+          const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
+          if (engineParamBank == 0) {
+            if (slot == 0) trackCutoff[t] = value;
+            else trackReso[t] = value;
+            char msg[24];
+            snprintf(msg, sizeof(msg), "FILT:%u:%u:%u", t, trackCutoff[t], trackReso[t]);
+            sendToTeensy(msg);
+          } else if (trackEngine[t] == az2::kEngineDexed) {
+            if (slot == 0) trackAlgo[t] = static_cast<uint8_t>((static_cast<uint16_t>(value) * 32U) / 128U);
+            else trackFeedback[t] = static_cast<uint8_t>((static_cast<uint16_t>(value) * 8U) / 128U);
+            char msg[24];
+            snprintf(msg, sizeof(msg), "DXP:%u:%u:%u", t, slot, slot == 0 ? trackAlgo[t] : trackFeedback[t]);
+            sendToTeensy(msg);
+          } else {
+            if (slot == 0) trackAttack[t] = value;
+            else trackDecay[t] = value;
+            char msg[32];
+            snprintf(msg, sizeof(msg), "ENV:%u:%u:%u:%u:%u", t, trackAttack[t], trackDecay[t], trackSustain[t], trackRelease[t]);
+            sendToTeensy(msg);
+          }
+          drawEngVisualizer();
+        }
           }
         }
       }
@@ -5356,6 +5441,10 @@ void handleTeensyLine(const String &line) {
             padMenuOpen = true;
             drawPadMenu();
           }
+        }
+        if (currentScreen == Screen::Engines && index == 1 && pressed) {
+          engineParamBank = static_cast<uint8_t>(engineParamBank ^ 1U);
+          drawEngVisualizer();
         }
       }
     }
@@ -6867,6 +6956,13 @@ void loop() {
     if (!screensaverActive) {
       drawScreen(currentScreen);
     }
+  }
+
+  if (!gbGameActive && currentScreen == Screen::Engines && !screensaverActive &&
+      (nowForIdle - engineAnimLastMs) >= 80U) {
+    engineAnimLastMs = nowForIdle;
+    ++engineAnimFrame;
+    drawEngVisualizer();
   }
 
   // Emulateur Game Boy : une frame dure exactement 70224 cycles a
