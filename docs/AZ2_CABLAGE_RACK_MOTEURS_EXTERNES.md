@@ -165,3 +165,22 @@ pendant 30 secondes sur les broches canoniques GPIO7/GPIO9/GPIO11 :
 La limite du module est donc **figée à 64 grains**. Le mode 80 grains reste
 uniquement expérimental et ne doit pas être proposé comme mode fiable tant que
 commandes, modulation et liaison Teensy ne sont pas actives.
+
+## 9. Deuxième résultat : SPECTRAL SWARM sur ESP-WROOM-32D
+
+La carte `ESP32-D0WD-V3`, révision 3.1, double cœur 240 MHz, 4 Mo de flash et
+sans PSRAM (MAC `08:b6:1f:bc:8e:30`) est affectée au moteur spectral. Le banc
+`engine_lab_spectral_esp32` partage ses quatre voix entre les deux cœurs.
+
+| Partiels/voix | Oscillateurs | Charge temps réel | Statut |
+|---:|---:|---:|---|
+| 16 | 64 | 68,0 % | cible sûre retenue |
+| 24 | 96 | 86,9 % | expérimental, marge insuffisante |
+| 32 | 128 | 105,9 % | hors temps réel |
+| 48 | 192 | 143,9 % | hors temps réel |
+| 64 | 256 | 182,0 % | hors temps réel |
+
+Configuration figée pour l'intégration future : **4 voix, 16 partiels par
+voix**. Le banc est validé par USB seulement. Son câblage audio et son mode
+I2S attendent la décision d'architecture multi-module (TDM, seconde interface
+SAI ou agrégateur) après l'intégration du premier slot granulaire.
