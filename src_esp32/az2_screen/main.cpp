@@ -93,7 +93,7 @@ const int kDirectDataPins[16] = {15, 14, 13, 12, 11, 10, 9, 8,
 AZ2RgbDirect directPanel(bus, gc9503v_type1_init_operations,
                           sizeof(gc9503v_type1_init_operations),
                           18, 17, 16, 21, kDirectDataPins,
-                          kScreenSize, kScreenSize, 16000000);
+                          kScreenSize, kScreenSize, 12000000);
 AZ2RgbDirectOutput directOutput(&directPanel);
 Arduino_Canvas directCanvas(kScreenSize, kScreenSize, &directOutput);
 Arduino_GFX *gfx = &directCanvas;
