@@ -21,6 +21,8 @@ jobs:
         run: pip install --disable-pip-version-check platformio==6.1.19
       - name: Check shared firmware contract
         run: python tools/check_firmware_contract.py
+      - name: Check demo projects
+        run: python tools/check_project_examples.py
       - name: Run native protocol tests
         run: pio test -e native
 

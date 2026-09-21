@@ -18,7 +18,7 @@
 // bits a kGbAudioSampleRate Hz (voir AZ2_Protocol.h) et on l'envoie en
 // paquet binaire sur le MEME lien Serial1 que le reste du protocole
 // (voir sendGbAudioPacket() plus bas) -- volontairement basse
-// resolution pour tenir large dans le budget du lien 230400 bauds.
+// resolution pour tenir dans le budget du lien UART partage a 921600 bauds.
 // Cote Teensy : src_teensy/az2_audio/main.cpp recoit ces paquets,
 // re-echantillonne vers 44.1kHz et les joue via un AudioPlayQueue
 // branche sur le bus d'effets maitre (meme chemin que les moteurs de

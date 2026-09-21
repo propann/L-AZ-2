@@ -2,9 +2,8 @@
 #include <math.h>
 // AZ-2 - Moteur audio Teensy v1 : multi-voix + sequenceur 16 pas.
 //
-// Architecture reprise de MicroDexed-touch (voir
-// src_teensy/microdexed-touch/MicroDexed-touch/config.h: NUM_DEXED=4,
-// sequenceur multi-pistes), adaptee a l'echelle AZ-2 v0 -- voir
+// Architecture inspiree de MicroDexed-touch (source amont conservee dans
+// l'historique Git), adaptee a l'echelle AZ-2 v0 -- voir
 // docs/AZ2_PORTAGE_MICRODEXED_TOUCH.md, "Plan de portage" etape 5:
 //   - 4 voix "pistes" (une instance Dexed chacune) pour le sequenceur.
 //   - 1 voix "live" dediee au jeu au clavier (pads/page AUDIO ecran),
@@ -1099,9 +1098,8 @@ uint8_t swingAmount = 0;
 uint8_t ticksForCurrentStep = kTicksPerStep;
 
 // Horloge du sequenceur : sur IntervalTimer (interruption materielle),
-// comme MicroDexed-touch (voir src_teensy/microdexed-touch/MicroDexed-touch/
-// MicroDexed-touch.ino, "PeriodicTimer sequencer_timer" + dexed_sd.cpp:4823
-// "sequencer_timer.begin(sequencer, seq.tempo_ms/(seq.ticks_max+1))") --
+// selon le principe employe par MicroDexed-touch (source amont consultable
+// dans l'historique Git) --
 // c'est ce qui manquait cote AZ-2 : avant, le pas etait avance depuis
 // loop() via un simple test millis(), donc soumis a la duree de tout ce
 // que loop() fait dans le meme tour (lecture des 3 UART, etc.) -- source

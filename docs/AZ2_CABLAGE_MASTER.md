@@ -5,9 +5,8 @@ ESP32<->Teensy confirme. Le Pico (3e cerveau clavier) et la matrice
 SparkFun 4x4 sont ABANDONNES (voir "Pourquoi le Pico a ete abandonne"
 plus bas) -- remplaces par une croix + 4 boutons + 3 encodeurs rotatifs
 (avec bouton integre, pas de simples potentiometres -- voir section 4)
-cables directement sur le Teensy. Les 3 encodeurs sont CABLES et
-TESTES en reel (voir section 4 pour les bugs trouves/corriges) ;
-croix + boutons A-D restent a cabler.**
+cables directement sur le Teensy. La croix, les boutons A-D et les trois
+encodeurs sont cables et testes sur le prototype.**
 
 ## Tableau simple (tout, en un coup d'oeil)
 
@@ -19,8 +18,8 @@ croix + boutons A-D restent a cabler.**
 | DAC | SCK | - | GND (souder direct, pas de fil vers le Teensy) | **Confirme** |
 | Teensy | RX1/TX1 | pin 0/1 | ESP32 GPIO19/20 | **Confirme** (HELLO OK) |
 | ESP32 (integre) | Tactile SDA/SCL | GPIO40/41 | FT6336U (deja cable usine) | **Confirme**, multi-doigt actif |
-| Teensy | Croix HAUT/BAS/GAUCHE/DROITE | pin 2/3/4/5 | 4 switches | A cabler |
-| Teensy | Boutons A/B/C/D | pin 6/8/9/23 | 4 switches | A cabler |
+| Teensy | Croix HAUT/BAS/GAUCHE/DROITE | pin 2/3/4/5 | 4 switches | **Cable, teste** |
+| Teensy | Boutons A/B/C/D | pin 6/8/9/23 | 4 switches | **Cable, teste** |
 | Teensy | Encodeurs 1/2/3 (CLK/DT/SW) | pin 14-16 / 17-19 / 22,24,25 | 3 encodeurs rotatifs + bouton | **Cable, teste** |
 | Toutes cartes | GND | - | Masse commune (etoile recommandee) | Confirme fonctionnel |
 
@@ -36,9 +35,8 @@ simplifier : plus de 3e carte, plus de matrice/mux, juste des switches et
 potentiometres cables directement sur le Teensy (architecture a 2 cartes,
 comme a l'origine du projet). Detail complet du diagnostic (utile si on
 reprend le sujet un jour) : [AZ2_CABLAGE_PICO.md](AZ2_CABLAGE_PICO.md).
-Le code Pico reste dans `src_pico/` pour reference, mais n'est plus
-construit par defaut (voir `platformio.ini`, environnement `ctrl_pico`
-commente).
+Le code Pico a été retiré du dépôt actif. Son historique reste accessible
+dans Git.
 
 Les pins 14/15 du Teensy (ex-`Serial3`, ex-lien UART vers le Pico) sont
 maintenant reutilisees comme entrees analogiques (potards 1 et 2).
@@ -66,7 +64,7 @@ maintenant reutilisees comme entrees analogiques (potards 1 et 2).
 flowchart LR
     NAV[Croix + 4 boutons + 3 potards] --> TEENSY[Teensy 4.1\nmaster_teensy]
     TEENSY -- I2S --> DAC[PCM5102A]
-    ESP[ESP32-S3 ecran\nVIEWE UEDX48480040E-WB\nscreen_esp] -- UART 230400\nGPIO19/20 <-> Serial1 --> TEENSY
+    ESP[ESP32-S3 ecran\nVIEWE UEDX48480040E-WB\nscreen_esp] -- UART 921600\nGPIO19/20 <-> Serial1 --> TEENSY
 ```
 
 ## 0. Alimentation et masses (regle valable partout)
@@ -105,13 +103,13 @@ dans [AZ2_DAC_PCM5102A.md](AZ2_DAC_PCM5102A.md) — H1L/H2L/H4L a gauche
 | GPIO20 (RX) | pin 1 (TX1) |
 | GND | GND |
 
-Debit `230400`, cote Teensy c'est `Serial1`. **Important**: sur cette carte
+Debit `921600`, cote Teensy c'est `Serial1`. **Important**: sur cette carte
 ecran precise, GPIO1/GPIO2 sont deja pris par l'ecran (R3/R2) — bien
 utiliser GPIO19/20, les deux seules broches vraiment libres. Voir
 [AZ2_ECRAN_FACADE.md](AZ2_ECRAN_FACADE.md) pour le detail du pourquoi.
 Code + cablage confirmes : `HELLO:TEENSY_AUDIO` recu cote ESP32.
 
-## 3. Teensy 4.1 -> Croix + 4 boutons — A CABLER
+## 3. Teensy 4.1 -> Croix + 4 boutons — CABLE, CONFIRME
 
 | Fonction | Teensy pin |
 | --- | --- |
@@ -215,6 +213,6 @@ Source: README officiel VIEWE (voir [AZ2_ECRAN_FACADE.md](AZ2_ECRAN_FACADE.md)).
 | Teensy -> PCM5102A | **Son confirme** (Synth_Dexed, note tenue via PAD:NN:DOWN) |
 | Ecran ESP32 (affichage + tactile) | **Confirme** : intro, menu navigable au doigt, 2 points de contact |
 | UART ESP32 <-> Teensy | **Confirme** (HELLO echange) |
-| Croix + 4 boutons (Teensy) | Firmware pret (`NAV:`/`BTN:`), cablage physique a faire |
+| Croix + 4 boutons (Teensy) | **Cable, teste en reel** (`NAV:`/`BTN:` et commandes Game Boy confirmes) |
 | 3 encodeurs rotatifs + bouton (Teensy) | **Cable, teste en reel** (`POT:`/`ENC:`, pilote volume/reverb/delay -- rebond electrique, sens inverse et bouton non affiche trouves et corriges le 2026-09-15, voir section 4) |
 | Pico + matrice + mux LED | **Abandonne** (voir "Pourquoi le Pico a ete abandonne") |

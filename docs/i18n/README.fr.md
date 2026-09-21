@@ -6,7 +6,7 @@
 
 ## Construire un instrument
 
-AZ-2 réunit une groovebox, un tracker huit pistes, six moteurs de synthèse/lecture et une console Game Boy / Game Boy Color. L'objectif est de jouer, composer, capturer le son du jeu et réutiliser une capture comme instrument. AZ-2 conserve **deux cartes**, sans multiplexeur ni rack ESP supplémentaire : le rack appartient au projet AZ-3.
+AZ-2 réunit une groovebox, un tracker huit pistes, sept moteurs de synthèse/lecture et une console Game Boy / Game Boy Color. L'objectif est de jouer, composer, capturer le son du jeu et réutiliser une capture comme instrument. AZ-2 conserve **deux cartes**, sans multiplexeur ni rack ESP supplémentaire : le rack appartient au projet AZ-3.
 
 | Carte | Rôle | Stockage |
 | --- | --- | --- |
@@ -31,7 +31,7 @@ pio run -e master_teensy -t upload
 pio run -e screen_esp -t upload
 ```
 
-Les deux compilations proviennent du **même SHA Git**. Ne pas mettre à jour une seule carte avec un changement de protocole incompatible. `ui_esp` est un environnement historique de bring-up, pas le firmware de l'écran final. Aucun jeu commercial ou contenu utilisateur privé n'est inclus.
+Les deux compilations proviennent du **même SHA Git**. Ne pas mettre à jour une seule carte avec un changement de protocole incompatible. Aucun jeu commercial ou contenu utilisateur privé n'est inclus.
 
 ## Émulation, sauvegardes et musique
 

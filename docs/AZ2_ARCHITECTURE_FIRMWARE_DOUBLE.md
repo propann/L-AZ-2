@@ -60,7 +60,7 @@ Le Teensy 4.1 est excellent pour audio temps reel avec la librairie Audio et un 
 
 ## Bus AZ2 v0
 
-Le bus v0 est un UART texte compact a `230400` bauds. C'est volontaire: lisible au moniteur serie, debuggable, assez rapide pour demarrer.
+Le bus courant est un UART texte compact a `921600` bauds. Il transporte les commandes, les etats et le son de l'emulateur Game Boy.
 
 ### Messages ESP32 -> Teensy
 
@@ -187,4 +187,3 @@ Le firmware Teensy commence avec un test sine -> PCM5102A, puis evolue:
 ## Decision importante
 
 Le sequenceur maitre doit vivre cote Teensy en v0. L'ESP32 peut afficher, editer et preparer, mais le timing du groove ne doit pas traverser l'UI a chaque step. C'est la difference entre une machine qui clignote et une machine qui joue.
-

@@ -31,7 +31,7 @@ pio run -e master_teensy -t upload
 pio run -e screen_esp -t upload
 ```
 
-Build both binaries from the **same Git commit**. Do not update only one board after an incompatible protocol change. `ui_esp` is a legacy bring-up environment, not the final display firmware. Commercial game ROMs and private user content are not included.
+Build both binaries from the **same Git commit**. Do not update only one board after an incompatible protocol change. Commercial game ROMs and private user content are not included.
 
 ## Emulation, saves and music
 

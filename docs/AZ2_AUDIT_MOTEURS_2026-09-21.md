@@ -5,7 +5,7 @@
 
 ## État vérifié dans le code
 
-Le protocole partagé expose six moteurs :
+Le protocole partagé expose sept moteurs :
 
 | ID | Moteur | Patches exposés | État actuel |
 |---:|---|---:|---|
@@ -50,7 +50,7 @@ séparée et ne change pas avec le moteur de piste.
 
 ## Points propres
 
-- Les six moteurs sont sélectionnables par piste et le patch est remis à zéro
+- Les sept moteurs sont sélectionnables par piste et le patch est remis à zéro
   lors du changement.
 - Les huit pistes sont toutes raccordées aux deux groupes puis au mix final.
 - Les effets dédiés par piste sont transparents au démarrage : bitcrusher à

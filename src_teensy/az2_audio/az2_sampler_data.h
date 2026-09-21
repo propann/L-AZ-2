@@ -2,9 +2,9 @@
 
 // Samples de depart pour le moteur SAMPLER (2026-09-18, "on va mettre en
 // route le sampleur ... recuperer un max de patch") -- Kick_1_Simple.wav et
-// Snare_1_Simple.wav, deja vendores dans le repo avec MicroDexed-touch
-// (src_teensy/microdexed-touch/addon/SD/CUSTOM/, meme licence GPLv3 que le
-// reste de ce projet vendored -- voir docs/AZ2_LICENCES.md). Convertis en
+// Snare_1_Simple.wav, importes de MicroDexed-touch puis retires du checkout
+// apres conversion (sources consultables dans l'historique Git, licence
+// GPLv3 -- voir docs/AZ2_LICENCES.md). Convertis en
 // tableaux PCM 16 bits signes, mono, 44100 Hz, EMBARQUES EN FLASH (PROGMEM)
 // plutot que charges depuis la carte SD Teensy au boot -- pas besoin de
 // deposer quoi que ce soit sur la carte physique pour un premier son
@@ -1134,4 +1134,3 @@ const int16_t kSampleSnare[kSampleSnareLen] PROGMEM = {
     -1,1,-1,1,0,-1,1,-1,1,-1,1,-1,0,0,1,-2,2,-2,1,0,-1,1,0,-1,1,-1,1,-1,1,-1,2,-2,2,-3,3,-3,3,-1,-1,2,-3,2,0,0,-1,2,
     -4,5,-4,2,0,-1,1,0,-1,1,0,-1,2,-3,4,-4,3,-2,1,0,0,
 };
-

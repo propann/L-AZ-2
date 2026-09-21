@@ -6,7 +6,7 @@
 
 **🌐 Documentation : [Français](docs/i18n/README.fr.md) · [English](docs/i18n/README.en.md) · [Español](docs/i18n/README.es.md)**
 
-**Une groovebox DIY à deux cerveaux : tracker 8 pistes, six moteurs audio et Game Boy / Game Boy Color intégrée.**
+**Une groovebox DIY à deux cerveaux : tracker 8 pistes, sept moteurs audio et Game Boy / Game Boy Color intégrée.**
 
 [![CI](https://github.com/propann/L-AZ-2/actions/workflows/ci.yml/badge.svg)](https://github.com/propann/L-AZ-2/actions/workflows/ci.yml)
 ![Statut](https://img.shields.io/badge/status-prototype%20alpha-f59e0b)
@@ -24,7 +24,7 @@
 | 🎛️ Créer | 🎮 Jouer | 🎚️ Transformer |
 | :-- | :-- | :-- |
 | Tracker 8 pistes, patterns, song, swing, effets par pas, mute/solo | Émulation GB/GBC sur écran tactile avec croix et boutons physiques | Mixage via Teensy et DAC I²S, capture WAV du son du jeu, sampleur one-shot |
-| Dexed FM · ePiano · Braids · Karplus · Analog · Sampler | Navigateur de ROM sur carte SD, sauvegarde cartouche | Six moteurs audio au choix par piste |
+| Dexed FM · ePiano · Braids · Karplus · Analog · Sampler · Drum | Navigateur de ROM sur carte SD, sauvegarde cartouche | Sept moteurs audio au choix par piste |
 
 **Intention produit :** composer au tracker, jouer à la Game Boy et faire dialoguer le son chiptune avec les synthétiseurs de la machine. La capture WAV est présente et le dernier enregistrement Game Boy peut désormais être chargé en PSRAM comme patch dynamique **SAMPLER / GB Capture** ; la gestion d'une vraie bibliothèque multi-captures reste à développer.
 
@@ -49,7 +49,7 @@ L'AZ-2 actuelle conserve deux cartes, sans multiplexeur ni rack multi-ESP. Les c
 
 ## Démarrer
 
-**Prérequis :** matériel décrit dans le [guide de câblage](docs/AZ2_CABLAGE_MASTER.md), carte ESP32-S3 écran VIEWE UEDX48480040E-WB, Teensy 4.1, DAC PCM5102A, cartes SD adaptées, [Python](https://www.python.org/) et [PlatformIO](https://platformio.org/install).
+**Prérequis :** matériel décrit dans la [nomenclature de reproduction](docs/AZ2_REPRODUCTION.md) et le [guide de câblage](docs/AZ2_CABLAGE_MASTER.md), carte ESP32-S3 écran VIEWE UEDX48480040E-WB, Teensy 4.1, DAC PCM5102A, cartes SD FAT32, Python et PlatformIO.
 
 ```bash
 git clone https://github.com/propann/L-AZ-2.git
@@ -67,7 +67,7 @@ pio run -e master_teensy -t upload
 pio run -e screen_esp -t upload
 ```
 
-Le matériel Teensy et l'écran ESP32 disposent de configurations de compilation distinctes dans `platformio.ini`. `ui_esp` est un environnement de bring-up historique, **pas** le firmware de l'écran final. Les ROM commerciales, les banques de samples et les sauvegardes personnelles ne sont pas incluses dans ce dépôt.
+Le matériel Teensy et l'écran ESP32 disposent de configurations de compilation distinctes dans `platformio.ini`. Les ROM commerciales, les banques de samples et les sauvegardes personnelles ne sont pas incluses dans ce dépôt.
 
 **Avant le premier flash :** lire le [guide d'installation et de sécurité](docs/AZ2_DEMARRAGE.md). Préserver vos fichiers `.sav`, projets et patches SD ; éviter une mise à jour partielle des deux firmwares.
 
@@ -100,6 +100,7 @@ Les cases d'implémentation et les tests d'acceptation figurent dans la [roadmap
 
 | Commencer par… | Pour… |
 | :-- | :-- |
+| [Reproduire AZ-2](docs/AZ2_REPRODUCTION.md) | Liste des pièces, câblage, cartes SD, compilation et contrôle final |
 | [Guide en français](docs/i18n/README.fr.md) · [English guide](docs/i18n/README.en.md) · [Guía en español](docs/i18n/README.es.md) | Découvrir le projet, compiler les deux firmwares, comprendre les fonctions livrées et leurs limites |
 | [Manuel d'utilisation](docs/AZ2_MANUEL_UTILISATEUR.md) | Jouer avec la machine : pages, contrôles, sauvegarde, premier beat |
 | [Premier démarrage](docs/AZ2_DEMARRAGE.md) | Préparer les deux cartes, les SD et les compilations |

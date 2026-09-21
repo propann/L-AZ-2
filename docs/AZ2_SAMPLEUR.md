@@ -18,8 +18,8 @@ instrument de percussion) via `AudioPlaySampler`
 
 | Index | Nom | Source | Duree | Note racine |
 | --- | --- | --- | --- | --- |
-| 0 | Kick | `addon/SD/CUSTOM/Kick_1_Simple.wav` (MicroDexed-touch, vendored) | 0.24s | MIDI 36 (C1, convention kick) |
-| 1 | Snare | `addon/SD/CUSTOM/Snare_1_Simple.wav` (idem) | 0.38s | MIDI 38 (D1, convention snare) |
+| 0 | Kick | `Kick_1_Simple.wav` (MicroDexed-touch, source dans l'historique Git) | 0.24s | MIDI 36 (C1, convention kick) |
+| 1 | Snare | `Snare_1_Simple.wav` (idem) | 0.38s | MIDI 38 (D1, convention snare) |
 
 Converti en tableaux `const int16_t ... PROGMEM` par un script Python
 ponctuel (voir l'historique git, pas versionne comme outil -- lecture

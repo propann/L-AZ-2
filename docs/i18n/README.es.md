@@ -31,7 +31,7 @@ pio run -e master_teensy -t upload
 pio run -e screen_esp -t upload
 ```
 
-Compila los dos binarios desde el **mismo commit de Git**. No actualices una sola placa después de un cambio incompatible del protocolo. `ui_esp` es un entorno antiguo de pruebas iniciales, no el firmware de la pantalla definitiva. El repositorio no incluye ROMs comerciales ni archivos privados del usuario.
+Compila los dos binarios desde el **mismo commit de Git**. No actualices una sola placa después de un cambio incompatible del protocolo. El repositorio no incluye ROMs comerciales ni archivos privados del usuario.
 
 ## Emulación, partidas y música
 
