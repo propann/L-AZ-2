@@ -137,6 +137,17 @@ struct TouchPoint {
   int16_t y = 0;
 };
 
+uint8_t touchInvalidFrames = 0;
+void touchFrameInvalid() {
+  if (++touchInvalidFrames < 3) return;
+  touchInvalidFrames = 0;
+  Wire.end();
+  delayMicroseconds(200);
+  Wire.begin(kTouchSdaPin, kTouchSclPin);
+  Wire.setClock(400000);
+  Serial.println("TOUCH:I2C_RECOVERED");
+}
+
 // Lit jusqu'a 2 points de contact simultanes (registres FT5x06 standard,
 // famille FT6336U incluse) : 0x02 = nombre de points, point 1 a partir de
 // 0x03, point 2 a partir de 0x09 (meme mise en page, 6 octets d'ecart).
@@ -151,13 +162,15 @@ uint8_t readTouches(TouchPoint points[2]) {
   const uint8_t txResult = Wire.endTransmission(false);
   if (txResult != 0) {
     reportTouchI2cError(txResult == 2 ? "NAK_ADDR" : txResult == 3 ? "NAK_DATA" : "OTHER");
-    return 0;
+    touchFrameInvalid();
+    return 0xFF;
   }
 
   constexpr uint8_t kReadLen = 11;  // registres 0x02 a 0x0C inclus
   if (Wire.requestFrom(kTouchI2cAddr, kReadLen) != kReadLen) {
     reportTouchI2cError("SHORT_READ");
-    return 0;
+    touchFrameInvalid();
+    return 0xFF;
   }
 
   uint8_t buf[kReadLen];
@@ -177,8 +190,10 @@ uint8_t readTouches(TouchPoint points[2]) {
   // tout touchCount hors 0-2 ET toute coordonnee hors ecran.
   if (touchCount > 2) {
     reportTouchI2cError("BAD_COUNT");
-    return 0;
+    touchFrameInvalid();
+    return 0xFF;
   }
+  touchInvalidFrames = 0;
 
   if (touchCount >= 1) {
     const int16_t rawX = static_cast<int16_t>(((buf[1] & 0x0F) << 8) | buf[2]);
@@ -694,7 +709,6 @@ bool padMenuOpen = false;
 uint8_t padMenuIndex = 0;
 constexpr uint8_t kPadMenuCount = 5;
 const char *const kPadMenuItems[kPadMenuCount] = {"JEU LIBRE", "EDITER LE PAS", "SAMPLER", "MOTEURS", "SEQUENCEUR"};
-uint8_t padMenuLastEncoderValue = 0;
 uint32_t encPressStartedMs[3] = {};
 constexpr uint32_t kEncoderLongPressMs = 700;
 // -1 = generique (voix live Dexed fixe, comportement d'origine) ; sinon
@@ -759,12 +773,12 @@ void activatePadMenuItem() {
   switch (padMenuIndex) {
     case 0:
       padEditsStep = false;
-      padTargetTrack = -1;
+      padTargetTrack = selectedSeqTrack;
       drawAudioPage();
       break;
     case 1:
       padEditsStep = true;
-      if (padTargetTrack < 0) padTargetTrack = selectedSeqTrack;
+      padTargetTrack = selectedSeqTrack;
       drawAudioPage();
       break;
     case 2: goTo(Screen::Sampler); break;
@@ -2120,6 +2134,13 @@ bool scopeRendered = false;
 constexpr int16_t kPatchTrackRowY = 66;
 constexpr int16_t kPatchScopeTop = 96;
 constexpr int16_t kPatchScopeH = 90;
+constexpr int16_t kPatchScopeW = 232;
+constexpr int16_t kPatchListGap = 8;
+constexpr int16_t kPatchListX = kMargin + kPatchScopeW + kPatchListGap;
+constexpr int16_t kPatchListW = kScreenSize - kMargin - kPatchListX;
+constexpr uint8_t kPatchListRows = 4;
+constexpr int16_t kPatchListRowH = 20;
+uint16_t patchListScroll = 0;
 constexpr int16_t kPatchRowTop = kPatchScopeTop + kPatchScopeH + 14;
 constexpr int16_t kPatchRowH = 34;
 
@@ -2142,6 +2163,47 @@ void drawPatchTrackRow() {
   gfx->print(buf);
 }
 
+void keepPatchListVisible() {
+  const uint8_t t = static_cast<uint8_t>(patchTrack);
+  const uint16_t current = trackPatch[t];
+  const uint16_t count = az2::enginePatchCount(trackEngine[t]);
+  if (current < patchListScroll) patchListScroll = current;
+  if (current >= patchListScroll + kPatchListRows)
+    patchListScroll = static_cast<uint16_t>(current - kPatchListRows + 1);
+  const uint16_t maxScroll = count > kPatchListRows ? static_cast<uint16_t>(count - kPatchListRows) : 0;
+  if (patchListScroll > maxScroll) patchListScroll = maxScroll;
+}
+
+void drawPatchList() {
+  const uint8_t t = static_cast<uint8_t>(patchTrack);
+  const uint16_t accent = kPalette[t % kPaletteCount];
+  const uint16_t count = az2::enginePatchCount(trackEngine[t]);
+  keepPatchListVisible();
+  gfx->fillRect(kPatchListX, kPatchScopeTop, kPatchListW, kPatchScopeH, RGB565_BLACK);
+  gfx->drawRect(kPatchListX, kPatchScopeTop, kPatchListW, kPatchScopeH, accent);
+  gfx->setTextSize(1);
+  for (uint8_t row = 0; row < kPatchListRows; ++row) {
+    const uint16_t patch = static_cast<uint16_t>(patchListScroll + row);
+    const int16_t y = static_cast<int16_t>(kPatchScopeTop + 5 + row * kPatchListRowH);
+    if (patch >= count) continue;
+    const bool selected = patch == trackPatch[t];
+    if (selected) gfx->fillRect(kPatchListX + 3, y - 2, kPatchListW - 6, kPatchListRowH - 1, accent);
+    gfx->setTextColor(selected ? RGB565_BLACK : RGB565_WHITE);
+    gfx->setCursor(kPatchListX + 7, y + 4);
+    gfx->printf("%03u %s", patch + 1, az2::enginePatchName(trackEngine[t], patch));
+  }
+}
+
+int16_t hitTestPatchList(int16_t x, int16_t y) {
+  if (!inBox(x, y, kPatchListX, kPatchScopeTop, kPatchListW, kPatchScopeH)) return -1;
+  const int row = (y - (kPatchScopeTop + 3)) / kPatchListRowH;
+  if (row < 0 || row >= kPatchListRows) return -1;
+  const uint16_t patch = static_cast<uint16_t>(patchListScroll + row);
+  return patch < az2::enginePatchCount(trackEngine[static_cast<uint8_t>(patchTrack)])
+             ? static_cast<int16_t>(patch)
+             : -1;
+}
+
 // N'efface/redessine QUE l'interieur (pas le cadre, voir drawPatchPage()
 // qui le dessine une seule fois en entrant sur la page) -- appelee a
 // chaque paquet SCOPE recu (~15/s, voir kScopeSendIntervalMs cote
@@ -2149,7 +2211,7 @@ void drawPatchTrackRow() {
 // scintillement genant ("la fenetre patch ... elle scintille un peu
 // trop").
 void drawPatchScope() {
-  const int16_t w = static_cast<int16_t>(kScreenSize - 2 * kMargin);
+  const int16_t w = static_cast<int16_t>(kPatchScopeW - 2);
   auto pointX = [w](uint8_t i) -> int16_t {
     return static_cast<int16_t>(kMargin + (i * w) / (az2::kScopeSamplesPerPacket - 1));
   };
@@ -2175,7 +2237,7 @@ void drawPatchScope() {
     gfx->setTextSize(1);
     gfx->setTextColor(kDim);
     gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(kPatchScopeTop + kPatchScopeH / 2 - 4));
-    gfx->print("(silence -- joue une note sur cette piste)");
+    gfx->print("(silence -- B pour tester)");
     return;
   }
   int16_t prevX = pointX(0), prevY = pointY(scopeSamples[0]);
@@ -2901,8 +2963,9 @@ void drawPatchPage() {
   // Cadre du tracer dessine UNE fois ici -- drawPatchScope() (appelee a
   // chaque paquet SCOPE recu) ne touche plus que l'interieur, voir son
   // commentaire.
-  gfx->drawRect(kMargin, kPatchScopeTop, kScreenSize - 2 * kMargin, kPatchScopeH, kFaint);
+  gfx->drawRect(kMargin, kPatchScopeTop, kPatchScopeW, kPatchScopeH, kFaint);
   drawPatchScope();
+  drawPatchList();
   drawPatchWindow();
 }
 
@@ -5267,7 +5330,7 @@ void handleTeensyLine(const String &line) {
             // (meme raisonnement que patchScroll/engPatchScroll a
             // chaque entree de page).
             if (kMenuItems[items[menuSelected]].target == Screen::Audio) {
-              padTargetTrack = -1;
+              padTargetTrack = selectedSeqTrack;
               padEditsStep = false;
             }
             menuReturnCategory = menuCategory;
@@ -5406,6 +5469,18 @@ void handleTeensyLine(const String &line) {
         toggleMixerMuteSolo(letter == 'B');
       }
     }
+  } else if (line.startsWith("TURN:")) {
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    if (i1 >= 0 && i2 >= 0) {
+      const uint8_t index = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
+      const int direction = line.substring(i2 + 1).toInt();
+      if (currentScreen == Screen::Audio && padMenuOpen && index == 1 && direction != 0) {
+        padMenuIndex = static_cast<uint8_t>(
+            (padMenuIndex + (direction > 0 ? 1 : kPadMenuCount - 1)) % kPadMenuCount);
+        drawPadMenu();
+      }
+    }
   } else if (line.startsWith("POT:")) {
     const int firstColon = line.indexOf(':');
     const int secondColon = line.indexOf(':', firstColon + 1);
@@ -5433,14 +5508,8 @@ void handleTeensyLine(const String &line) {
       // soir pour les effets par piste, meme esprit ici).
       if (index == 1 || index == 2) {
         const uint8_t slot = static_cast<uint8_t>(index - 1);
-        if (currentScreen == Screen::Audio && slot == 0 && padMenuOpen) {
-          const int8_t delta = static_cast<int8_t>(value - padMenuLastEncoderValue);
-          if (delta != 0) {
-            padMenuIndex = static_cast<uint8_t>(
-                (padMenuIndex + (delta > 0 ? 1 : kPadMenuCount - 1)) % kPadMenuCount);
-            padMenuLastEncoderValue = value;
-            drawPadMenu();
-          }
+        if (currentScreen == Screen::Audio && padMenuOpen) {
+          // Navigation geree par TURN: relatif, jamais par POT: absolu.
         } else if (currentScreen == Screen::Mixer) {
           if (slot == 0) {
             const int track = (static_cast<int>(value) * kSeqTrackCount) / 128;
@@ -5579,7 +5648,6 @@ void handleTeensyLine(const String &line) {
             activatePadMenuItem();
           } else {
             padMenuOpen = true;
-            padMenuLastEncoderValue = potValue[index];
             drawPadMenu();
           }
         }
@@ -5814,10 +5882,13 @@ void handleTeensyLine(const String &line) {
           // rien pour ce nouveau moteur, puis relit ses valeurs.
           selectedPatchRow = 0;
           patchScroll = 0;
+          patchListScroll = 0;
           queryPatchExtra(track);
           drawPatchPage();
         } else if (currentScreen == Screen::Sequencer && track == selectedSeqTrack && !screensaverActive) {
           drawTrkSidePanel();
+        } else if (currentScreen == Screen::Patch && track == patchTrack && !screensaverActive) {
+          drawPatchList();
         }
       }
     }
@@ -6575,7 +6646,7 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
         // goTo(kMenuItems[...].target) plus haut) -- AUDIO depuis le
         // menu general repart sur la voix live generique.
         if (kMenuItems[items[hit]].target == Screen::Audio) {
-          padTargetTrack = -1;
+          padTargetTrack = selectedSeqTrack;
           padEditsStep = false;
         }
         menuReturnCategory = menuCategory;
@@ -6842,8 +6913,13 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       queryPatchExtra(static_cast<uint8_t>(patchTrack));
       drawPatchPage();
     } else {
+      const int16_t patchHit = hitTestPatchList(x, y);
       const int8_t row = hitTestPatchParam(x, y);
-      if (row >= 0 && (row >= 6 || patchRowActive(t, static_cast<uint8_t>(row)))) {
+      if (patchHit >= 0) {
+        char msg[16];
+        snprintf(msg, sizeof(msg), "PATCH:%u:%u", t, static_cast<unsigned>(patchHit));
+        sendToTeensy(msg);
+      } else if (row >= 0 && (row >= 6 || patchRowActive(t, static_cast<uint8_t>(row)))) {
         const int8_t prevRow = selectedPatchRow;
         selectedPatchRow = row;
         const bool leavingTrackRow = patchOnTrackRow;
@@ -7051,7 +7127,8 @@ void loop() {
   }
 
   TouchPoint touches[2] = {};
-  if (!gbGameActive) readTouches(touches);
+  const uint8_t touchReadCount = !gbGameActive ? readTouches(touches) : 0;
+  const bool touchReadValid = touchReadCount != 0xFF;
 
   for (uint8_t slot = 0; slot < 2; ++slot) {
     if (gbGameActive) {
@@ -7059,6 +7136,7 @@ void loop() {
       wasActive[slot] = false;
       continue;
     }
+    if (!touchReadValid) continue;
     const bool rawActive = touches[slot].active;
     if (rawActive) {
       lastTouchX[slot] = touches[slot].x;

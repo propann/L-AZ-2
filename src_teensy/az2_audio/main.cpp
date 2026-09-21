@@ -2662,6 +2662,13 @@ void updateEncoders() {
     if (rawDetents != encLastDetents[i] && (now - encPendingSinceMs[i]) >= kEncSettleMs) {
       const int32_t delta = (rawDetents - encLastDetents[i]) * kEncDirection;
       encLastDetents[i] = rawDetents;
+      // Mouvement RELATIF pour les interfaces de navigation. POT: garde
+      // sa valeur absolue pour les parametres continus, tandis que TURN:
+      // ne se bloque jamais aux bornes 0/127 et peut donc parcourir un
+      // menu indefiniment dans les deux sens.
+      const int8_t direction = delta > 0 ? 1 : -1;
+      Serial.printf("TURN:%u:%d\n", i, direction);
+      Serial1.printf("TURN:%u:%d\n", i, direction);
       const int32_t next = static_cast<int32_t>(encValue[i]) + delta * kEncStepPerDetent;
       encValue[i] = static_cast<uint8_t>(constrain(next, 0, 127));
     }
