@@ -18,7 +18,7 @@ modifications matérielles n'est faite pendant les benchmarks USB.**
 | Teensy 4.1 | aucune modification, firmware de production conservé | libérer l'entrée I2S pin 8, ajouter une entrée audio au mixeur et un protocole de slot | recevoir et mixer le moteur externe |
 | Commandes Teensy | aucune | déplacer le bouton B de la pin 8 vers une GPIO libre, probablement 10 | la pin 8 est l'entrée audio I2S standard |
 | ESP1 ESP32-S3 N16R8 | moteur granulaire MAX validé, I2S DMA maître sur GPIO7/9/11 | passage futur en I2S esclave et UART de contrôle | moteur granulaire dédié 64 grains |
-| ESP2 ESP-WROOM-32D | banc 16 grains validé, sans PSRAM | firmware spectral/additif, puis I2S/TDM selon les résultats | second moteur avancé |
+| ESP2 ESP-WROOM-32D | SPECTRAL SWARM 4×16 compilé, sans PSRAM | valider son DMA I2S autonome puis étudier WROOM → S3 | second moteur avancé |
 | ESP écran AZ-2 | aucune modification | ajouter plus tard l'interface de choix et les paramètres des moteurs externes | contrôle utilisateur |
 | Alimentation | USB séparé pendant les tests | alimentation 5 V séparée et protégée pour les slots, masse commune | stabilité et bruit |
 | Projets sauvegardés | aucun changement | enregistrer identifiant du slot, moteur et patch | rappel des morceaux |

@@ -4,6 +4,7 @@
 - [Câblage du rack de moteurs externes](AZ2_CABLAGE_RACK_MOTEURS_EXTERNES.md)
 - [Pinout canonique Teensy / ESP32-S3 / DAC](AZ2_RACK_PINOUT.md)
 - [Compte rendu rack audio du 21 septembre 2026](AZ2_SESSION_RACK_AUDIO_2026-09-21.md)
+- [Architecture figée MIDI et moteurs externes](AZ2_ARCHITECTURE_MIDI_ET_MOTEURS_EXTERNES.md)
 
 ## Pour reconstruire et utiliser la machine actuelle
 
