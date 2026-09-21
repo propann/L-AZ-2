@@ -174,13 +174,27 @@ sans PSRAM (MAC `08:b6:1f:bc:8e:30`) est affectée au moteur spectral. Le banc
 
 | Partiels/voix | Oscillateurs | Charge temps réel | Statut |
 |---:|---:|---:|---|
-| 16 | 64 | 68,0 % | cible sûre retenue |
-| 24 | 96 | 86,9 % | expérimental, marge insuffisante |
-| 32 | 128 | 105,9 % | hors temps réel |
-| 48 | 192 | 143,9 % | hors temps réel |
-| 64 | 256 | 182,0 % | hors temps réel |
+| 16 | 64 | 64,0 % | cible sûre retenue |
+| 24 | 96 | 80,1 % | expérimental, marge insuffisante |
+| 32 | 128 | 96,1 % | hors cible avec transport/contrôle |
+| 48 | 192 | 128,2 % | hors temps réel |
+| 64 | 256 | 160,4 % | hors temps réel |
 
 Configuration figée pour l'intégration future : **4 voix, 16 partiels par
 voix**. Le banc est validé par USB seulement. Son câblage audio et son mode
 I2S attendent la décision d'architecture multi-module (TDM, seconde interface
 SAI ou agrégateur) après l'intégration du premier slot granulaire.
+
+### Validation I2S DMA du moteur spectral
+
+Après alignement des deux cartes sur Arduino-ESP32 3.3.11, le moteur 4×16 a
+tourné deux fois pendant 30 secondes sur GPIO26/GPIO25/GPIO22 :
+
+- 10335 blocs stéréo de 128 échantillons ;
+- 0 bloc en retard et 0 écriture DMA incomplète ;
+- pire rendu : 2051 µs au premier passage, 2036 µs au second ;
+- budget par bloc : 2902 µs, soit environ 29 % de marge au pire ;
+- heap interne libre après matrice : environ 312 Ko.
+
+Le firmware autonome du second moteur est donc validé. Cela ne valide pas
+encore la future réception de son flux par le S3.

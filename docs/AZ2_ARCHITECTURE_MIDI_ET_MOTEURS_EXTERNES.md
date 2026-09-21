@@ -50,8 +50,8 @@ ne doit pas être pris automatiquement pour le MIDI DIN.
 - 4 voix × 16 partiels, soit 64 oscillateurs, double cœur, 44,1 kHz ;
 - banc : GPIO26 BCLK, GPIO25 LRCLK, GPIO22 DATA OUT ;
 - GPIO16 RX et GPIO17 TX réservées au futur contrôle/agrégateur ;
-- test DMA I2S 30 secondes ajouté et compilation validée ;
-- test matériel DMA à refaire dès reconnexion USB.
+- DMA I2S autonome validé deux fois pendant 30 secondes sans retard ;
+- pire rendu mesuré : 2051 µs pour un budget de 2902 µs.
 
 ## 4. Agrégation audio envisagée
 
@@ -70,7 +70,7 @@ final. Les deux moteurs devront suivre l'horloge audio du Teensy.
 ## 5. Ordre de validation
 
 1. GRANULAR MAX seul sur DMA I2S : **fait** ;
-2. SPECTRAL SWARM seul sur DMA I2S : **binaire prêt, matériel à tester** ;
+2. SPECTRAL SWARM seul sur DMA I2S : **fait** ;
 3. NOTE_ON/OFF, paramètres, PANIC et métriques sur chaque moteur ;
 4. WROOM vers S3 avec une tonalité avant de réunir les deux DSP ;
 5. S3 agrégateur pendant 30 minutes sans erreur ;

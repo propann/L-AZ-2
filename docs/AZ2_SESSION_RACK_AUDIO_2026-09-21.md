@@ -96,17 +96,21 @@ les coefficients coûteux sont calculés une fois par bloc.
 
 | Partiels par voix | Oscillateurs simultanés | Charge murale double cœur |
 |---:|---:|---:|
-| 16 | 64 | 68,0 % |
-| 24 | 96 | 86,9 % |
-| 32 | 128 | 105,9 % |
-| 48 | 192 | 143,9 % |
-| 64 | 256 | 182,0 % |
+| 16 | 64 | 64,0 % |
+| 24 | 96 | 80,1 % |
+| 32 | 128 | 96,1 % |
+| 48 | 192 | 128,2 % |
+| 64 | 256 | 160,4 % |
 
 Décision : **4 voix × 16 partiels**, soit 64 oscillateurs simultanés. Cette
-limite garde environ 32 % de marge pour l'I2S, les enveloppes, les commandes
-et les sécurités. Le palier 24 reste expérimental ; 32 et plus sont hors temps
+limite garde 36 % sur le calcul moyen et environ 29 % sur le pire bloc DMA
+mesuré, pour les enveloppes, les commandes et les sécurités. Le palier 24
+reste expérimental ; 32 et plus sont hors temps
 réel. Après le test, 334568 octets de heap interne restaient libres, sans
 PSRAM. Le diagnostic USB est fixé à 115200 bauds pour la fiabilité du CH340.
+Le test DMA I2S 4×16 a ensuite produit 10335 blocs pendant 30 secondes, deux
+fois, sans retard ni écriture courte. Le pire rendu était de 2051 µs pour un
+budget de 2902 µs.
 
 ### Rappel : validation DMA I2S du GRANULAR MAX
 
