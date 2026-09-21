@@ -1482,7 +1482,9 @@ constexpr int16_t kEngListLeftW = (kScreenSize - 2 * kMargin) * 4 / 10;
 constexpr int16_t kEngGap = 6;
 constexpr int16_t kEngListRightX = kMargin + kEngListLeftW + kEngGap;
 constexpr int16_t kEngListRightW = kScreenSize - 2 * kMargin - kEngListLeftW - kEngGap;
-constexpr int16_t kEngListRowH = 42;
+// Sept moteurs tiennent dans la page avec une hauteur compacte ; le même
+// gabarit reste lisible lorsque le catalogue repasse à six.
+constexpr int16_t kEngListRowH = 36;
 // 6 -- tombe pile sur le nombre de moteurs (liste gauche jamais
 // scrollee), la liste PATCH (droite) partage la meme fenetre/hauteur
 // et defile au-dela (voir engPatchScroll), meme principe que

@@ -457,9 +457,12 @@ constexpr uint8_t kEngineAnalog = 4;
 // (voir external_psram_size/psramTestBuffer dans main.cpp) mais jamais
 // exploites avant ce soir -- voir docs/AZ2_SAMPLEUR.md.
 constexpr uint8_t kEngineSampler = 5;
-constexpr uint8_t kEngineCount = 6;
+// Moteur percussion leger de la bibliotheque Audio Teensy. Il utilise un
+// patch par piste et ne depend d'aucun sample externe.
+constexpr uint8_t kEngineDrum = 6;
+constexpr uint8_t kEngineCount = 7;
 
-constexpr const char *kEngineNames[kEngineCount] = {"DEXED", "EPIANO", "BRAIDS", "KARPLUS", "ANALOG", "SAMPLER"};
+constexpr const char *kEngineNames[kEngineCount] = {"DEXED", "EPIANO", "BRAIDS", "KARPLUS", "ANALOG", "SAMPLER", "DRUM"};
 
 constexpr uint8_t kDexedPatchCount = 255;
 // 255 des 256 vrais patches d'usine du Yamaha DX7 original (banques
@@ -572,6 +575,11 @@ constexpr uint8_t kSamplerPatchCount = 3;
 constexpr uint8_t kSamplerGbCapturePatch = 2;
 constexpr const char *kSamplerPatchNames[kSamplerPatchCount] = {"Kick", "Snare", "GB Capture"};
 
+constexpr uint8_t kDrumPatchCount = 6;
+constexpr const char *kDrumPatchNames[kDrumPatchCount] = {
+    "Kick", "Snare", "Tom", "Hi Tom", "Click", "Zap",
+};
+
 // Mode de declenchement du sampleur chromatique d'une piste : one-shot
 // laisse le sample finir, gate coupe sur note-off. Les 16 pads dedies restent
 // toujours one-shot.
@@ -591,6 +599,7 @@ inline uint16_t enginePatchCount(uint8_t engine) {
     case kEngineKarplus: return kKarplusPatchCount;
     case kEngineAnalog: return kAnalogPatchCount;
     case kEngineSampler: return kSamplerPatchCount;
+    case kEngineDrum: return kDrumPatchCount;
     default: return 1;
   }
 }
@@ -603,6 +612,7 @@ inline const char *enginePatchName(uint8_t engine, uint8_t patch) {
     case kEngineKarplus: return patch < kKarplusPatchCount ? kKarplusPatchNames[patch] : "?";
     case kEngineAnalog: return patch < kAnalogPatchCount ? kAnalogPatchNames[patch] : "?";
     case kEngineSampler: return patch < kSamplerPatchCount ? kSamplerPatchNames[patch] : "?";
+    case kEngineDrum: return patch < kDrumPatchCount ? kDrumPatchNames[patch] : "?";
     default: return "?";
   }
 }

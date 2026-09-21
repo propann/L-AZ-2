@@ -145,6 +145,7 @@ float midiNoteToFreq(uint8_t note) {
 // kEngineSampler dans AZ2_Protocol.h et applyTrackPatch() plus bas
 // pour le choix Kick/Snare par piste.
 AudioPlaySampler trackSamplerEngine[kTrackCount];
+AudioSynthSimpleDrum trackDrumEngine[kTrackCount];
 
 // AudioMixer4 n'a que 4 entrees : avec 8 pistes il en faut 2 (groupe A =
 // pistes 0-3, groupe B = pistes 4-7), combinees dans mixFinal avec la
@@ -508,6 +509,14 @@ const short kAnalogWaveformValues[11] = {
     WAVEFORM_BANDLIMIT_SAWTOOTH, WAVEFORM_BANDLIMIT_SQUARE, WAVEFORM_BANDLIMIT_PULSE,
 };
 
+// Presets du moteur DRUM (meme ordre que kDrumPatchNames). Les valeurs sont
+// volontairement simples et peu nombreuses : l'objet natif gere deja
+// l'enveloppe de percussion et reste tres leger en RAM/CPU.
+const float kDrumFrequencyValues[az2::kDrumPatchCount] = {55.0f, 180.0f, 110.0f, 220.0f, 1400.0f, 880.0f};
+const int32_t kDrumLengthValues[az2::kDrumPatchCount] = {420, 260, 360, 180, 90, 140};
+const float kDrumPitchModValues[az2::kDrumPatchCount] = {0.95f, 0.35f, 0.55f, 0.25f, 0.05f, 0.8f};
+const float kDrumSecondMixValues[az2::kDrumPatchCount] = {0.0f, 0.8f, 0.15f, 0.9f, 0.25f, 0.65f};
+
 // Charge le patch courant (trackPatch[track]) dans le moteur actuellement
 // actif de la piste (trackEngine[track]). Partagee avec liveVoice (voir
 // setup()) qui n'a pas de "piste" mais profite des memes patchs nommes.
@@ -858,6 +867,14 @@ void applyTrackPatch(uint8_t track) {
       trackSamplerEngine[track].setSample(entry.data, entry.len, entry.rootNote, entry.sampleRate);
       break;
     }
+    case az2::kEngineDrum: {
+      const uint8_t p = patch % az2::kDrumPatchCount;
+      trackDrumEngine[track].frequency(kDrumFrequencyValues[p]);
+      trackDrumEngine[track].length(kDrumLengthValues[p]);
+      trackDrumEngine[track].pitchMod(kDrumPitchModValues[p]);
+      trackDrumEngine[track].secondMix(kDrumSecondMixValues[p]);
+      break;
+    }
   }
 }
 
@@ -925,6 +942,9 @@ void setTrackEngine(uint8_t track, uint8_t engine) {
       // encore un souci constate, les valeurs par defaut (voir
       // trackAnalogEnv[] au boot) laissent une marge confortable.
       patchTrackIn[track].connect(trackSamplerEngine[track], 0, trackAnalogEnv[track], 0);
+      break;
+    case az2::kEngineDrum:
+      patchTrackIn[track].connect(trackDrumEngine[track], 0, trackAnalogEnv[track], 0);
       break;
   }
 
@@ -1223,6 +1243,9 @@ void trackNoteOn(uint8_t track, uint8_t note, uint8_t velocity) {
     case az2::kEngineSampler:
       trackSamplerEngine[track].noteOn(note, velocity);
       break;
+    case az2::kEngineDrum:
+      trackDrumEngine[track].noteOn();
+      break;
   }
   // Enveloppe PARTAGEE par les 6 moteurs (2026-09-18, voir le
   // commentaire de trackAnalogEnv[] plus haut) -- declenchee ici pour
@@ -1250,6 +1273,9 @@ void trackNoteOff(uint8_t track, uint8_t note) {
         // L'enveloppe ne doit donc pas declencher son release ici.
         releaseEnvelope = false;
       }
+      break;
+    case az2::kEngineDrum:
+      // AudioSynthSimpleDrum est un one-shot : la decay interne gere la fin.
       break;
   }
   // Meme enveloppe partagee qu'a l'allumage ci-dessus -- coupe TOUS les
