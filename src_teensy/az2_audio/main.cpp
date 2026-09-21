@@ -92,7 +92,10 @@ AudioSynthEPiano trackEPianoEngine[kTrackCount] = {
     AudioSynthEPiano(kNotesPerTrack), AudioSynthEPiano(kNotesPerTrack),
     AudioSynthEPiano(kNotesPerTrack), AudioSynthEPiano(kNotesPerTrack),
 };
-AudioSynthBraids trackBraidsEngine[kTrackCount];  // pas de parametre de constructeur
+// Braids embarque de grosses tables d'etat par instance. Les placer en PSRAM
+// evite de consommer la RAM1 critique du Teensy (le DSP reste execute par le
+// CPU, seule la memoire d'etat est deplacee).
+EXTMEM AudioSynthBraids trackBraidsEngine[kTrackCount];  // pas de parametre de constructeur
 AudioSynthKarplusStrong trackKarplusEngine[kTrackCount];  // corde pincee, pas de parametre non plus
 // Moteur "Analogique" = oscillateur continu (comme Braids) + enveloppe
 // ADSR standard -- 2 objets chaines en permanence par piste (le "moteur"
@@ -395,6 +398,11 @@ uint8_t trackEngine[kTrackCount] = {
     az2::kEngineAnalog, az2::kEngineAnalog, az2::kEngineEPiano, az2::kEngineBraids,
 };
 uint8_t trackPatch[kTrackCount] = {0, 0, 0, 0, 0, 0, 0, 0};
+// Le sampler de piste est one-shot par defaut (Kick/Snare/GB Capture).
+// Quand le mode gate est active, un note-off coupe immediatement le sample
+// et l'enveloppe partagee. Le mode one-shot laisse le sample finir sans que
+// l'ADSR commune ne le tronque.
+bool trackSamplerGate[kTrackCount] = {};
 
 // Volume/mute/solo par piste (VOL:/MUTE:/SOLO:, priorites #1 et #4 de
 // la liste indispensable, AZ2_BENCHMARK_CONCURRENCE.md). ATTENTION
@@ -876,6 +884,10 @@ void setTrackEngine(uint8_t track, uint8_t engine) {
   }
 
   allTrackNotesOff();
+  // Une piste peut changer de moteur pendant qu'un one-shot est en cours.
+  // Fermer l'enveloppe avant de detacher l'ancien moteur evite de conserver
+  // un etat ADSR suspendu jusqu'au prochain note-on.
+  trackAnalogEnv[track].noteOff();
 
   trackEngine[track] = engine;
   trackPatch[track] = 0;
@@ -1159,6 +1171,14 @@ void announceHello() {
     az2::printEngineSelect(Serial1, t, trackEngine[t]);
     az2::printPatchSelect(Serial, t, trackPatch[t]);
     az2::printPatchSelect(Serial1, t, trackPatch[t]);
+    Serial.print("SMODE:");
+    Serial.print(t);
+    Serial.print(':');
+    Serial.println(trackSamplerGate[t] ? 1 : 0);
+    Serial1.print("SMODE:");
+    Serial1.print(t);
+    Serial1.print(':');
+    Serial1.println(trackSamplerGate[t] ? 1 : 0);
   }
 
   // Pattern/song (voir patterns[]/songPatterns[] plus haut) -- pas les
@@ -1212,6 +1232,7 @@ void trackNoteOn(uint8_t track, uint8_t note, uint8_t velocity) {
 }
 
 void trackNoteOff(uint8_t track, uint8_t note) {
+  bool releaseEnvelope = true;
   switch (trackEngine[track]) {
     case az2::kEngineDexed: trackDexedEngine[track].keyup(note); break;
     case az2::kEngineEPiano: trackEPianoEngine[track].noteOff(note); break;
@@ -1221,11 +1242,21 @@ void trackNoteOff(uint8_t track, uint8_t note) {
       break;
     case az2::kEngineKarplus: trackKarplusEngine[track].noteOff(1.0f); break;
     case az2::kEngineAnalog: break;
-    case az2::kEngineSampler: trackSamplerEngine[track].noteOff(); break;  // one-shot, ne fait rien (voir sa definition)
+    case az2::kEngineSampler:
+      if (trackSamplerGate[track]) {
+        trackSamplerEngine[track].stopNow();
+      } else {
+        // One-shot : le sample et son niveau naturel vont jusqu'a la fin.
+        // L'enveloppe ne doit donc pas declencher son release ici.
+        releaseEnvelope = false;
+      }
+      break;
   }
   // Meme enveloppe partagee qu'a l'allumage ci-dessus -- coupe TOUS les
   // moteurs, pas seulement ANALOG.
-  trackAnalogEnv[track].noteOff();
+  if (releaseEnvelope) {
+    trackAnalogEnv[track].noteOff();
+  }
 }
 
 void allTrackNotesOff() {
@@ -1763,6 +1794,29 @@ void handlePatchCommand(const String &line) {
 
   trackPatch[track] = patch;
   applyTrackPatch(track);
+  relayLine(line);
+}
+
+// SMODE:<piste 0-7>:<mode> -- comportement du sampleur chromatique de la
+// piste. 0 = one-shot (le sample va jusqu'a la fin), 1 = gate (note-off coupe
+// immediatement). Les sampleurs dedies aux 16 pads restent toujours
+// one-shot et ne sont pas concernes par cette commande.
+void handleSamplerModeCommand(const String &line) {
+  const int idx1 = line.indexOf(':');
+  const int idx2 = line.indexOf(':', idx1 + 1);
+  if (idx1 < 0 || idx2 < 0) {
+    sendCommandError("SMODE", "MALFORMED");
+    return;
+  }
+  const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+  const int mode = line.substring(idx2 + 1).toInt();
+  if (track >= kTrackCount || (mode != 0 && mode != 1)) {
+    sendCommandError("SMODE", "OUT_OF_RANGE");
+    return;
+  }
+  trackSamplerGate[track] = mode != 0;
+  // Si on repasse en gate pendant un sample en cours, on ne coupe pas le
+  // son de facon surprise : le prochain note-off appliquera le nouveau mode.
   relayLine(line);
 }
 
@@ -2935,6 +2989,11 @@ void handleCommand(const String &line) {
 
   if (line.startsWith("PATCH:")) {
     handlePatchCommand(line);
+    return;
+  }
+
+  if (line.startsWith("SMODE:")) {
+    handleSamplerModeCommand(line);
     return;
   }
 

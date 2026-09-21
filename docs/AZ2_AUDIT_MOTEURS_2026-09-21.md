@@ -109,5 +109,8 @@ Le rack actuel est fonctionnel et correctement raccordé pour six familles,
 huit pistes, un bus pads et les effets maître. Le gain immédiat ne vient pas
 d'un septième moteur dans `main.cpp` : il vient de la réduction des instances
 allouées, de la séparation sampler/ADSR et de la validation audio des moteurs
-déjà présents. Le premier ajout à préparer est donc le laboratoire FM2, sans
-modifier le firmware stable avant ses mesures.
+déjà présents. Le laboratoire FM2 est maintenant présent dans
+`src_teensy/engine_lab_fm2/` avec une cible PlatformIO séparée
+`engine_lab_fm2`. Il reste monophonique et isolé tant que les mesures CPU/RAM
+et l'écoute sur le vrai DAC ne sont pas faites ; le firmware stable n'en
+dépend pas.

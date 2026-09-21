@@ -572,6 +572,12 @@ constexpr uint8_t kSamplerPatchCount = 3;
 constexpr uint8_t kSamplerGbCapturePatch = 2;
 constexpr const char *kSamplerPatchNames[kSamplerPatchCount] = {"Kick", "Snare", "GB Capture"};
 
+// Mode de declenchement du sampleur chromatique d'une piste : one-shot
+// laisse le sample finir, gate coupe sur note-off. Les 16 pads dedies restent
+// toujours one-shot.
+constexpr uint8_t kSamplerModeOneShot = 0;
+constexpr uint8_t kSamplerModeGate = 1;
+
 // uint16_t (pas uint8_t) depuis le passage de DEXED a 256 patches
 // (2026-09-18, voir kDexedPatchCount plus haut) -- un uint8_t aurait
 // tronque 256 en 0, transformant tout "% count" en division par zero

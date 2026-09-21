@@ -1794,6 +1794,7 @@ uint8_t patchExtraCount(uint8_t track) {
     case az2::kEngineDexed: return 17;   // parametres globaux DX7 (hors algo/feedback deja lignes 2-3, hors nom)
     case az2::kEngineEPiano: return 12;  // les 12 parametres continus mdaEPiano
     case az2::kEngineBraids: return 2;   // color, timbre (shape reste sur la page MOTEURS)
+    case az2::kEngineSampler: return 1;  // MODE: one-shot ou gate
     default: return 0;
   }
 }
@@ -1923,6 +1924,7 @@ const char *patchExtraLabel(uint8_t track, uint8_t extraIdx) {
     case az2::kEngineDexed: return kDexedExtraLabel[extraIdx];
     case az2::kEngineEPiano: return kEPianoExtraLabel[extraIdx];
     case az2::kEngineBraids: return kBraidsExtraLabel[extraIdx];
+    case az2::kEngineSampler: return "MODE";
     default: return "?";
   }
 }
@@ -1935,6 +1937,9 @@ uint8_t patchExtraMax(uint8_t track, uint8_t extraIdx) {
   if (trackEngine[track] == az2::kEngineDexed) {
     return kDexedExtraMax[extraIdx];
   }
+  if (trackEngine[track] == az2::kEngineSampler) {
+    return 1;
+  }
   return 127;
 }
 
@@ -1943,6 +1948,7 @@ uint8_t patchExtraMax(uint8_t track, uint8_t extraIdx) {
 // EPIANO (12) et BRAIDS (2), le reste de la ligne n'etant simplement
 // jamais lu/affiche pour ces moteurs (voir patchExtraCount()).
 uint8_t patchExtraVal[kSeqTrackCount][17] = {};
+uint8_t trackSamplerGate[kSeqTrackCount] = {};
 
 void sendPatchExtra(uint8_t track, uint8_t extraIdx) {
   char msg[24];
@@ -1955,6 +1961,9 @@ void sendPatchExtra(uint8_t track, uint8_t extraIdx) {
       break;
     case az2::kEngineBraids:
       snprintf(msg, sizeof(msg), "BXP:%d:%d:%d", track, extraIdx, patchExtraVal[track][extraIdx]);
+      break;
+    case az2::kEngineSampler:
+      snprintf(msg, sizeof(msg), "SMODE:%d:%d", track, patchExtraVal[track][extraIdx] ? 1 : 0);
       break;
     default:
       return;
@@ -5584,6 +5593,20 @@ void handleTeensyLine(const String &line) {
           drawEngRow(track);
         } else if (currentScreen == Screen::Sequencer && track == selectedSeqTrack && !screensaverActive) {
           drawTrkSidePanel();
+        }
+      }
+    }
+  } else if (line.startsWith("SMODE:")) {
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    if (i1 >= 0 && i2 >= 0) {
+      const uint8_t track = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
+      const uint8_t mode = static_cast<uint8_t>(line.substring(i2 + 1).toInt()) > 0 ? 1 : 0;
+      if (track < kSeqTrackCount) {
+        trackSamplerGate[track] = mode;
+        patchExtraVal[track][0] = mode;
+        if (currentScreen == Screen::Patch && track == patchTrack && !screensaverActive) {
+          drawPatchExtraRow(6);
         }
       }
     }
