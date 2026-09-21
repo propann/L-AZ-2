@@ -15,6 +15,7 @@ Le protocole partagé expose six moteurs :
 | 3 | KARPLUS | 1 | intégré, aucun paramètre de patch dans `AudioSynthKarplusStrong` |
 | 4 | ANALOG | 11 formes | moteur de référence confirmé propre |
 | 5 | SAMPLER | Kick, Snare, GB Capture | intégré, banque embarquée et capture GB |
+| 6 | DRUM | Kick, Snare, Tom, Hi Tom, Click, Zap | ajouté avec `AudioSynthSimpleDrum`, léger et sans sample externe |
 
 Les sélections sont synchronisées par `AZ2_Protocol.h`, puis envoyées par
 `ENGINE:<piste>:<moteur>` et `PATCH:<piste>:<patch>`. L'écran utilise les mêmes
@@ -105,7 +106,7 @@ du CPU et de la latence.
 
 ## Conclusion
 
-Le rack actuel est fonctionnel et correctement raccordé pour six familles,
+Le rack actuel est fonctionnel et correctement raccordé pour sept familles,
 huit pistes, un bus pads et les effets maître. Le gain immédiat ne vient pas
 d'un septième moteur dans `main.cpp` : il vient de la réduction des instances
 allouées, de la séparation sampler/ADSR et de la validation audio des moteurs
