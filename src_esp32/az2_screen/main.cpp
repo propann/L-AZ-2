@@ -693,7 +693,10 @@ bool padEditsStep = false;
 bool padMenuOpen = false;
 uint8_t padMenuIndex = 0;
 constexpr uint8_t kPadMenuCount = 5;
-const char *const kPadMenuItems[kPadMenuCount] = {"JEU LIBRE", "ARP", "GAMME", "ACCORD", "OCTAVE"};
+const char *const kPadMenuItems[kPadMenuCount] = {"JEU LIBRE", "EDITER LE PAS", "SAMPLER", "MOTEURS", "SEQUENCEUR"};
+uint8_t padMenuLastEncoderValue = 0;
+uint32_t encPressStartedMs[3] = {};
+constexpr uint32_t kEncoderLongPressMs = 700;
 // -1 = generique (voix live Dexed fixe, comportement d'origine) ; sinon
 // = piste dont les pads jouent le VRAI moteur/patch (2026-09-19, "on
 // ajoute un bouton dans la fenetre du tracker pour ... joue
@@ -746,7 +749,31 @@ void drawPadMenu() {
   }
   gfx->setTextColor(kDim);
   gfx->setCursor(x + 18, y + h - 24);
-  gfx->print("ENC 1: choisir   APPUI: valider/fermer");
+  gfx->print("TOURNER: choisir  CLIC: ouvrir  LONG: sortir");
+}
+
+extern int8_t selectedEngineTrack;
+void goTo(Screen s);
+void activatePadMenuItem() {
+  padMenuOpen = false;
+  switch (padMenuIndex) {
+    case 0:
+      padEditsStep = false;
+      padTargetTrack = -1;
+      drawAudioPage();
+      break;
+    case 1:
+      padEditsStep = true;
+      if (padTargetTrack < 0) padTargetTrack = selectedSeqTrack;
+      drawAudioPage();
+      break;
+    case 2: goTo(Screen::Sampler); break;
+    case 3:
+      selectedEngineTrack = selectedSeqTrack;
+      goTo(Screen::Engines);
+      break;
+    default: goTo(Screen::Sequencer); break;
+  }
 }
 
 constexpr uint8_t kSamplerRows = 6;
@@ -887,7 +914,10 @@ int8_t hitTestAudioPad(int16_t x, int16_t y) {
 // 8 pistes / 16 pas : doit rester aligne avec kTrackCount/kStepCount
 // cote Teensy (src_teensy/az2_audio/main.cpp).
 constexpr uint8_t kSeqTrackCount = 8;
-constexpr uint8_t kSeqStepCount = 16;
+constexpr uint8_t kSeqStepsPerMeasure = 16;
+constexpr uint8_t kSeqMaxMeasures = 8;
+constexpr uint8_t kSeqStepCount = kSeqStepsPerMeasure * kSeqMaxMeasures;
+constexpr uint8_t kSeqVisibleSteps = kSeqStepsPerMeasure;
 // Bord droit commun a la vue tracker (colonnes NOTE/INST/FX/VAL/PROB/COND, voir
 // plus bas) -- meme marge que le reste de l'appli (kMargin), plus de
 // grille a aligner dessus depuis le retrait de l'ancienne vue ON/OFF
@@ -905,6 +935,8 @@ constexpr int16_t kSeqRightEdge = kScreenSize - kMargin;
 // EDITE des deux cotes, voir PATTERN: plus bas).
 constexpr uint8_t kPatternCount = 8;
 uint8_t currentPattern = 0;
+uint8_t patternMeasures[kPatternCount] = {1, 1, 1, 1, 1, 1, 1, 1};
+uint8_t seqVisibleMeasure = 0;
 
 bool seqStepOn[kPatternCount][kSeqTrackCount][kSeqStepCount] = {};
 // Note par pas (voir NOTE: dans AZ2_Protocol.h -- porte de MicroDexed-touch,
@@ -969,6 +1001,8 @@ int8_t seqDetailCol = 0;
 // ; vrai = boutons MOTEUR/PATCH/EFFET/CLAVIER/METRO/SAUVER.
 bool seqSideFocus = false;
 uint8_t seqSideIndex = 0;
+// 0 = lignes du tracker, 1 = selecteur de piste, 2 = selecteur de pattern.
+uint8_t seqVerticalFocus = 0;
 
 // ---------------------------------------------------------------------
 // Vue tracker (colonnes NOTE/INST/FX/VAL/PROB/COND d'une piste, voir
@@ -1061,8 +1095,11 @@ void drawDetailHeader() {
 }
 
 void drawDetailRow(uint8_t step) {
+  const uint8_t firstVisible = static_cast<uint8_t>(seqVisibleMeasure * kSeqStepsPerMeasure);
+  if (step < firstVisible || step >= firstVisible + kSeqVisibleSteps) return;
   const uint8_t track = static_cast<uint8_t>(selectedSeqTrack);
-  const int16_t y = static_cast<int16_t>(kDetailTop + step * (kDetailRowH + kDetailRowGap));
+  const uint8_t visibleRow = static_cast<uint8_t>(step - firstVisible);
+  const int16_t y = static_cast<int16_t>(kDetailTop + visibleRow * (kDetailRowH + kDetailRowGap));
   const bool on = seqStepOn[currentPattern][track][step];
   const bool rowSelected = (step == selectedSeqStep);
   const bool playhead = (step == seqCurrentStep);
@@ -1085,7 +1122,7 @@ void drawDetailRow(uint8_t step) {
 
   // PAS
   gfx->setTextColor(kDim);
-  snprintf(buf, sizeof(buf), "%02d", step);
+  snprintf(buf, sizeof(buf), "%03d", step + 1);
   gfx->setCursor(static_cast<int16_t>(detailColX(0) + 2), static_cast<int16_t>(y + 6));
   gfx->print(buf);
 
@@ -1185,7 +1222,9 @@ void drawDetailRow(uint8_t step) {
 void drawTrkTrackRow() {
   gfx->fillRect(kMargin, kTrkTrackRowY, kScreenSize - 2 * kMargin, kTrkTrackRowH, RGB565_BLACK);
   gfx->setTextSize(2);
-  gfx->setTextColor(kPalette[selectedSeqTrack % kPaletteCount]);
+  const uint16_t accent = kPalette[selectedSeqTrack % kPaletteCount];
+  if (seqVerticalFocus == 1) gfx->drawRect(kMargin, kTrkTrackRowY, kScreenSize - 2 * kMargin, kTrkTrackRowH, accent);
+  gfx->setTextColor(accent);
   char buf[16];
   snprintf(buf, sizeof(buf), "< PISTE %d >", selectedSeqTrack + 1);  // +1 : affichage "plus musicien"
   gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - 55), kTrkTrackRowY);
@@ -1204,20 +1243,22 @@ bool hitTestTrkTrackNext(int16_t x, int16_t y) {
 // permanence -- voir kDetailTop/kDetailRowH). PLAY/STOP a gauche, BPM
 // au milieu (moitie gauche = -5, moitie droite = +5), DIVISION a
 // droite (toucher = cran suivant).
-constexpr int16_t kTrkControlsY = kDetailTop + kSeqStepCount * (kDetailRowH + kDetailRowGap) + 6;
+constexpr int16_t kTrkControlsY = kDetailTop + kSeqVisibleSteps * (kDetailRowH + kDetailRowGap) + 6;
 // Retour a la taille/disposition d'origine (2026-09-19, retour
 // utilisateur explicite : "la ligne du bas on la laisse comme elle
 // est") -- METRONOME (et les autres boutons) vont dans le panneau
 // LATERAL (voir drawTrkSidePanel()), pas ici.
 constexpr int16_t kTrkControlsH = 34;
 constexpr int16_t kTrkControlsW = kScreenSize - 2 * kMargin;
-constexpr int16_t kTrkPlayW = kTrkControlsW / 4;
+constexpr int16_t kTrkPlayW = kTrkControlsW / 5;
 constexpr int16_t kTrkRecX = kMargin + kTrkPlayW;
-constexpr int16_t kTrkRecW = kTrkControlsW / 4;
+constexpr int16_t kTrkRecW = kTrkControlsW / 5;
 constexpr int16_t kTrkBpmX = kTrkRecX + kTrkRecW;
-constexpr int16_t kTrkBpmW = kTrkControlsW / 4;
+constexpr int16_t kTrkBpmW = kTrkControlsW / 5;
 constexpr int16_t kTrkDivX = kTrkBpmX + kTrkBpmW;
-constexpr int16_t kTrkDivW = kTrkControlsW - kTrkPlayW - kTrkRecW - kTrkBpmW;
+constexpr int16_t kTrkDivW = kTrkControlsW / 5;
+constexpr int16_t kTrkLenX = kTrkDivX + kTrkDivW;
+constexpr int16_t kTrkLenW = kTrkControlsW - kTrkPlayW - kTrkRecW - kTrkBpmW - kTrkDivW;
 
 void drawTrkControls() {
   gfx->fillRect(kMargin, kTrkControlsY, kTrkControlsW, kTrkControlsH, RGB565_BLACK);
@@ -1225,6 +1266,7 @@ void drawTrkControls() {
   gfx->drawRect(kTrkRecX, kTrkControlsY, kTrkRecW, kTrkControlsH, seqRecording ? RGB565_RED : kFaint);
   gfx->drawRect(kTrkBpmX, kTrkControlsY, kTrkBpmW, kTrkControlsH, kFaint);
   gfx->drawRect(kTrkDivX, kTrkControlsY, kTrkDivW, kTrkControlsH, kFaint);
+  gfx->drawRect(kTrkLenX, kTrkControlsY, kTrkLenW, kTrkControlsH, kFaint);
 
   gfx->setTextSize(2);
   gfx->setTextColor(seqPlaying ? kPalette[1] : RGB565_WHITE);
@@ -1254,6 +1296,15 @@ void drawTrkControls() {
   gfx->setTextColor(RGB565_WHITE);
   gfx->setCursor(static_cast<int16_t>(kTrkDivX + 4), static_cast<int16_t>(kTrkControlsY + 14));
   gfx->print(az2::divisionLabel(seqStepsPerBeat));
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(static_cast<int16_t>(kTrkLenX + 4), static_cast<int16_t>(kTrkControlsY + 2));
+  gfx->print("MESURES");
+  gfx->setTextSize(2);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(static_cast<int16_t>(kTrkLenX + 4), static_cast<int16_t>(kTrkControlsY + 14));
+  gfx->printf("%u", patternMeasures[currentPattern]);
 }
 
 bool hitTestTrkPlay(int16_t x, int16_t y) {
@@ -1277,6 +1328,9 @@ int8_t hitTestTrkBpm(int16_t x, int16_t y) {
 }
 bool hitTestTrkDiv(int16_t x, int16_t y) {
   return inBox(x, y, kTrkDivX, kTrkControlsY, kTrkDivW, kTrkControlsH);
+}
+bool hitTestTrkLength(int16_t x, int16_t y) {
+  return inBox(x, y, kTrkLenX, kTrkControlsY, kTrkLenW, kTrkControlsH);
 }
 
 // Panneau "patch actif" -- demande 2026-09-16 ("on a de la place, on
@@ -1306,7 +1360,7 @@ constexpr int16_t kTrkSideX = kDetailLeft + kDetailStepW + kDetailNoteW + kDetai
                                kDetailProbW + kDetailCondW + kTrkSideGap;
 constexpr int16_t kTrkSideW = kSeqRightEdge - kTrkSideX;
 
-constexpr int16_t kTrkSideH = kSeqStepCount * (kDetailRowH + kDetailRowGap);
+constexpr int16_t kTrkSideH = kSeqVisibleSteps * (kDetailRowH + kDetailRowGap);
 
 // Panneau lateral repense le 2026-09-19 (retour utilisateur sur
 // materiel reel : "le cadre du patch est toujours pas bon" + "des
@@ -1368,13 +1422,16 @@ void drawTrkSidePanel() {
 }
 
 void drawSeqDetailPage() {
-  char title[16];
-  snprintf(title, sizeof(title), "PATTERN %d", currentPattern);
+  char title[32];
+  snprintf(title, sizeof(title), "PATTERN %u  M%u/%u", currentPattern + 1, seqVisibleMeasure + 1,
+           patternMeasures[currentPattern]);
   drawSubHeader(title, kPalette[0]);
+  if (seqVerticalFocus == 2) gfx->drawRect(88, 2, 238, 43, kPalette[0]);
   drawTrkTrackRow();
   drawDetailHeader();
-  for (uint8_t s = 0; s < kSeqStepCount; ++s) {
-    drawDetailRow(s);
+  const uint8_t first = static_cast<uint8_t>(seqVisibleMeasure * kSeqStepsPerMeasure);
+  for (uint8_t row = 0; row < kSeqVisibleSteps; ++row) {
+    drawDetailRow(static_cast<uint8_t>(first + row));
   }
   drawTrkSidePanel();
   drawTrkControls();
@@ -1391,6 +1448,8 @@ void drawSequencerPage();  // definie plus bas -- seul appelant de switchToPatte
 
 void switchToPattern(uint8_t p) {
   currentPattern = static_cast<uint8_t>(p % kPatternCount);
+  seqVisibleMeasure = 0;
+  selectedSeqStep = 0;
   char msg[12];
   snprintf(msg, sizeof(msg), "PATTERN:%d", currentPattern);
   sendToTeensy(msg);
@@ -1405,10 +1464,10 @@ int8_t hitTestDetailRow(int16_t x, int16_t y) {
   if (x < kDetailLeft || x > kDetailGridRight) {
     return -1;
   }
-  for (uint8_t s = 0; s < kSeqStepCount; ++s) {
-    const int16_t rowY = static_cast<int16_t>(kDetailTop + s * (kDetailRowH + kDetailRowGap));
+  for (uint8_t row = 0; row < kSeqVisibleSteps; ++row) {
+    const int16_t rowY = static_cast<int16_t>(kDetailTop + row * (kDetailRowH + kDetailRowGap));
     if (y >= rowY && y < rowY + kDetailRowH) {
-      return static_cast<int8_t>(s);
+      return static_cast<int8_t>(seqVisibleMeasure * kSeqStepsPerMeasure + row);
     }
   }
   return -1;
@@ -3882,6 +3941,9 @@ void saveProject(uint8_t slot) {
     f.printf("SWING:%d\n", swingValue);
     f.printf("SONGMODE:%d\n", songMode ? 1 : 0);
     f.printf("SONGLEN:%d\n", songLen);
+    for (uint8_t p = 0; p < kPatternCount; ++p) {
+      f.printf("PLEN:%d:%d\n", p, patternMeasures[p]);
+    }
     for (uint8_t i = 0; i < songLen; ++i) {
       f.printf("SONGSET:%d:%d\n", i, songPatterns[i]);
     }
@@ -3907,7 +3969,8 @@ void saveProject(uint8_t slot) {
     }
     for (uint8_t p = 0; p < kPatternCount; ++p) {
       for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
-        for (uint8_t s = 0; s < kSeqStepCount; ++s) {
+        const uint8_t activeSteps = static_cast<uint8_t>(patternMeasures[p] * kSeqStepsPerMeasure);
+        for (uint8_t s = 0; s < activeSteps; ++s) {
           // 10 champs depuis l'ajout de PROB/COND (2026-09-17, 9e/10e
           // champs) -- voir loadProject() pour la lecture
           // retro-compatible des fichiers a 8 champs (avant cet ajout).
@@ -3969,6 +4032,8 @@ bool projectStructureValid(File &f) {
   bool seenPadSample[az2::kPadCount] = {};
   bool seenTrack[kSeqTrackCount] = {};
   bool seenStep[kPatternCount][kSeqTrackCount][kSeqStepCount] = {};
+  bool seenPatternLength[kPatternCount] = {};
+  uint8_t filePatternMeasures[kPatternCount] = {1, 1, 1, 1, 1, 1, 1, 1};
   bool valid = true;
   while (f.available()) {
     const String line = f.readStringUntil('\n');
@@ -3993,6 +4058,18 @@ bool projectStructureValid(File &f) {
     } else if (line.startsWith("SONGLEN:")) {
       hasSongLen = projectNumber(afterColon(line), 0, kSongLength, v);
       valid &= hasSongLen;
+    } else if (line.startsWith("PLEN:")) {
+      const String rest = afterColon(line);
+      const int colon = rest.indexOf(':');
+      int measures = 0;
+      const bool entryValid = colon > 0 && projectNumber(rest.substring(0, colon), 0, kPatternCount - 1, v) &&
+                              projectNumber(rest.substring(colon + 1), 1, kSeqMaxMeasures, measures) &&
+                              !seenPatternLength[v];
+      valid &= entryValid;
+      if (entryValid) {
+        seenPatternLength[v] = true;
+        filePatternMeasures[v] = static_cast<uint8_t>(measures);
+      }
     } else if (line.startsWith("SONGSET:")) {
       const String rest = afterColon(line);
       const int colon = rest.indexOf(':');
@@ -4040,8 +4117,15 @@ bool projectStructureValid(File &f) {
     }
   }
   f.seek(0);
+  uint16_t expectedSteps = 0;
+  for (uint8_t p = 0; p < kPatternCount; ++p) {
+    expectedSteps = static_cast<uint16_t>(expectedSteps + filePatternMeasures[p] * kSeqStepsPerMeasure * kSeqTrackCount);
+    const uint8_t activeSteps = static_cast<uint8_t>(filePatternMeasures[p] * kSeqStepsPerMeasure);
+    for (uint8_t t = 0; t < kSeqTrackCount; ++t)
+      for (uint8_t s = 0; s < activeSteps; ++s) valid &= seenStep[p][t][s];
+  }
   return valid && hasBpm && hasSongLen && tracks == kSeqTrackCount &&
-         steps == static_cast<uint16_t>(kPatternCount) * kSeqTrackCount * kSeqStepCount;
+         steps == expectedSteps;
 }
 
 void loadProject(uint8_t slot) {
@@ -4108,6 +4192,18 @@ void loadProject(uint8_t slot) {
       const int v = afterColon(line).toInt();
       snprintf(msg, sizeof(msg), "SONGLEN:%d", v);
       sendToTeensy(msg);
+    } else if (line.startsWith("PLEN:")) {
+      const String rest = afterColon(line);
+      const int c = rest.indexOf(':');
+      if (c >= 0) {
+        const uint8_t p = static_cast<uint8_t>(rest.substring(0, c).toInt());
+        const uint8_t measures = static_cast<uint8_t>(rest.substring(c + 1).toInt());
+        if (p < kPatternCount && measures >= 1 && measures <= kSeqMaxMeasures) {
+          patternMeasures[p] = measures;
+          snprintf(msg, sizeof(msg), "PLEN:%u:%u", p, measures);
+          sendToTeensy(msg);
+        }
+      }
     } else if (line.startsWith("SONGSET:")) {
       const String rest = afterColon(line);
       const int c = rest.indexOf(':');
@@ -4760,6 +4856,25 @@ void handleTeensyLine(const String &line) {
               drawTrkSidePanel();
               drawDetailRow(s);
             }
+          } else if (seqVerticalFocus == 2) {
+            if (index == 2 || index == 3) {
+              switchToPattern(static_cast<uint8_t>(currentPattern + (index == 3 ? 1 : kPatternCount - 1)));
+            } else if (index == 1) {
+              seqVerticalFocus = 1;
+              drawSeqDetailPage();
+            }
+          } else if (seqVerticalFocus == 1) {
+            if (index == 2 || index == 3) {
+              selectedSeqTrack = static_cast<int8_t>(
+                  (selectedSeqTrack + (index == 3 ? 1 : kSeqTrackCount - 1)) % kSeqTrackCount);
+              drawSeqDetailPage();
+            } else if (index == 0) {
+              seqVerticalFocus = 2;
+              drawSeqDetailPage();
+            } else if (index == 1) {
+              seqVerticalFocus = 0;
+              drawSeqDetailPage();
+            }
           } else {
             if (index == 2 || index == 3) {
               if ((index == 3 && seqDetailCol == 5) || (index == 2 && seqDetailCol == 0)) {
@@ -4774,13 +4889,26 @@ void handleTeensyLine(const String &line) {
                 }
               }
             } else if ((index == 0 || index == 1) && !btnState[0]) {
+              const uint8_t firstVisible = static_cast<uint8_t>(seqVisibleMeasure * kSeqStepsPerMeasure);
+              if (index == 0 && selectedSeqStep == firstVisible) {
+                seqVerticalFocus = 1;
+                drawSeqDetailPage();
+                return;
+              }
               const int8_t prevStep = selectedSeqStep;
               const int8_t delta = (index == 0) ? -1 : 1;
+              const int maxStep = patternMeasures[currentPattern] * kSeqStepsPerMeasure - 1;
               selectedSeqStep = static_cast<int8_t>(
-                  constrain(static_cast<int>(selectedSeqStep) + delta, 0, static_cast<int>(kSeqStepCount) - 1));
+                  constrain(static_cast<int>(selectedSeqStep) + delta, 0, maxStep));
               if (selectedSeqStep != prevStep) {
-                drawDetailRow(static_cast<uint8_t>(prevStep));
-                drawDetailRow(static_cast<uint8_t>(selectedSeqStep));
+                const uint8_t newMeasure = static_cast<uint8_t>(selectedSeqStep / kSeqStepsPerMeasure);
+                if (newMeasure != seqVisibleMeasure) {
+                  seqVisibleMeasure = newMeasure;
+                  drawSeqDetailPage();
+                } else {
+                  drawDetailRow(static_cast<uint8_t>(prevStep));
+                  drawDetailRow(static_cast<uint8_t>(selectedSeqStep));
+                }
               }
             } else if (index == 0 || index == 1) {
               const int dir = (index == 0) ? 1 : -1;
@@ -5306,9 +5434,13 @@ void handleTeensyLine(const String &line) {
       if (index == 1 || index == 2) {
         const uint8_t slot = static_cast<uint8_t>(index - 1);
         if (currentScreen == Screen::Audio && slot == 0 && padMenuOpen) {
-          padMenuIndex = static_cast<uint8_t>((static_cast<uint16_t>(value) * kPadMenuCount) / 128);
-          if (padMenuIndex >= kPadMenuCount) padMenuIndex = kPadMenuCount - 1;
-          drawPadMenu();
+          const int8_t delta = static_cast<int8_t>(value - padMenuLastEncoderValue);
+          if (delta != 0) {
+            padMenuIndex = static_cast<uint8_t>(
+                (padMenuIndex + (delta > 0 ? 1 : kPadMenuCount - 1)) % kPadMenuCount);
+            padMenuLastEncoderValue = value;
+            drawPadMenu();
+          }
         } else if (currentScreen == Screen::Mixer) {
           if (slot == 0) {
             const int track = (static_cast<int>(value) * kSeqTrackCount) / 128;
@@ -5413,6 +5545,7 @@ void handleTeensyLine(const String &line) {
           screensaverExit();
         }
         encSwState[index] = pressed;
+        if (pressed) encPressStartedMs[index] = millis();
         if (currentScreen == Screen::Controls && !screensaverActive) {
           drawPotBar(index);
         }
@@ -5433,12 +5566,20 @@ void handleTeensyLine(const String &line) {
             goTo(navPrevious);
           }
         }
-        if (currentScreen == Screen::Audio && index == 1 && pressed) {
-          if (padMenuOpen) {
-            padMenuOpen = false;
-            drawAudioPage();
+        if (currentScreen == Screen::Audio && index == 1 && !pressed) {
+          const bool longPress = (millis() - encPressStartedMs[index]) >= kEncoderLongPressMs;
+          if (longPress) {
+            if (padMenuOpen) {
+              padMenuOpen = false;
+              drawAudioPage();
+            } else {
+              goTo(Screen::Sequencer);
+            }
+          } else if (padMenuOpen) {
+            activatePadMenuItem();
           } else {
             padMenuOpen = true;
+            padMenuLastEncoderValue = potValue[index];
             drawPadMenu();
           }
         }
@@ -5588,6 +5729,22 @@ void handleTeensyLine(const String &line) {
       seqStepsPerBeat = value;
       if (currentScreen == Screen::Sequencer && !screensaverActive) {
         drawTrkControls();
+      }
+    }
+  } else if (line.startsWith("PLEN:")) {
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    if (i1 >= 0 && i2 >= 0) {
+      const uint8_t pattern = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
+      const uint8_t measures = static_cast<uint8_t>(line.substring(i2 + 1).toInt());
+      if (pattern < kPatternCount && measures >= 1 && measures <= kSeqMaxMeasures) {
+        patternMeasures[pattern] = measures;
+        if (pattern == currentPattern) {
+          if (seqVisibleMeasure >= measures) seqVisibleMeasure = static_cast<uint8_t>(measures - 1);
+          const uint8_t maxStep = static_cast<uint8_t>(measures * kSeqStepsPerMeasure - 1);
+          if (selectedSeqStep > maxStep) selectedSeqStep = maxStep;
+          if (currentScreen == Screen::Sequencer && !screensaverActive) drawSeqDetailPage();
+        }
       }
     }
   } else if (line.startsWith("SWING:")) {
@@ -6464,7 +6621,9 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
         sendToTeensy(msg);
       }
       if (seqRecording && padEditsStep && padTargetTrack >= 0) {
-        selectedSeqStep = static_cast<int8_t>((selectedSeqStep + 1) % kSeqStepCount);
+        const uint8_t activeSteps = static_cast<uint8_t>(patternMeasures[currentPattern] * kSeqStepsPerMeasure);
+        selectedSeqStep = static_cast<int8_t>((selectedSeqStep + 1) % activeSteps);
+        seqVisibleMeasure = static_cast<uint8_t>(selectedSeqStep / kSeqStepsPerMeasure);
       }
     }
   } else if (currentScreen == Screen::Sampler) {
@@ -6519,6 +6678,7 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       selectedSeqTrack = static_cast<int8_t>(
           (selectedSeqTrack + (hitTestTrkTrackNext(x, y) ? 1 : kSeqTrackCount - 1)) % kSeqTrackCount);
       selectedSeqStep = 0;
+      seqVisibleMeasure = 0;
       drawSeqDetailPage();
     } else if (hitTestTrkSideBtn(0, x, y)) {
       // MOTEUR (2026-09-19) -- ouvre la page MOTEURS directement sur
@@ -6597,6 +6757,11 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       }
       char msg[16];
       snprintf(msg, sizeof(msg), "DIV:%d", az2::kDivisionOptions[nextIdx].stepsPerBeat);
+      sendToTeensy(msg);
+    } else if (hitTestTrkLength(x, y)) {
+      const uint8_t measures = static_cast<uint8_t>((patternMeasures[currentPattern] % kSeqMaxMeasures) + 1);
+      char msg[20];
+      snprintf(msg, sizeof(msg), "PLEN:%u:%u", currentPattern, measures);
       sendToTeensy(msg);
     } else {
       const int8_t hitStep = hitTestDetailRow(x, y);

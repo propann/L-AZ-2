@@ -1049,6 +1049,7 @@ uint8_t currentPattern = 0;
 // currentPattern en mode boucle simple ; suit songPatterns[songPos] en
 // mode song.
 uint8_t playingPattern = 0;
+uint8_t patternMeasures[kPatternCount] = {1, 1, 1, 1, 1, 1, 1, 1};
 
 constexpr uint8_t kSongLength = 16;
 uint8_t songPatterns[kSongLength] = {};
@@ -1207,6 +1208,10 @@ void announceHello() {
   char msg[16];
   snprintf(msg, sizeof(msg), "PATTERN:%d", currentPattern);
   relayLine(msg);
+  for (uint8_t p = 0; p < kPatternCount; ++p) {
+    snprintf(msg, sizeof(msg), "PLEN:%d:%d", p, patternMeasures[p]);
+    relayLine(msg);
+  }
   snprintf(msg, sizeof(msg), "SONGMODE:%d", songMode ? 1 : 0);
   relayLine(msg);
   snprintf(msg, sizeof(msg), "SONGLEN:%d", songLen);
@@ -1357,7 +1362,8 @@ void advanceTick() {
   if (currentTick == 0) {
     allTrackNotesOff();
 
-    currentStep = static_cast<uint8_t>((currentStep + 1) % kStepCount);
+    const uint8_t activeSteps = static_cast<uint8_t>(patternMeasures[playingPattern] * az2::kStepsPerMeasure);
+    currentStep = (currentStep + 1 >= activeSteps) ? 0 : static_cast<uint8_t>(currentStep + 1);
     // Swing : voir le commentaire de swingAmount plus haut -- pas pairs
     // raccourcis, impairs allonges (classique "shuffle" de boite a
     // rythme, delai des "contretemps"). swingAmount est deja borne a
@@ -1450,11 +1456,32 @@ void updateSequencer() {
 
 void startSequencer() {
   playing = true;
-  currentStep = kStepCount - 1;  // le prochain tick 0 (voir advanceTick()) ira au pas 0
+  const uint8_t firstPattern = (songMode && songLen > 0) ? songPatterns[0] : currentPattern;
+  currentStep = static_cast<uint8_t>(patternMeasures[firstPattern] * az2::kStepsPerMeasure - 1);
   currentTick = 0;
   songPos = 0;
   playingPattern = (songMode && songLen > 0) ? songPatterns[0] : currentPattern;
   sequencerTimer.begin(advanceTick, tickIntervalUs());
+}
+
+// PLEN:<pattern 0-7>:<mesures 1-8> -- longueur propre a chaque pattern.
+// Les donnees au-dela de la longueur restent en memoire afin qu'un
+// raccourcissement puis un agrandissement ne detruise pas la composition.
+void handlePatternLengthCommand(const String &line) {
+  const int i1 = line.indexOf(':');
+  const int i2 = line.indexOf(':', i1 + 1);
+  if (i1 < 0 || i2 < 0) {
+    sendCommandError("PLEN", "MALFORMED");
+    return;
+  }
+  const int pattern = line.substring(i1 + 1, i2).toInt();
+  const int measures = line.substring(i2 + 1).toInt();
+  if (pattern < 0 || pattern >= kPatternCount || measures < 1 || measures > az2::kMaxPatternMeasures) {
+    sendCommandError("PLEN", "OUT_OF_RANGE");
+    return;
+  }
+  patternMeasures[pattern] = static_cast<uint8_t>(measures);
+  relayLine(line);
 }
 
 void stopSequencer() {
@@ -2929,6 +2956,11 @@ void handleCommand(const String &line) {
 
   if (line.startsWith("COND:")) {
     handleCondCommand(line);
+    return;
+  }
+
+  if (line.startsWith("PLEN:")) {
+    handlePatternLengthCommand(line);
     return;
   }
 

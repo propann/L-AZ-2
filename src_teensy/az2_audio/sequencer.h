@@ -2,7 +2,9 @@
 #include <cstdint>
 
 namespace az2 {
-    constexpr uint8_t kStepCount = 16;
+    constexpr uint8_t kStepsPerMeasure = 16;
+    constexpr uint8_t kMaxPatternMeasures = 8;
+    constexpr uint8_t kStepCount = kStepsPerMeasure * kMaxPatternMeasures;
     constexpr uint8_t kTrackCount = 8;
     constexpr uint8_t kPatternCount = 8;
 
