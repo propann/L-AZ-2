@@ -1626,10 +1626,15 @@ void drawEngTrackRow() {
     gfx->drawRect(kMargin, kEngTrackRowY, w, kEngTrackRowH, RGB565_WHITE);
   }
   gfx->setTextSize(2);
-  gfx->setTextColor(kPalette[selectedEngineTrack % kPaletteCount]);
-  char buf[16];
-  snprintf(buf, sizeof(buf), "< PISTE %d >", selectedEngineTrack + 1);  // +1 : affichage "plus musicien"
-  gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - 55), kEngTrackRowY);
+  const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
+  // Meme traitement que drawPatchTrackRow() (2026-09-22, identite par
+  // moteur) : nom du moteur inclus et colore par moteur, centrage
+  // dynamique puisque la largeur du texte varie selon le nom.
+  gfx->setTextColor(patchAccent(t));
+  char buf[32];
+  snprintf(buf, sizeof(buf), "< PISTE %d - %s >", t + 1, az2::engineName(trackEngine[t]));  // +1 : affichage "plus musicien"
+  const int16_t textW = static_cast<int16_t>(strlen(buf) * 12);
+  gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - textW / 2), kEngTrackRowY);
   gfx->print(buf);
 }
 bool hitTestEngTrackPrev(int16_t x, int16_t y) {
@@ -1645,7 +1650,11 @@ void drawEngListRow(uint8_t engineIdx) {
   const int16_t y = static_cast<int16_t>(kEngListTop + engineIdx * kEngListRowH);
   const bool isCurrent = (engineIdx == trackEngine[t]);
   const bool focused = isCurrent && !engineColPatch && !engOnTrackRow;
-  const uint16_t accent = kPalette[t % kPaletteCount];
+  // Couleur du moteur DE CETTE LIGNE, pas de la piste (2026-09-22,
+  // identite par moteur -- voir kEngineAccent[]) : la liste MOTEURS montre
+  // les 9 moteurs a la fois, chacun garde sa propre couleur qu'il soit
+  // selectionne ou non sur N'IMPORTE QUELLE piste.
+  const uint16_t accent = engineAccent(engineIdx);
   const int16_t h = static_cast<int16_t>(kEngListRowH - 2);
 
   gfx->fillRect(kMargin, y, kEngListLeftW, h, isCurrent ? accent : RGB565_BLACK);
@@ -1688,7 +1697,7 @@ void drawEngPatchRow(uint8_t slot) {
   }
   const bool isCurrent = (patchIdx == trackPatch[t]);
   const bool focused = isCurrent && engineColPatch && !engOnTrackRow;
-  const uint16_t accent = kPalette[t % kPaletteCount];
+  const uint16_t accent = patchAccent(t);
 
   gfx->fillRect(kEngListRightX, y, kEngListRightW, h, isCurrent ? accent : RGB565_BLACK);
   gfx->drawRect(kEngListRightX, y, kEngListRightW, h, isCurrent ? accent : kFaint);
@@ -1720,7 +1729,7 @@ void drawEngLists() {
   // "de quel cote" on est (moteur ou patch), pas seulement quelle
   // ligne precise -- utile des qu'on hesite en un coup d'oeil rapide.
   if (!engOnTrackRow) {
-    const uint16_t accent = kPalette[selectedEngineTrack % kPaletteCount];
+    const uint16_t accent = patchAccent(static_cast<uint8_t>(selectedEngineTrack));
     const int16_t boxX = engineColPatch ? kEngListRightX : kMargin;
     const int16_t boxW = engineColPatch ? kEngListRightW : kEngListLeftW;
     for (int16_t o = 0; o < 3; ++o) {
@@ -1736,7 +1745,7 @@ void drawEngLists() {
 // PATCH complete pour aller plus loin (voir hitTestEngMini()).
 void drawEngMiniPatch() {
   const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
-  const uint16_t accent = kPalette[t % kPaletteCount];
+  const uint16_t accent = patchAccent(t);
   const int16_t w = static_cast<int16_t>(kScreenSize - 2 * kMargin);
 
   gfx->fillRect(kMargin, kEngMiniY, w, kEngMiniH, RGB565_BLACK);
@@ -1769,7 +1778,7 @@ void drawEngMiniPatch() {
 // bandeau existant pour conserver la navigation tactile actuelle.
 void drawEngVisualizer() {
   const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
-  const uint16_t accent = kPalette[t % kPaletteCount];
+  const uint16_t accent = patchAccent(t);
   const int16_t x = kMargin;
   const int16_t y = kEngMiniY;
   const int16_t w = static_cast<int16_t>(kScreenSize - 2 * kMargin);

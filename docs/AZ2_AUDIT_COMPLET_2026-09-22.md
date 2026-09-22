@@ -495,6 +495,20 @@ n'ai en revanche **aucun moyen de voir le rendu réel** sur l'écran physique
 une fois l'écran sous les yeux, de même que la lisibilité/le bon goût des 9
 couleurs choisies.
 
+Extension à la page MOTEURS (même session) : chaque ligne de la liste des 9
+moteurs garde désormais sa propre couleur (`engineAccent(engineIdx)`),
+peu importe la piste sélectionnée — avant, seule la ligne du moteur
+courant de la piste était mise en avant, dans la couleur de la piste.
+Liste des patches, cadre de focus, bandeau "réglages du patch" et
+visualiseur (qui avait déjà des silhouettes différentes par moteur — DEXED
+en rayons FM, DRUM en pulsation, SAMPLER en zigzag — mais toutes dans la
+couleur de piste) recolorés pareil. Ligne PISTE alignée sur le même format
+que la page PATCH (`< PISTE N - MOTEUR >`, centrage dynamique). L'en-tête
+"MOTEURS" reste volontairement neutre (page de sélection parmi les 9
+moteurs, pas l'édition d'un seul). Compile et flashe sans erreur, boot
+stable confirmé en direct. Même limite qu'avant : pas d'yeux sur l'écran
+physique pour confirmer le rendu.
+
 Aucun commit git n'a été fait — modifications encore dans l'arbre de travail.
 
 ## Repères chiffrés
