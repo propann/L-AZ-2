@@ -106,6 +106,29 @@ const uint16_t kPalette[] = {
 constexpr uint8_t kPaletteCount = sizeof(kPalette) / sizeof(kPalette[0]);
 constexpr uint16_t kDim = RGB565(140, 140, 150);
 
+// Identite visuelle PAR MOTEUR (2026-09-22, "il faut que les fenetres de
+// controle aient chacune une identite par moteur") -- jusqu'ici la page
+// PATCH (et le reste de l'appli) coloraient tout en fonction de la PISTE
+// (kPalette[track % kPaletteCount]) : DEXED sur la piste 0 et DEXED sur
+// la piste 3 n'avaient rien de visuellement commun, alors que BRAIDS et
+// DEXED sur la MEME piste se ressemblaient (meme couleur de piste). Ce
+// tableau donne au contraire une couleur STABLE par moteur, memorisable
+// independamment de la piste -- utilise par la page PATCH (voir
+// engineAccent()/patchAccent() plus bas, apres trackEngine[]). Index
+// aligne sur az2::kEngine* (voir AZ2_Protocol.h), meme convention que
+// kEngineNames[].
+const uint16_t kEngineAccent[az2::kEngineCount] = {
+    RGB565(255, 195, 40),   // DEXED    -- or/cuivre FM
+    RGB565(255, 110, 140),  // EPIANO   -- rose electrique
+    RGB565(90, 170, 255),   // BRAIDS   -- bleu electrique
+    RGB565(120, 230, 120),  // KARPLUS  -- vert corde pincee
+    RGB565(255, 120, 30),   // ANALOG   -- orange chaud analogique
+    RGB565(255, 70, 190),   // SAMPLER  -- magenta
+    RGB565(255, 60, 60),    // DRUM     -- rouge percussif
+    RGB565(180, 100, 255),  // GRANULAR -- violet nuage de grains
+    RGB565(70, 220, 200),   // SPECTRAL -- cyan/teal spectral
+};
+
 // Assombrit une couleur RGB565 (garde la teinte, baisse la luminosite) --
 // sert aux bandes verticales de mesure du sequenceur, voir seqBandColor().
 uint16_t dimColor(uint16_t c, uint8_t shift) {
@@ -1513,6 +1536,17 @@ uint8_t trackEngine[kSeqTrackCount] = {az2::kEngineAnalog, az2::kEngineAnalog, a
                                       az2::kEngineAnalog, az2::kEngineAnalog, az2::kEngineEPiano, az2::kEngineBraids};
 uint8_t trackPatch[kSeqTrackCount] = {0, 0, 0, 0, 0, 0, 0, 0};
 
+// Couleur d'identite du moteur `engine` (voir kEngineAccent[] plus haut),
+// et raccourci pour "le moteur actuellement charge sur cette piste" --
+// utilises par la page PATCH pour que toute la page se colore selon le
+// moteur en cours d'edition plutot que selon le numero de piste.
+uint16_t engineAccent(uint8_t engine) {
+  return engine < az2::kEngineCount ? kEngineAccent[engine] : kFaint;
+}
+uint16_t patchAccent(uint8_t track) {
+  return engineAccent(trackEngine[track]);
+}
+
 // Annonce par announceHello() cote Teensy (RACK_CAP:0/1, audit 2026-09-22) :
 // vrai seulement si CE Teensy est compile avec AZ2_EXTERNAL_RACK, donc si
 // GRANULAR/SPECTRAL produisent reellement un son. Faux par defaut (avant
@@ -2233,10 +2267,21 @@ void drawPatchTrackRow() {
     gfx->drawRect(kMargin, kPatchTrackRowY, w, 22, RGB565_WHITE);
   }
   gfx->setTextSize(2);
-  gfx->setTextColor(kPalette[patchTrack % kPaletteCount]);
-  char buf[16];
-  snprintf(buf, sizeof(buf), "< PISTE %d >", patchTrack + 1);  // +1 : affichage "plus musicien"
-  gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - 55), kPatchTrackRowY);
+  const uint8_t t = static_cast<uint8_t>(patchTrack);
+  // Couleur ET nom du moteur (2026-09-22, identite par moteur -- voir
+  // kEngineAccent[]) plutot que juste "< PISTE N >" colore par piste :
+  // on sait maintenant d'un coup d'oeil QUEL moteur on regle, pas
+  // seulement sur quelle piste, avant meme de lire les libelles des
+  // lignes en dessous.
+  gfx->setTextColor(patchAccent(t));
+  char buf[32];
+  snprintf(buf, sizeof(buf), "< PISTE %d - %s >", t + 1, az2::engineName(trackEngine[t]));  // +1 : affichage "plus musicien"
+  // Largeur variable selon le nom du moteur (DEXED vs SPECTRAL) -- centre
+  // reellement au lieu d'un decalage fixe qui ne convenait qu'a l'ancien
+  // texte de longueur constante. Police par defaut GFX : 6px/caractere,
+  // x2 en taille 2.
+  const int16_t textW = static_cast<int16_t>(strlen(buf) * 12);
+  gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - textW / 2), kPatchTrackRowY);
   gfx->print(buf);
 }
 
@@ -2253,7 +2298,7 @@ void keepPatchListVisible() {
 
 void drawPatchList() {
   const uint8_t t = static_cast<uint8_t>(patchTrack);
-  const uint16_t accent = kPalette[t % kPaletteCount];
+  const uint16_t accent = patchAccent(t);
   const uint16_t count = az2::enginePatchCount(trackEngine[t]);
   keepPatchListVisible();
   gfx->fillRect(kPatchListX, kPatchScopeTop, kPatchListW, kPatchScopeH, RGB565_BLACK);
@@ -2318,7 +2363,7 @@ void drawPatchScope() {
     return;
   }
   int16_t prevX = pointX(0), prevY = pointY(scopeSamples[0]);
-  const uint16_t traceColor = kPalette[patchTrack % kPaletteCount];
+  const uint16_t traceColor = patchAccent(static_cast<uint8_t>(patchTrack));
   for (uint8_t i = 0; i < az2::kScopeSamplesPerPacket; ++i) {
     const int16_t x = pointX(i);
     const int16_t y = pointY(scopeSamples[i]);
@@ -2405,7 +2450,7 @@ void drawPatchRow(uint8_t i) {
   const int16_t rowH = static_cast<int16_t>(kPatchRowH - 4);
   const uint8_t track = static_cast<uint8_t>(patchTrack);
   const bool rowSelected = !patchOnTrackRow && (selectedPatchRow == static_cast<int8_t>(i));
-  const uint16_t accent = kPalette[track % kPaletteCount];
+  const uint16_t accent = patchAccent(track);
 
   gfx->fillRect(x, y, w, rowH, RGB565_BLACK);
 
@@ -2454,7 +2499,7 @@ void drawPatchExtraRow(uint8_t logicalRow) {
   const uint8_t track = static_cast<uint8_t>(patchTrack);
   const uint8_t extraIdx = static_cast<uint8_t>(logicalRow - 6);
   const bool rowSelected = !patchOnTrackRow && (selectedPatchRow == static_cast<int8_t>(logicalRow));
-  const uint16_t accent = kPalette[track % kPaletteCount];
+  const uint16_t accent = patchAccent(track);
 
   gfx->fillRect(x, y, w, rowH, RGB565_BLACK);
   gfx->drawRect(x, y, w, rowH, rowSelected ? accent : kFaint);
@@ -2517,7 +2562,7 @@ void drawVolRow() {
   }
   const int16_t rowH = static_cast<int16_t>(kPatchRowH - 4);
   const bool rowSelected = !patchOnTrackRow && (selectedPatchRow == static_cast<int8_t>(patchVolRow(t)));
-  const uint16_t accent = kPalette[t % kPaletteCount];
+  const uint16_t accent = patchAccent(t);
 
   gfx->fillRect(x, y, w, rowH, RGB565_BLACK);
   gfx->drawRect(x, y, w, rowH, rowSelected ? accent : kFaint);
@@ -2561,7 +2606,7 @@ void drawPatchSlotRow() {
   const int16_t saveX = static_cast<int16_t>(kMargin + kPatchSlotBtnW);
   const int16_t loadX = static_cast<int16_t>(kMargin + 2 * kPatchSlotBtnW);
   const bool rowSelected = !patchOnTrackRow && (selectedPatchRow == static_cast<int8_t>(patchSlotRow(t)));
-  const uint16_t accent = kPalette[t % kPaletteCount];
+  const uint16_t accent = patchAccent(t);
   gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, kPatchSlotH, RGB565_BLACK);
   gfx->drawRect(kMargin, y, kPatchSlotBtnW, kPatchSlotH, rowSelected ? accent : kFaint);
   gfx->drawRect(saveX, y, kPatchSlotBtnW, kPatchSlotH, rowSelected ? accent : kFaint);
@@ -3060,13 +3105,19 @@ void updatePatchEncoderHints() {
 }
 
 void drawPatchPage() {
-  drawSubHeader("PATCH", kPalette[4]);
+  // En-tete colore selon le MOTEUR de la piste affichee, pas une couleur
+  // fixe (2026-09-22, identite par moteur -- voir kEngineAccent[]) :
+  // premiere chose visible en entrant sur la page, avant meme la ligne
+  // PISTE juste en dessous.
+  const uint16_t accent = patchAccent(static_cast<uint8_t>(patchTrack));
+  drawSubHeader("PATCH", accent);
   updatePatchEncoderHints();
   drawPatchTrackRow();
   // Cadre du tracer dessine UNE fois ici -- drawPatchScope() (appelee a
   // chaque paquet SCOPE recu) ne touche plus que l'interieur, voir son
-  // commentaire.
-  gfx->drawRect(kMargin, kPatchScopeTop, kPatchScopeW, kPatchScopeH, kFaint);
+  // commentaire. Meme couleur d'identite que le reste de la page (au lieu
+  // de kFaint fixe) -- la fenetre entiere "devient" la couleur du moteur.
+  gfx->drawRect(kMargin, kPatchScopeTop, kPatchScopeW, kPatchScopeH, accent);
   drawPatchScope();
   drawPatchList();
   drawPatchWindow();

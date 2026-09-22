@@ -459,6 +459,42 @@ Utilise maintenant `trackPatch[track]`, la vraie valeur. Validé en direct :
 `PATCH:0:120` bien annoncé, `DXP:0:0:31`/`DXP:0:1:3` (algo/feedback) au
 lieu des valeurs du patch 0.
 
+## Identité visuelle par moteur sur la page PATCH (22 septembre, suite)
+
+Vérification demandée : les fenêtres de contrôle avaient-elles chacune une
+identité propre au moteur affiché ? Réponse trouvée en lisant le code :
+**non** — toute la palette de couleurs de l'appli (page MOTEURS, page
+PATCH, Mixer, Séquenceur) est dérivée de `kPalette[track % kPaletteCount]`,
+donc de la PISTE, jamais du moteur. Conséquence concrète : DEXED sur la
+piste 0 et DEXED sur la piste 3 n'avaient rien de visuellement commun,
+alors que BRAIDS et DEXED sur la MEME piste se ressemblaient parfaitement
+(même couleur de piste). Rien n'indiquait non plus, textuellement, quel
+moteur était affiché sur la page PATCH — l'en-tête disait juste "PATCH" en
+couleur fixe.
+
+Ajout d'une palette dédiée `kEngineAccent[az2::kEngineCount]` (une couleur
+stable par moteur, indépendante de la piste) et de deux fonctions
+(`engineAccent()`/`patchAccent()`). Appliqué à **toute** la page PATCH
+(portée volontairement limitée à cette page, comme demandé — les autres
+pages restent colorées par piste pour l'instant) :
+
+- en-tête "PATCH" et cadre de l'oscilloscope : couleur du moteur ;
+- ligne PISTE : affiche maintenant `< PISTE N - NOM_MOTEUR >`, centré
+  dynamiquement (la largeur du texte varie selon le nom, ex. "DEXED" vs
+  "SPECTRAL") plutôt que le décalage fixe précédent (valable seulement pour
+  l'ancien texte de longueur constante) ;
+- liste des patches, trace de l'oscilloscope, lignes de paramètres
+  (fixes/extra/VOLUME/SLOT) : toutes recolorées par moteur au lieu de la
+  piste.
+
+Compile et flashe (`screen_esp`) sans erreur, boot stable confirmé en
+direct (logs `DISPLAY:ALIVE:TICK` réguliers, aucune boucle de crash). Je
+n'ai en revanche **aucun moyen de voir le rendu réel** sur l'écran physique
+(pas de caméra) — la largeur de texte centrée est calculée à 12 px/caractère
+(police GFX par défaut, taille 2), à vérifier visuellement par l'utilisateur
+une fois l'écran sous les yeux, de même que la lisibilité/le bon goût des 9
+couleurs choisies.
+
 Aucun commit git n'a été fait — modifications encore dans l'arbre de travail.
 
 ## Repères chiffrés
