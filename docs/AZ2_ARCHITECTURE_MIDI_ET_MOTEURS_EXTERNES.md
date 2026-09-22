@@ -72,11 +72,26 @@ final. Les deux moteurs devront suivre l'horloge audio du Teensy.
 1. GRANULAR MAX seul sur DMA I2S : **fait** ;
 2. SPECTRAL SWARM seul sur DMA I2S : **fait** ;
 3. NOTE_ON/OFF, paramètres, PANIC et métriques sur chaque moteur ;
-4. WROOM vers S3 avec une tonalité avant de réunir les deux DSP ;
-5. S3 agrégateur pendant 30 minutes sans erreur ;
+4. WROOM vers S3 avec les deux DSP réunis : **validé le 22 septembre 2026** ;
+5. S3 agrégateur pendant 30 minutes sans erreur : **à prolonger** ;
 6. entrée I2S et contrôle dans un firmware Teensy de laboratoire ;
 7. MIDI DIN 6N138 sur un banc séparé ;
 8. fusion production seulement après chaque validation.
 
 Le firmware Teensy de production ne doit pas être modifié pendant les étapes
 1 à 5.
+
+## 6. Premier test réel ESP vers ESP
+
+Le WROOM a été flashé avec `engine_rack_spectral_esp32` en émetteur I2S
+esclave. Le S3 a été flashé avec `engine_rack_granular_s3` en maître I2S,
+récepteur spectral et agrégateur.
+
+Résultat avec les cartes physiquement reliées : environ 345 blocs de 128
+échantillons par seconde, aucune lecture courte, aucune écriture courte,
+énergie spectrale reçue non nulle et pire rendu granulaire observé entre
+1802 et 1839 µs. Le S3 a donc réellement reçu SPECTRAL SWARM, l'a mélangé à
+GRANULAR MAX et a produit le flux agrégé sur GPIO11.
+
+Ce test valide le faisceau ESP vers ESP. Il ne valide pas encore le passage du
+S3 en esclave du Teensy ni la sortie physique par le PCM5102A.

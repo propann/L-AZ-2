@@ -30,6 +30,7 @@ Grain grains[kMaxGrains] = {};
 float windowTable[kWindowSize];
 int16_t oscillatorTable[kWindowSize];
 int16_t outputInterleaved[kBlockSamples * 2];
+int16_t spectralInterleaved[kBlockSamples * 2];
 float partialLeft[2][kBlockSamples];
 float partialRight[2][kBlockSamples];
 TaskHandle_t mainTask = nullptr;
@@ -168,6 +169,56 @@ void runRealtimeI2S(uint32_t seconds) {
   i2s.end();
 }
 
+#ifdef AZ2_RACK_AGGREGATOR
+void runRackAggregator() {
+  i2s.setPins(az2::rack::kI2sBclkPin, az2::rack::kI2sWsPin,
+              az2::rack::kI2sDataOutPin, az2::rack::kSpectralDataInPin);
+  if (!i2s.begin(I2S_MODE_STD, kSampleRate, I2S_DATA_BIT_WIDTH_16BIT,
+                 I2S_SLOT_MODE_STEREO)) {
+    Serial.printf("GMAX:RACK:FAIL:I2S:error=%d\n", i2s.lastError());
+    return;
+  }
+  initialiseGrains(kRealtimeGrains);
+  memset(outputInterleaved, 0, sizeof(outputInterleaved));
+  i2s.write(outputInterleaved, sizeof(outputInterleaved));
+  Serial.printf("GMAX:RACK:READY:role=master:bclk=%d:ws=%d:dout=%d:din=%d\n",
+                az2::rack::kI2sBclkPin, az2::rack::kI2sWsPin,
+                az2::rack::kI2sDataOutPin, az2::rack::kSpectralDataInPin);
+
+  uint32_t blocks = 0, shortReads = 0, shortWrites = 0, maxRenderUs = 0;
+  int64_t spectralEnergy = 0;
+  uint32_t lastReport = millis();
+  for (;;) {
+    const size_t received = i2s.readBytes(reinterpret_cast<char *>(spectralInterleaved),
+                                          sizeof(spectralInterleaved));
+    if (received != sizeof(spectralInterleaved)) ++shortReads;
+    const uint32_t renderStart = micros();
+    renderBlockDual(kRealtimeGrains);
+    for (size_t sample = 0; sample < kBlockSamples * 2; ++sample) {
+      const int32_t spectral = received == sizeof(spectralInterleaved) ? spectralInterleaved[sample] : 0;
+      spectralEnergy += spectral < 0 ? -spectral : spectral;
+      const int32_t mixed = static_cast<int32_t>(outputInterleaved[sample]) + spectral / 2;
+      outputInterleaved[sample] = static_cast<int16_t>(constrain(mixed, -32768, 32767));
+    }
+    const uint32_t renderUs = micros() - renderStart;
+    if (renderUs > maxRenderUs) maxRenderUs = renderUs;
+    if (i2s.write(outputInterleaved, sizeof(outputInterleaved)) != sizeof(outputInterleaved))
+      ++shortWrites;
+    ++blocks;
+    const uint32_t now = millis();
+    if (now - lastReport >= 1000) {
+      Serial.printf("GMAX:RACK:STREAM:blocks=%lu:short_rx=%lu:short_tx=%lu:spectral_energy=%lld:max_render_us=%lu:heap=%u\n",
+                    static_cast<unsigned long>(blocks), static_cast<unsigned long>(shortReads),
+                    static_cast<unsigned long>(shortWrites), spectralEnergy,
+                    static_cast<unsigned long>(maxRenderUs), static_cast<unsigned>(ESP.getFreeHeap()));
+      spectralEnergy = 0;
+      maxRenderUs = 0;
+      lastReport = now;
+    }
+  }
+}
+#endif
+
 }  // namespace
 
 void setup() {
@@ -205,17 +256,23 @@ void setup() {
     return;
   }
   Serial.println("GMAX:DUALCORE:READY:main=1:worker=0");
+#ifdef AZ2_RACK_AGGREGATOR
+  runRackAggregator();
+#else
   runMatrix();
   runRealtimeI2S(30);
   Serial.println("GMAX:ALL_TESTS:READY");
+#endif
 }
 
 void loop() {
+#ifndef AZ2_RACK_AGGREGATOR
   if (Serial.available()) {
     while (Serial.available()) Serial.read();
     runMatrix();
     runRealtimeI2S(30);
     Serial.println("GMAX:ALL_TESTS:READY");
   }
+#endif
   delay(20);
 }

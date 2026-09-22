@@ -70,6 +70,11 @@ Ce tableau décrit le faisceau cible. **Ne pas relier BCLK/LRCLK tant que le
 firmware WROOM n'est pas passé du mode maître au mode esclave** : deux maîtres
 sur les mêmes fils peuvent endommager ou bloquer les sorties.
 
+Depuis le 22 septembre 2026, le WROOM est flashé en esclave et la liaison
+ESP vers ESP ci-dessous est testée : réception et émission DMA sans erreur.
+Dans ce banc, le S3 fournit temporairement BCLK/LRCLK. Lors de l'intégration
+finale, le Teensy deviendra l'unique maître de ces mêmes lignes.
+
 | Signal | Source | Destination | Rôle |
 |---|---|---|---|
 | BCLK commun | Teensy pin 21 | S3 GPIO7 + WROOM GPIO26 | horloge bits, Teensy seul maître |

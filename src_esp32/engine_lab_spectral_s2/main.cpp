@@ -142,6 +142,40 @@ void runRealtimeI2S(uint32_t seconds) {
                 static_cast<unsigned long>(maxRenderUs), static_cast<unsigned long>(budgetUs));
   i2s.end();
 }
+
+#ifdef AZ2_RACK_SLAVE
+void runRackSlave() {
+  i2s.setPins(az2::spectral::kI2sBclkPin, az2::spectral::kI2sWsPin,
+              az2::spectral::kI2sDataOutPin);
+  if (!i2s.begin(I2S_MODE_STD, kSampleRate, I2S_DATA_BIT_WIDTH_16BIT,
+                 I2S_SLOT_MODE_STEREO, -1, I2S_ROLE_SLAVE)) {
+    Serial.printf("SPECTRAL:RACK:FAIL:I2S:error=%d\n", i2s.lastError());
+    return;
+  }
+  Serial.printf("SPECTRAL:RACK:READY:role=slave:bclk=%d:ws=%d:dout=%d\n",
+                az2::spectral::kI2sBclkPin, az2::spectral::kI2sWsPin,
+                az2::spectral::kI2sDataOutPin);
+  uint32_t blocks = 0, shortWrites = 0, lastReport = millis();
+  for (;;) {
+    renderBlock(kRealtimePartials, 0.5f + 0.5f * sinf(blocks * 0.003f));
+    for (size_t frame = 0; frame < kBlockSamples; ++frame) {
+      outputInterleaved[frame * 2] = outputBlock[frame];
+      outputInterleaved[frame * 2 + 1] = outputBlock[frame];
+    }
+    if (i2s.write(outputInterleaved, sizeof(outputInterleaved)) != sizeof(outputInterleaved))
+      ++shortWrites;
+    ++blocks;
+    const uint32_t now = millis();
+    if (now - lastReport >= 1000) {
+      Serial.printf("SPECTRAL:RACK:STREAM:blocks=%lu:short=%lu:heap=%u\n",
+                    static_cast<unsigned long>(blocks),
+                    static_cast<unsigned long>(shortWrites),
+                    static_cast<unsigned>(ESP.getFreeHeap()));
+      lastReport = now;
+    }
+  }
+}
+#endif
 }  // namespace
 
 void setup() {
@@ -154,17 +188,23 @@ void setup() {
   Serial.printf("SPECTRAL:BOOT:chip=%s:revision=%u:cores=%u:cpu_mhz=%u:psram=%u\n",
                 ESP.getChipModel(), ESP.getChipRevision(), ESP.getChipCores(),
                 ESP.getCpuFreqMHz(), ESP.getPsramSize());
+#ifdef AZ2_RACK_SLAVE
+  runRackSlave();
+#else
   runBenchmarkMatrix();
   runRealtimeI2S(kRealtimeTestSeconds);
   Serial.println("SPECTRAL:ALL_TESTS:READY");
+#endif
 }
 
 void loop() {
+#ifndef AZ2_RACK_SLAVE
   if (Serial.available()) {
     while (Serial.available()) Serial.read();
     runBenchmarkMatrix();
     runRealtimeI2S(kRealtimeTestSeconds);
     Serial.println("SPECTRAL:ALL_TESTS:READY");
   }
+#endif
   delay(20);
 }
