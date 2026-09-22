@@ -165,6 +165,14 @@ AudioEffectFreeverb reverbUnit;
 AudioEffectDelay delayUnit;
 AudioMixer4 mixMaster;
 AudioOutputI2S i2sOut;
+#ifdef AZ2_EXTERNAL_RACK
+// AudioInputI2S partage BCLK/LRCLK avec AudioOutputI2S : le Teensy reste
+// maître, reçoit le flux agrégé S3 sur pin 8 et continue de sortir vers le
+// PCM5102A sur pin 7. Deux mixeurs préservent la stéréo du rack.
+AudioInputI2S rackAudioIn;
+AudioMixer4 mixOutputL;
+AudioMixer4 mixOutputR;
+#endif
 
 // Son de l'emulateur Game Boy (ESP32 -> Teensy, voir AZ2_Protocol.h
 // "kGbAudioPacketMagic" et handleGbAudioPacket() plus bas) : ESP32
@@ -364,8 +372,17 @@ AudioConnection patchReverbToMaster(reverbUnit, 0, mixMaster, 1);
 AudioConnection patchFinalToDelay(mixFinal, 0, delayUnit, 0);
 AudioConnection patchDelayToMaster(delayUnit, 0, mixMaster, 2);
 AudioConnection patchGbAudioToMaster(gbAudioQueue, 0, mixMaster, 3);
+#ifdef AZ2_EXTERNAL_RACK
+AudioConnection patchMasterToOutputL(mixMaster, 0, mixOutputL, 0);
+AudioConnection patchMasterToOutputR(mixMaster, 0, mixOutputR, 0);
+AudioConnection patchRackToOutputL(rackAudioIn, 0, mixOutputL, 1);
+AudioConnection patchRackToOutputR(rackAudioIn, 1, mixOutputR, 1);
+AudioConnection patchOutL(mixOutputL, 0, i2sOut, 0);
+AudioConnection patchOutR(mixOutputR, 0, i2sOut, 1);
+#else
 AudioConnection patchOutL(mixMaster, 0, i2sOut, 0);
 AudioConnection patchOutR(mixMaster, 0, i2sOut, 1);
+#endif
 
 // Piste -> quel AudioMixer4 de groupe, et quel canal (0-3) dedans.
 AudioMixer4 &trackGroupMixer(uint8_t track) {
@@ -1937,6 +1954,18 @@ void applyMasterMix() {
   mixMaster.gain(1, reverbWet * masterVolume);
   mixMaster.gain(2, delayWet * masterVolume);
   mixMaster.gain(3, masterVolume);  // son GB (voir gbAudioQueue) -- suit le potard 1 comme le signal sec
+#ifdef AZ2_EXTERNAL_RACK
+  // Le bus local est déjà pondéré ci-dessus. Le rack reçoit sa propre marge
+  // de tête mais suit le même volume général.
+  mixOutputL.gain(0, 1.0f);
+  mixOutputR.gain(0, 1.0f);
+  mixOutputL.gain(1, 0.6f * masterVolume);
+  mixOutputR.gain(1, 0.6f * masterVolume);
+  mixOutputL.gain(2, 0.0f);
+  mixOutputL.gain(3, 0.0f);
+  mixOutputR.gain(2, 0.0f);
+  mixOutputR.gain(3, 0.0f);
+#endif
 }
 
 // FX:reverb:<0-100> ou FX:delay:<0-100> -- bus d'effets maitre (voir
@@ -2571,7 +2600,11 @@ void reportRackStats() {
 // AZ2_EMULATION_JEUX.md).
 // ---------------------------------------------------------------------
 constexpr int kNavUpPin = 2, kNavDownPin = 3, kNavLeftPin = 4, kNavRightPin = 5;
+#ifdef AZ2_EXTERNAL_RACK
+constexpr int kBtnAPin = 6, kBtnBPin = 10, kBtnCPin = 9, kBtnDPin = 23;
+#else
 constexpr int kBtnAPin = 6, kBtnBPin = 8, kBtnCPin = 9, kBtnDPin = 23;
+#endif
 
 constexpr uint32_t kLocalDebounceMs = 15;
 
@@ -3917,6 +3950,9 @@ void setup() {
   static uint8_t serial1RxBuf[2048];
   Serial1.addMemoryForRead(serial1RxBuf, sizeof(serial1RxBuf));
   Serial1.begin(az2::kControlBaud);
+#ifdef AZ2_EXTERNAL_RACK
+  Serial7.begin(921600);  // pins 28 RX7 / 29 TX7 vers le S3
+#endif
   // Graine pour random() (PROB:, voir advanceTick()) -- micros() au boot
   // varie assez d'un demarrage a l'autre (delais SD/audio/etc. avant ici)
   // pour eviter de rejouer EXACTEMENT le meme motif "aleatoire" a chaque

@@ -173,16 +173,23 @@ void runRealtimeI2S(uint32_t seconds) {
 void runRackAggregator() {
   i2s.setPins(az2::rack::kI2sBclkPin, az2::rack::kI2sWsPin,
               az2::rack::kI2sDataOutPin, az2::rack::kSpectralDataInPin);
+#ifdef AZ2_TEENSY_CLOCK_SLAVE
+  constexpr i2s_role_t rackRole = I2S_ROLE_SLAVE;
+  constexpr const char *rackRoleName = "slave-teensy-clock";
+#else
+  constexpr i2s_role_t rackRole = I2S_ROLE_MASTER;
+  constexpr const char *rackRoleName = "master-bench";
+#endif
   if (!i2s.begin(I2S_MODE_STD, kSampleRate, I2S_DATA_BIT_WIDTH_16BIT,
-                 I2S_SLOT_MODE_STEREO)) {
+                 I2S_SLOT_MODE_STEREO, -1, rackRole)) {
     Serial.printf("GMAX:RACK:FAIL:I2S:error=%d\n", i2s.lastError());
     return;
   }
   initialiseGrains(kRealtimeGrains);
   memset(outputInterleaved, 0, sizeof(outputInterleaved));
   i2s.write(outputInterleaved, sizeof(outputInterleaved));
-  Serial.printf("GMAX:RACK:READY:role=master:bclk=%d:ws=%d:dout=%d:din=%d\n",
-                az2::rack::kI2sBclkPin, az2::rack::kI2sWsPin,
+  Serial.printf("GMAX:RACK:READY:role=%s:bclk=%d:ws=%d:dout=%d:din=%d\n",
+                rackRoleName, az2::rack::kI2sBclkPin, az2::rack::kI2sWsPin,
                 az2::rack::kI2sDataOutPin, az2::rack::kSpectralDataInPin);
 
   uint32_t blocks = 0, shortReads = 0, shortWrites = 0, maxRenderUs = 0;

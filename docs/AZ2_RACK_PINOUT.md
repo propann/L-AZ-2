@@ -91,6 +91,17 @@ Le bouton B doit quitter la pin 8 du Teensy et aller sur la pin 10 avant de
 connecter `Audio agrégé`. La sortie PCM5102A ne change pas : DATA pin 7,
 LRCLK pin 20 et BCLK pin 21.
 
+Firmware correspondant :
+
+- WROOM : `engine_rack_spectral_esp32` — esclave I2S ;
+- S3 : `engine_rack_granular_s3_teensy_slave` — agrégateur esclave ;
+- Teensy : `master_teensy_rack_lab` — maître I2S et mixeur final.
+
+Les trois liaisons Teensy vers le rack sont donc pin 21 vers S3 GPIO7, pin 20
+vers S3 GPIO9 et S3 GPIO11 vers Teensy pin 8, plus la masse commune. Les
+horloges 21/20 existent déjà pour le PCM5102A : elles sont simplement
+distribuées aussi au rack.
+
 ## MIDI DIN IN réservé au Teensy
 
 | Signal | Connexion |

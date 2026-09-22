@@ -95,3 +95,23 @@ GRANULAR MAX et a produit le flux agrégé sur GPIO11.
 
 Ce test valide le faisceau ESP vers ESP. Il ne valide pas encore le passage du
 S3 en esclave du Teensy ni la sortie physique par le PCM5102A.
+
+## 7. Variante prête pour les horloges Teensy
+
+La cible PlatformIO `engine_rack_granular_s3_teensy_slave` conserve la même
+agrégation mais configure le S3 en I2S esclave. Le WROOM reste lui aussi
+esclave. BCLK et LRCLK doivent alors provenir exclusivement du Teensy sur les
+nets communs GPIO7/GPIO26 et GPIO9/GPIO25.
+
+Sans Teensy connecté, les deux moteurs attendent normalement les horloges et
+aucun bloc ne circule. La cible maître `engine_rack_granular_s3` reste
+disponible pour refaire le banc ESP vers ESP sans Teensy.
+
+Le S3 a été flashé avec cette variante esclave le 22 septembre 2026. La cible
+Teensy `master_teensy_rack_lab` est également prête et compilée : elle ajoute
+`AudioInputI2S`, conserve le PCM5102A, mélange le rack en stéréo après le bus
+maître, ouvre Serial7 et déplace logiquement le bouton B de la pin 8 vers la
+pin 10. Le firmware Teensy de production `master_teensy` reste inchangé.
+
+Ne pas flasher `master_teensy_rack_lab` avant d'avoir déplacé physiquement le
+bouton B : la pin 8 devient l'entrée DATA audio du S3.
