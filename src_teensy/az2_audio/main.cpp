@@ -3171,7 +3171,10 @@ void handleCommand(const String &line) {
   }
   if (line == "RACK:ON" || line == "RACK:OFF" || line == "RACK:PANIC" ||
       line == "RACK:STATUS" || line.startsWith("RACK_ENGINE:") ||
-      line.startsWith("NOTE_ON:") || line.startsWith("NOTE_OFF:")) {
+      line.startsWith("RACK_NOTE_ON:") || line.startsWith("RACK_NOTE_OFF:") ||
+      line.startsWith("RACK_PARAM:") || line.startsWith("RACK_PATCH:") ||
+      line.startsWith("RACK_PATCH_SAVE:") || line.startsWith("NOTE_ON:") ||
+      line.startsWith("NOTE_OFF:")) {
     Serial7.println(line);
     Serial.print("AZ2:RACK:FORWARDED:");
     Serial.println(line);

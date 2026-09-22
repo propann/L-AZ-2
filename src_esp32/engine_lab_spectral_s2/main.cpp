@@ -18,7 +18,7 @@ constexpr size_t kTableSize = 2048;
 float sineTable[kTableSize], phase[kVoiceCount][kMaxPartials] = {};
 float phaseIncrement[kVoiceCount][kMaxPartials] = {}, amplitude[kMaxPartials] = {};
 float state1[kVoiceCount] = {}, state2[kVoiceCount] = {};
-float coreMix[2][kBlockSamples] = {};
+float coreLeft[2][kBlockSamples] = {}, coreRight[2][kBlockSamples] = {};
 int16_t outputBlock[kBlockSamples];
 int16_t outputInterleaved[kBlockSamples * 2];
 #ifdef AZ2_RACK_SLAVE
@@ -28,6 +28,28 @@ TaskHandle_t mainTask = nullptr, workerTask = nullptr;
 volatile uint8_t requestedPartials = 16;
 I2SClass i2s;
 
+uint8_t spectralParams[17] = {
+    96, 52, 18, 64, 64, 12, 90, 28, 54, 16, 4, 32, 100, 42, 112, 18, 100,
+};
+uint8_t spectralNote = 48;
+uint8_t spectralVelocity = 100;
+bool spectralGate = false;
+bool spectralEnabled = true;
+float spectralEnvelope = 0.0f;
+float filterLeft = 0.0f, filterRight = 0.0f;
+float motionPhase = 0.0f;
+
+uint8_t spectralPresets[8][17] = {
+    {72, 86, 8, 92, 64, 5, 110, 18, 78, 5, 30, 55, 100, 76, 118, 10, 94},   // AIR
+    {96, 52, 14, 62, 64, 10, 100, 38, 66, 10, 18, 50, 104, 64, 108, 18, 102}, // WAVES
+    {112, 32, 28, 98, 78, 4, 116, 12, 42, 4, 2, 26, 92, 58, 122, 34, 92},    // GLASS
+    {88, 70, 5, 58, 52, 18, 92, 22, 92, 12, 34, 60, 112, 72, 104, 24, 104},  // CHOIR
+    {127, 38, 82, 84, 74, 8, 104, 16, 35, 54, 1, 22, 96, 46, 116, 52, 94},   // METAL
+    {104, 62, 24, 66, 58, 76, 127, 72, 58, 22, 8, 40, 90, 62, 110, 28, 94},  // SWARM
+    {80, 76, 0, 48, 90, 3, 54, 8, 104, 14, 2, 34, 120, 48, 114, 18, 108},    // ORGAN
+    {127, 94, 54, 24, 40, 20, 118, 26, 112, 64, 44, 70, 108, 96, 72, 58, 112}, // ABYSS
+};
+
 inline float lookup(float p) {
   const uint32_t whole = static_cast<uint32_t>(p);
   const uint32_t next = (whole + 1U) & (kTableSize - 1U);
@@ -36,40 +58,60 @@ inline float lookup(float p) {
 }
 
 void prepareSpectrum(uint8_t partialCount, float morph) {
-  constexpr float roots[kVoiceCount] = {55.0f, 73.416f, 82.407f, 110.0f};
-  const float exponent = 0.72f + morph * 1.5f;
+  const float root = 440.0f * powf(2.0f, (static_cast<int>(spectralNote) - 69) / 12.0f);
+  const float detune = spectralParams[5] / 127.0f * 0.025f;
+  const float voiceRatio[kVoiceCount] = {1.0f - detune, 1.0f - detune * 0.33f,
+                                         1.0f + detune * 0.33f, 1.0f + detune};
+  const float exponent = 0.45f + morph * 2.1f;
+  const float stretchAmount = spectralParams[2] / 127.0f * 0.018f;
+  const float tilt = (static_cast<int>(spectralParams[3]) - 64) / 64.0f;
+  const float oddEven = (static_cast<int>(spectralParams[4]) - 64) / 64.0f;
   for (uint8_t partial = 0; partial < partialCount; ++partial) {
     const float harmonic = partial + 1.0f;
-    const float stretch = 1.0f + morph * partial * 0.0009f;
-    amplitude[partial] = 1.0f / powf(harmonic, exponent);
+    const float stretch = 1.0f + stretchAmount * partial;
+    const float parity = (partial & 1U) ? -oddEven : oddEven;
+    amplitude[partial] = max(0.0f, (1.0f + parity * 0.8f) *
+                                      powf(harmonic, tilt * 0.35f) /
+                                      powf(harmonic, exponent));
     for (uint8_t voice = 0; voice < kVoiceCount; ++voice)
-      phaseIncrement[voice][partial] = roots[voice] * harmonic * stretch * kTableSize / kSampleRate;
+      phaseIncrement[voice][partial] = root * voiceRatio[voice] * harmonic * stretch *
+                                       kTableSize / kSampleRate;
   }
 }
 
-void renderVoices(uint8_t firstVoice, uint8_t lastVoice, uint8_t partialCount, float *destination) {
+void renderVoices(uint8_t firstVoice, uint8_t lastVoice, uint8_t partialCount,
+                  float *leftDestination, float *rightDestination) {
+  const float spread = spectralParams[6] / 127.0f;
+  const float character = spectralParams[8] / 127.0f;
   for (size_t frame = 0; frame < kBlockSamples; ++frame) {
-    float mix = 0.0f;
+    float left = 0.0f, right = 0.0f;
     for (uint8_t voice = firstVoice; voice < lastVoice; ++voice) {
       float spectrum = 0.0f;
       for (uint8_t partial = 0; partial < partialCount; ++partial) {
-        float nextPhase = phase[voice][partial] + phaseIncrement[voice][partial];
+        const float motion = 1.0f + sinf(motionPhase + voice * 1.7f + partial * 0.11f) *
+                                      (spectralParams[7] / 127.0f) * 0.0025f;
+        float nextPhase = phase[voice][partial] + phaseIncrement[voice][partial] * motion;
         if (nextPhase >= kTableSize) nextPhase -= kTableSize;
         phase[voice][partial] = nextPhase;
         spectrum += lookup(nextPhase) * amplitude[partial];
       }
       state1[voice] += 0.075f * (spectrum - state1[voice]);
       state2[voice] += 0.018f * (tanhf(state1[voice] * 0.7f) - state2[voice]);
-      mix += tanhf(spectrum * 0.035f + state2[voice] * 0.8f);
+      const float value = tanhf(spectrum * (0.025f + (1.0f - character) * 0.025f) +
+                                 state2[voice] * character);
+      const float pan = 0.5f + ((voice / 3.0f) - 0.5f) * spread;
+      left += value * (1.0f - pan);
+      right += value * pan;
     }
-    destination[frame] = mix;
+    leftDestination[frame] = left;
+    rightDestination[frame] = right;
   }
 }
 
 void worker(void *) {
   for (;;) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    renderVoices(0, 2, requestedPartials, coreMix[0]);
+    renderVoices(0, 2, requestedPartials, coreLeft[0], coreRight[0]);
     xTaskNotifyGive(mainTask);
   }
 }
@@ -78,11 +120,48 @@ void renderBlock(uint8_t partialCount, float morph) {
   prepareSpectrum(partialCount, morph);
   requestedPartials = partialCount;
   xTaskNotifyGive(workerTask);
-  renderVoices(2, 4, partialCount, coreMix[1]);
+  renderVoices(2, 4, partialCount, coreLeft[1], coreRight[1]);
   ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  const float attackSeconds = 0.002f + spectralParams[10] * spectralParams[10] *
+                              (3.0f / (127.0f * 127.0f));
+  const float decaySeconds = 0.005f + spectralParams[11] * spectralParams[11] *
+                             (4.0f / (127.0f * 127.0f));
+  const float releaseSeconds = 0.005f + spectralParams[13] * spectralParams[13] *
+                               (6.0f / (127.0f * 127.0f));
+  const float sustain = spectralParams[12] / 127.0f;
+  const float cutoff = spectralParams[14] / 127.0f;
+  const float filterCoefficient = 0.002f + cutoff * cutoff * 0.65f;
+  const float resonance = spectralParams[15] / 127.0f * 0.65f;
+  const float drive = 1.0f + spectralParams[9] / 127.0f * 7.0f;
+  const float level = spectralParams[16] / 127.0f;
+  const float velocity = spectralVelocity / 127.0f;
+  const float attackStep = 1.0f / (kSampleRate * attackSeconds);
+  const float releaseStep = 1.0f / (kSampleRate * releaseSeconds);
+  const float decayDivisor = kSampleRate * decaySeconds;
   for (size_t frame = 0; frame < kBlockSamples; ++frame) {
-    const float mix = coreMix[0][frame] + coreMix[1][frame];
-    outputBlock[frame] = static_cast<int16_t>(constrain(mix * 7000.0f, -32768.0f, 32767.0f));
+    if (spectralGate && spectralEnabled) {
+      spectralEnvelope = min(1.0f, spectralEnvelope + attackStep);
+      if (spectralEnvelope >= 0.999f)
+        spectralEnvelope += (sustain - spectralEnvelope) / decayDivisor;
+    } else {
+      spectralEnvelope = max(0.0f, spectralEnvelope - releaseStep);
+    }
+    float samples[2] = {coreLeft[0][frame] + coreLeft[1][frame],
+                        coreRight[0][frame] + coreRight[1][frame]};
+    for (uint8_t channel = 0; channel < 2; ++channel) {
+      float &filter = channel ? filterRight : filterLeft;
+      const float raw = samples[channel] * 10500.0f * spectralEnvelope * velocity;
+      filter += filterCoefficient * (raw - filter);
+      float value = filter + (raw - filter) * resonance;
+      const float driven = value / 32768.0f * drive;
+      value = driven / (1.0f + fabsf(driven)) * (32768.0f / drive) * level;
+      outputInterleaved[frame * 2 + channel] =
+          static_cast<int16_t>(constrain(value, -32768.0f, 32767.0f));
+    }
+    outputBlock[frame] = static_cast<int16_t>((static_cast<int32_t>(outputInterleaved[frame * 2]) +
+                                               outputInterleaved[frame * 2 + 1]) / 2);
+    motionPhase += 0.00001f + spectralParams[7] / 127.0f * 0.0012f;
+    if (motionPhase > 2.0f * PI) motionPhase -= 2.0f * PI;
   }
 }
 
@@ -147,7 +226,90 @@ void runRealtimeI2S(uint32_t seconds) {
 }
 
 #ifdef AZ2_RACK_SLAVE
+HardwareSerial rackControl(2);
+
+void applySpectralPreset(uint8_t slot) {
+  if (slot < 8) memcpy(spectralParams, spectralPresets[slot], sizeof(spectralParams));
+}
+
+void handleRackCommand(const String &line) {
+  if (line == "RACK_ENGINE:SPECTRAL:ON") {
+    spectralEnabled = true;
+    rackControl.println("READY:ENGINE:ON");
+  } else if (line == "RACK_ENGINE:SPECTRAL:OFF") {
+    spectralEnabled = false;
+    spectralGate = false;
+    rackControl.println("READY:ENGINE:OFF");
+  } else if (line == "RACK:PANIC") {
+    spectralGate = false;
+    spectralEnvelope = 0.0f;
+    rackControl.println("READY:PANIC");
+  } else if (line.startsWith("RACK_NOTE_ON:SPECTRAL:")) {
+    const int split = line.lastIndexOf(':');
+    const int previous = line.lastIndexOf(':', split - 1);
+    spectralNote = constrain(line.substring(previous + 1, split).toInt(), 0, 127);
+    spectralVelocity = constrain(line.substring(split + 1).toInt(), 1, 127);
+    spectralGate = true;
+    spectralEnabled = true;
+    rackControl.printf("READY:NOTE_ON:%u:%u\n", spectralNote, spectralVelocity);
+  } else if (line.startsWith("RACK_NOTE_OFF:SPECTRAL:")) {
+    spectralGate = false;
+    rackControl.printf("READY:NOTE_OFF:%u\n", spectralNote);
+  } else if (line.startsWith("RACK_PARAM:SPECTRAL:")) {
+    const int split = line.lastIndexOf(':');
+    const int previous = line.lastIndexOf(':', split - 1);
+    const int parameter = line.substring(previous + 1, split).toInt();
+    const int value = line.substring(split + 1).toInt();
+    if (parameter >= 0 && parameter < 17 && value >= 0 && value <= 127) {
+      spectralParams[parameter] = static_cast<uint8_t>(value);
+      rackControl.printf("READY:PARAM:%d:%d\n", parameter, value);
+    } else {
+      rackControl.println("ERROR:PARAM");
+    }
+  } else if (line.startsWith("RACK_PATCH:SPECTRAL:")) {
+    const int slot = line.substring(line.lastIndexOf(':') + 1).toInt();
+    if (slot >= 0 && slot < 8) {
+      applySpectralPreset(slot);
+      rackControl.printf("READY:PATCH:%d\n", slot);
+    } else {
+      rackControl.println("ERROR:PATCH");
+    }
+  } else if (line.startsWith("RACK_PATCH_SAVE:SPECTRAL:")) {
+    const int slot = line.substring(line.lastIndexOf(':') + 1).toInt();
+    if (slot >= 0 && slot < 8) {
+      memcpy(spectralPresets[slot], spectralParams, sizeof(spectralParams));
+      rackControl.printf("READY:PATCH_SAVED:%d\n", slot);
+    } else {
+      rackControl.println("ERROR:PATCH_SAVE");
+    }
+  } else if (line == "RACK:STATUS") {
+    rackControl.printf("READY:STATUS:gate=%u:env=%.3f:note=%u:partials=%u:heap=%u\n",
+                       spectralGate, spectralEnvelope, spectralNote,
+                       1U + spectralParams[0] * 15U / 127U,
+                       static_cast<unsigned>(ESP.getFreeHeap()));
+  }
+}
+
+void readRackCommands() {
+  static String command;
+  while (rackControl.available()) {
+    const char c = static_cast<char>(rackControl.read());
+    if (c == '\r') continue;
+    if (c == '\n') {
+      command.trim();
+      if (command.length()) handleRackCommand(command);
+      command = "";
+    } else if (command.length() < 95) {
+      command += c;
+    } else {
+      command = "";
+    }
+  }
+}
+
 void runRackSlave() {
+  rackControl.begin(az2::spectral::kControlBaud, SERIAL_8N1,
+                    az2::spectral::kControlRxPin, az2::spectral::kControlTxPin);
   i2s.setPins(az2::spectral::kI2sBclkPin, az2::spectral::kI2sWsPin,
               az2::spectral::kI2sDataOutPin);
   if (!i2s.begin(I2S_MODE_STD, kSampleRate, I2S_DATA_BIT_WIDTH_32BIT,
@@ -160,10 +322,13 @@ void runRackSlave() {
                 az2::spectral::kI2sDataOutPin);
   uint32_t blocks = 0, shortWrites = 0, lastReport = millis();
   for (;;) {
-    renderBlock(kRealtimePartials, 0.5f + 0.5f * sinf(blocks * 0.003f));
+    readRackCommands();
+    const uint8_t partialCount = 1U + spectralParams[0] * 15U / 127U;
+    renderBlock(partialCount, spectralParams[1] / 127.0f);
     for (size_t frame = 0; frame < kBlockSamples; ++frame) {
-      rackOutputInterleaved[frame * 2] = static_cast<int32_t>(outputBlock[frame]) << 16;
-      rackOutputInterleaved[frame * 2 + 1] = static_cast<int32_t>(outputBlock[frame]) << 16;
+      rackOutputInterleaved[frame * 2] = static_cast<int32_t>(outputInterleaved[frame * 2]) << 16;
+      rackOutputInterleaved[frame * 2 + 1] =
+          static_cast<int32_t>(outputInterleaved[frame * 2 + 1]) << 16;
     }
     if (i2s.write(rackOutputInterleaved, sizeof(rackOutputInterleaved)) != sizeof(rackOutputInterleaved))
       ++shortWrites;

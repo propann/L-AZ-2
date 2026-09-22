@@ -157,6 +157,21 @@ sur un moteur purement synthétique.
 5. presets et sauvegarde projet ;
 6. tests audio séparés, combinés, séquenceur, panic et redémarrage.
 
+## État d'intégration — 22 septembre 2026
+
+- GRANULAR : moteur, paramètres, enveloppe, double banque PCM et transfert
+  non bloquant implémentés ; S3 agrégateur flashé.
+- SPECTRAL : 4 voix réparties sur les deux cœurs du WROOM, 1–16 partiels,
+  stéréo, enveloppe, filtre, drive, 17 paramètres et 8 presets implémentés.
+- Le S3 relaie à 115200 bauds les notes, paramètres, presets, status et panic
+  vers le WROOM sur GPIO4/GPIO5 ; son firmware est flashé.
+- Le Teensy relaie maintenant toutes les commandes `RACK_*` reçues de
+  l'écran ; son firmware est flashé.
+- L'écran possède une page dédiée **RACK EXTERNE** : sélection du moteur,
+  ON/OFF, presets, sauvegarde, paramètres paginés et note de test avec B.
+- Les firmwares WROOM spectral et écran compilent, mais restent à flasher sur
+  leurs cartes respectives avant le test audio complet.
+
 ## Validation matérielle du chargement PCM — 22 septembre 2026
 
 Premier transfert réel validé avec

@@ -257,7 +257,7 @@ bool inBox(int16_t x, int16_t y, int16_t bx, int16_t by, int16_t bw, int16_t bh)
 // ---------------------------------------------------------------------
 // Etat partage entre les pages / le lien Teensy
 // ---------------------------------------------------------------------
-enum class Screen : uint8_t { Menu, Controls, Audio, Sampler, Sequencer, Engines, Retro, Config, Links, About, Patch, Song, Project, Mixer };
+enum class Screen : uint8_t { Menu, Controls, Audio, Sampler, Sequencer, Engines, Retro, Config, Links, About, Patch, Song, Project, Mixer, Rack };
 Screen currentScreen = Screen::Menu;
 // "Retour" (2026-09-19, "il faut pas que ca revienne aux menu general
 // il faut que ca revienne d'un etage seulement") -- UN SEUL niveau
@@ -389,6 +389,7 @@ constexpr MenuItem kMenuItems[] = {
     {"SONG", "chaine les patterns", Screen::Song, MenuCat::Musique},
     {"PROJETS", "liste, charger et sauver", Screen::Project, MenuCat::Musique},
     {"AUDIO", "jouer le Teensy depuis l'ecran", Screen::Audio, MenuCat::Musique},
+    {"RACK EXTERNE", "granulaire + spectral", Screen::Rack, MenuCat::Musique},
     {"JEUX", "Game Boy / GBC (ROM sur carte SD)", Screen::Retro, MenuCat::Jeux},
     {"CONFIGURATION", "ecran de veille, reglages", Screen::Config, MenuCat::Config},
     {"CONTROLES", "croix + boutons + potards (Teensy)", Screen::Controls, MenuCat::Config},
@@ -3195,6 +3196,113 @@ bool hitTestMixerTrack(int16_t x, int16_t y, uint8_t &track) {
 }
 
 // ---------------------------------------------------------------------
+// Page RACK EXTERNE -- les deux DSP soudes au Teensy restent des moteurs
+// materiels uniques. Cette page edite leur patch partage sans les faire
+// passer pour des moteurs de piste internes.
+// ---------------------------------------------------------------------
+uint8_t rackUiEngine = az2::kRackEngineGranular;
+uint8_t rackUiPatch[az2::kRackEngineCount] = {};
+uint8_t rackUiPage[az2::kRackEngineCount] = {};
+bool rackUiEnabled[az2::kRackEngineCount] = {true, true};
+uint8_t rackUiParams[az2::kRackEngineCount][az2::kRackGranularParamCount] = {
+    {64, 52, 60, 64, 8, 32, 100, 0, 64, 0, 4, 35, 100, 45, 110, 20, 18, 100},
+    {96, 52, 18, 64, 64, 12, 90, 28, 54, 16, 4, 32, 100, 42, 112, 18},
+};
+constexpr uint8_t kRackUiRows = 6;
+constexpr int16_t kRackEngineY = 76;
+constexpr int16_t kRackPatchY = 120;
+constexpr int16_t kRackParamsY = 170;
+constexpr int16_t kRackParamH = 40;
+
+void sendRackEngineState() {
+  char msg[40];
+  snprintf(msg, sizeof(msg), "RACK_ENGINE:%s:%s", az2::kRackEngineNames[rackUiEngine],
+           rackUiEnabled[rackUiEngine] ? "ON" : "OFF");
+  sendToTeensy(msg);
+}
+
+void sendRackParam(uint8_t parameter) {
+  char msg[48];
+  snprintf(msg, sizeof(msg), "RACK_PARAM:%s:%u:%u", az2::kRackEngineNames[rackUiEngine],
+           parameter, rackUiParams[rackUiEngine][parameter]);
+  sendToTeensy(msg);
+}
+
+void drawRackPage() {
+  const uint16_t accent = rackUiEngine == az2::kRackEngineGranular ? kPalette[2] : kPalette[5];
+  drawSubHeader("RACK EXTERNE", accent);
+  drawEncoderHints("PARAM", "VALEUR");
+  gfx->setTextSize(2);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->drawRect(kMargin, kRackEngineY, kScreenSize - 2 * kMargin, 34, accent);
+  gfx->setCursor(kMargin + 10, kRackEngineY + 8);
+  gfx->printf("< %s >", az2::kRackEngineNames[rackUiEngine]);
+  gfx->setTextColor(rackUiEnabled[rackUiEngine] ? RGB565(70, 240, 110) : RGB565_RED);
+  gfx->setCursor(350, kRackEngineY + 8);
+  gfx->print(rackUiEnabled[rackUiEngine] ? "ON" : "OFF");
+
+  gfx->drawRect(kMargin, kRackPatchY, kScreenSize - 2 * kMargin, 34, kFaint);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(kMargin + 10, kRackPatchY + 8);
+  gfx->printf("PATCH < %s >", az2::rackPatchName(rackUiEngine, rackUiPatch[rackUiEngine]));
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(366, kRackPatchY + 5);
+  gfx->print("SAVE");
+
+  const uint8_t count = az2::rackParamCount(rackUiEngine);
+  const uint8_t first = rackUiPage[rackUiEngine] * kRackUiRows;
+  for (uint8_t row = 0; row < kRackUiRows; ++row) {
+    const int16_t y = kRackParamsY + row * kRackParamH;
+    const uint8_t parameter = first + row;
+    gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, kRackParamH - 4, RGB565_BLACK);
+    gfx->drawRect(kMargin, y, kScreenSize - 2 * kMargin, kRackParamH - 4,
+                  parameter < count ? kFaint : RGB565_BLACK);
+    if (parameter >= count) continue;
+    gfx->setTextSize(1);
+    gfx->setTextColor(accent);
+    gfx->setCursor(kMargin + 8, y + 5);
+    gfx->print(az2::rackParamName(rackUiEngine, parameter));
+    gfx->setTextSize(2);
+    gfx->setTextColor(RGB565_WHITE);
+    gfx->setCursor(350, y + 9);
+    gfx->printf("%3u", rackUiParams[rackUiEngine][parameter]);
+    gfx->setCursor(300, y + 9);
+    gfx->print("-");
+    gfx->setCursor(425, y + 9);
+    gfx->print("+");
+  }
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(kMargin, 422);
+  gfx->printf("PAGE %u/3     B:TEST  C:STOP  D:ON/OFF", rackUiPage[rackUiEngine] + 1);
+}
+
+void rackChangeEngine(int delta) {
+  rackUiEngine = static_cast<uint8_t>((rackUiEngine + az2::kRackEngineCount + delta) %
+                                      az2::kRackEngineCount);
+  drawRackPage();
+}
+
+void rackChangePatch(int delta) {
+  uint8_t &patch = rackUiPatch[rackUiEngine];
+  patch = static_cast<uint8_t>((patch + az2::kRackPatchCount + delta) % az2::kRackPatchCount);
+  char msg[40];
+  snprintf(msg, sizeof(msg), "RACK_PATCH:%s:%u", az2::kRackEngineNames[rackUiEngine], patch);
+  sendToTeensy(msg);
+  drawRackPage();
+}
+
+void rackChangeParam(uint8_t parameter, int delta) {
+  const uint8_t count = az2::rackParamCount(rackUiEngine);
+  if (parameter >= count) return;
+  uint8_t &value = rackUiParams[rackUiEngine][parameter];
+  value = static_cast<uint8_t>(constrain(static_cast<int>(value) + delta, 0, 127));
+  sendRackParam(parameter);
+  drawRackPage();
+}
+
+// ---------------------------------------------------------------------
 // Page SONG -- chainage de patterns, demande le 2026-09-16 ("c'est
 // plus un sequenceur qui peut nous permettre d'assembler des patterns,
 // mais il faut un tracker complet"). Modele Polyend (le plus simple des
@@ -4550,6 +4658,7 @@ void drawScreen(Screen s) {
     case Screen::Song: drawSongPage(); break;
     case Screen::Project: drawProjectPage(); break;
     case Screen::Mixer: drawMixerPage(); break;
+    case Screen::Rack: drawRackPage(); break;
   }
   flushUiCanvas();
 }
@@ -5345,6 +5454,18 @@ void handleTeensyLine(const String &line) {
             goTo(kMenuItems[items[menuSelected]].target);
           }
         }
+      }
+      if (currentScreen == Screen::Rack && letter == 'B') {
+        char msg[48];
+        snprintf(msg, sizeof(msg), "RACK_NOTE_%s:%s:48%s",
+                 pressed ? "ON" : "OFF", az2::kRackEngineNames[rackUiEngine],
+                 pressed ? ":110" : "");
+        sendToTeensy(msg);
+      }
+      if (pressed && currentScreen == Screen::Rack && letter == 'D') {
+        rackUiEnabled[rackUiEngine] = !rackUiEnabled[rackUiEngine];
+        sendRackEngineState();
+        drawRackPage();
       }
       // Page MOTEURS (2026-09-19) : A ouvre la page PATCH complete pour
       // le patch actuellement selectionne -- demande explicite ("si on
@@ -6954,6 +7075,35 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       } else if (hitTestPatchSlotLoad(x, y)) {
         loadPatchSlot(patchSlot);
       }
+    }
+  } else if (currentScreen == Screen::Rack) {
+    if (inBox(x, y, kMargin, kRackEngineY, 150, 34)) {
+      rackChangeEngine(-1);
+    } else if (inBox(x, y, kMargin + 150, kRackEngineY, 170, 34)) {
+      rackChangeEngine(1);
+    } else if (inBox(x, y, 330, kRackEngineY, 126, 34)) {
+      rackUiEnabled[rackUiEngine] = !rackUiEnabled[rackUiEngine];
+      sendRackEngineState();
+      drawRackPage();
+    } else if (inBox(x, y, kMargin, kRackPatchY, 180, 34)) {
+      rackChangePatch(-1);
+    } else if (inBox(x, y, kMargin + 180, kRackPatchY, 160, 34)) {
+      rackChangePatch(1);
+    } else if (inBox(x, y, 360, kRackPatchY, 96, 34)) {
+      char msg[48];
+      snprintf(msg, sizeof(msg), "RACK_PATCH_SAVE:%s:%u",
+               az2::kRackEngineNames[rackUiEngine], rackUiPatch[rackUiEngine]);
+      sendToTeensy(msg);
+    } else if (y >= kRackParamsY && y < kRackParamsY + kRackUiRows * kRackParamH) {
+      const uint8_t row = static_cast<uint8_t>((y - kRackParamsY) / kRackParamH);
+      const uint8_t parameter = rackUiPage[rackUiEngine] * kRackUiRows + row;
+      rackChangeParam(parameter, x < kScreenSize / 2 ? -4 : 4);
+    } else if (y >= 412) {
+      const uint8_t pages = static_cast<uint8_t>((az2::rackParamCount(rackUiEngine) +
+                                                  kRackUiRows - 1) / kRackUiRows);
+      rackUiPage[rackUiEngine] = static_cast<uint8_t>(
+          (rackUiPage[rackUiEngine] + (x < kScreenSize / 2 ? pages - 1 : 1)) % pages);
+      drawRackPage();
     }
   } else if (currentScreen == Screen::Mixer) {
     // Tap = SELECTIONNE seulement (meme convention que partout ce soir)

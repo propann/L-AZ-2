@@ -13,6 +13,6 @@ constexpr int8_t kI2sDataOutPin = 22;
 // Contrôle point-à-point avec le S3 agrégateur. Inutilisé dans le banc USB.
 constexpr int8_t kControlRxPin = 16;
 constexpr int8_t kControlTxPin = 17;
-constexpr uint32_t kControlBaud = 921600;
+constexpr uint32_t kControlBaud = 115200;
 
 }  // namespace az2::spectral

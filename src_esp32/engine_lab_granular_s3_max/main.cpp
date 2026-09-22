@@ -75,6 +75,7 @@ uint32_t crc32Byte(uint32_t crc, uint8_t value) {
 #endif
 #ifdef AZ2_RACK_AGGREGATOR
 HardwareSerial rackControl(1);
+HardwareSerial spectralControl(2);
 float rackGain = 0.0f;
 float rackTargetGain = 0.0f;
 float granularGain = 1.0f;
@@ -89,6 +90,7 @@ void handleRackCommand(const String &line, Stream &reply) {
   } else if (line == "RACK:OFF" || line == "RACK:PANIC" ||
              line == "PANIC" || line.startsWith("NOTE_OFF:")) {
     rackTargetGain = 0.0f;
+    if (line == "RACK:PANIC" || line == "PANIC") spectralControl.println("RACK:PANIC");
     reply.println("GMAX:RACK:AUDIO:OFF");
   } else if (line == "RACK_ENGINE:GRANULAR:ON") {
     granularTargetGain = 1.0f;
@@ -98,10 +100,24 @@ void handleRackCommand(const String &line, Stream &reply) {
     reply.println("GMAX:ENGINE:GRANULAR:OFF");
   } else if (line == "RACK_ENGINE:SPECTRAL:ON") {
     spectralTargetGain = 1.0f;
+    spectralControl.println(line);
     reply.println("GMAX:ENGINE:SPECTRAL:ON");
   } else if (line == "RACK_ENGINE:SPECTRAL:OFF") {
     spectralTargetGain = 0.0f;
+    spectralControl.println(line);
     reply.println("GMAX:ENGINE:SPECTRAL:OFF");
+  } else if (line.startsWith("RACK_NOTE_ON:SPECTRAL:") ||
+             line.startsWith("RACK_NOTE_OFF:SPECTRAL:") ||
+             line.startsWith("RACK_PARAM:SPECTRAL:") ||
+             line.startsWith("RACK_PATCH:SPECTRAL:") ||
+             line.startsWith("RACK_PATCH_SAVE:SPECTRAL:")) {
+    spectralControl.println(line);
+    if (line.startsWith("RACK_NOTE_ON:SPECTRAL:")) {
+      spectralTargetGain = 1.0f;
+      rackTargetGain = 1.0f;
+    }
+    reply.print("GMAX:SPECTRAL:FORWARDED:");
+    reply.println(line);
   } else if (line.startsWith("RACK_NOTE_ON:GRANULAR:")) {
     const int split = line.lastIndexOf(':');
     const int previous = line.lastIndexOf(':', split - 1);
@@ -146,6 +162,7 @@ void handleRackCommand(const String &line, Stream &reply) {
       reply.println("GMAX:SAMPLE:REJECTED");
     }
   } else if (line == "RACK:STATUS") {
+    spectralControl.println(line);
     reply.printf("GMAX:RACK:STATUS:gain=%.3f:target=%.1f:granular=%.3f/%.1f:spectral=%.3f/%.1f\n",
                  rackGain, rackTargetGain, granularGain, granularTargetGain,
                  spectralGain, spectralTargetGain);
@@ -359,6 +376,9 @@ void runRealtimeI2S(uint32_t seconds) {
 void runRackAggregator() {
   rackControl.begin(az2::rack::kControlBaud, SERIAL_8N1,
                     az2::rack::kControlRxPin, az2::rack::kControlTxPin);
+  spectralControl.begin(az2::rack::kControlBaud, SERIAL_8N1,
+                        az2::rack::kSpectralControlRxPin,
+                        az2::rack::kSpectralControlTxPin);
   i2s.setPins(az2::rack::kI2sBclkPin, az2::rack::kI2sWsPin,
               az2::rack::kI2sDataOutPin, az2::rack::kSpectralDataInPin);
 #ifdef AZ2_TEENSY_CLOCK_SLAVE
@@ -391,9 +411,28 @@ void runRackAggregator() {
   int64_t spectralEnergy = 0;
   uint32_t lastReport = millis();
   String usbCommand, teensyCommand;
+  String spectralReply;
   for (;;) {
     readRackCommands(Serial, usbCommand);
     readRackCommands(rackControl, teensyCommand);
+    while (spectralControl.available()) {
+      const char c = static_cast<char>(spectralControl.read());
+      if (c == '\r') continue;
+      if (c == '\n') {
+        spectralReply.trim();
+        if (spectralReply.length()) {
+          Serial.print("GMAX:SPECTRAL:REPLY:");
+          Serial.println(spectralReply);
+          rackControl.print("SPECTRAL:");
+          rackControl.println(spectralReply);
+        }
+        spectralReply = "";
+      } else if (spectralReply.length() < 95) {
+        spectralReply += c;
+      } else {
+        spectralReply = "";
+      }
+    }
 #ifdef AZ2_TEENSY_CLOCK_SLAVE
     const size_t received = i2s.readBytes(reinterpret_cast<char *>(rackInput32), sizeof(rackInput32));
     if (received != sizeof(rackInput32)) ++shortReads;
