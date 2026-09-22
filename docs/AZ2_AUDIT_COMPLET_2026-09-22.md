@@ -414,8 +414,52 @@ PSRAM quasi vides) ne justifie pas une refonte risquée du modèle
 d'allocation pour l'instant. Pas d'action prise sur ce point.
 
 Le Teensy a été laissé flashé avec `master_teensy` (production, avec les
-correctifs de cette session) ; l'écran avec `screen_esp` (idem). Aucun
-commit git n'a été fait — modifications encore dans l'arbre de travail.
+correctifs de cette session) ; l'écran avec `screen_esp` (idem).
+
+## Diagnostic du souffle DEXED (22 septembre, suite)
+
+Le blocage du diagnostic du 18/09 ("Fausse alerte sur SCOPE:", voir
+`AZ2_ETAT_DES_LIEUX.md`) était réel : `updateScope()` n'écrivait les
+paquets binaires que sur `Serial1` (liaison UART dédiée vers l'écran),
+jamais sur `Serial` (USB de debug) — aucun outil de l'époque n'y avait
+accès. Corrigé en miroitant aussi sur `Serial` (coût négligeable, actif
+uniquement quand `SCOPE:<piste>` est sélectionné) — **gardé en
+permanence**, pas seulement pour ce diagnostic.
+
+Capture en direct sur le vrai Teensy (piste 0, moteur DEXED, `TEST:0:60:1`
+pour déclencher une note hors séquenceur) :
+
+- Contrôle sur ANALOG (moteur confirmé propre) : onde parfaitement lisse,
+  saut max entre échantillons décimés consécutifs ≤ 11 sur toute la
+  capture — valide le pipeline de capture lui-même (pas d'artefact
+  introduit par la décimation/le tap).
+- DEXED, patch 0 ("BRASS 1", celui sur lequel `setTrackEngine()`
+  réinitialisait systématiquement `trackPatch[]`) : sauts jusqu'à 54,
+  restant élevés (30-36) pendant plusieurs secondes de note tenue — très
+  au-dessus du bruit de fond d'ANALOG.
+- Balayage de 8 patches (0, 10, 30, 50, 80, 120, 160, 200) : **patch 0 est
+  un cas isolé**, nettement pire que les 7 autres (sauts max 1-25 contre
+  30-54 pour le patch 0). Comme DEXED repart toujours du patch 0 à la
+  sélection, c'est le premier son garanti de quiconque essaie ce moteur —
+  cohérent avec le diagnostic du 18/09 ("bruit... dès qu'on déclenche une
+  note").
+
+Je n'ai pas pu trancher si le patch 0 lui-même est un bug du cœur FM ou un
+patch BRASS avec un feedback DX7 volontairement agressif (caractéristique
+connue de ce type de patch) — ça demande une oreille, que je n'ai pas.
+Correctif appliqué sans attendre cette réponse : `kDexedDefaultPatch = 120`
+("WATER GDN", le plus propre du balayage, sauts ≤ 6 sur 1,5 s de note
+tenue après flash — meilleur que le bruit de fond d'ANALOG) remplace le
+patch 0 comme point de départ de DEXED dans `setTrackEngine()`. Bug
+connexe corrigé au passage : `handleEngineCommand()` annonçait toujours
+`PATCH:<piste>:0` à l'écran après un changement de moteur, quel que soit
+le patch réellement chargé par `setTrackEngine()` — désynchronisait
+l'affichage pour DEXED (Teensy sur patch 120, écran affichant "BRASS 1").
+Utilise maintenant `trackPatch[track]`, la vraie valeur. Validé en direct :
+`PATCH:0:120` bien annoncé, `DXP:0:0:31`/`DXP:0:1:3` (algo/feedback) au
+lieu des valeurs du patch 0.
+
+Aucun commit git n'a été fait — modifications encore dans l'arbre de travail.
 
 ## Repères chiffrés
 

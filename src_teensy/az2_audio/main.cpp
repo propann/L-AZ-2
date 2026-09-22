@@ -79,6 +79,13 @@ constexpr uint8_t kLiveNotes = 4;      // polyphonie de la voix "jeu au clavier"
 // ne fait tourner update() QUE sur les objets "actifs" (au moins une
 // connexion), donc un moteur non selectionne ne consomme AUCUN CPU (voir
 // AudioStream.cpp: software_isr() -> "if (p->active) p->update();").
+// Patch DEXED de depart quand une piste selectionne ce moteur (voir
+// setTrackEngine()) -- PAS 0 (BRASS 1), mesure au scope le 2026-09-22
+// comme le patch le plus agressif de toute la banque de 255 (voir le
+// commentaire de setTrackEngine()). 120 = "WATER GDN", le plus propre des
+// 8 patches testes ce jour-la.
+constexpr uint8_t kDexedDefaultPatch = 120;
+
 AudioSynthDexed trackDexedEngine[kTrackCount] = {
     AudioSynthDexed(kNotesPerTrack, SAMPLE_RATE), AudioSynthDexed(kNotesPerTrack, SAMPLE_RATE),
     AudioSynthDexed(kNotesPerTrack, SAMPLE_RATE), AudioSynthDexed(kNotesPerTrack, SAMPLE_RATE),
@@ -1228,7 +1235,17 @@ void setTrackEngine(uint8_t track, uint8_t engine) {
   rackClaimOwnership(track, engine);
 
   trackEngine[track] = engine;
-  trackPatch[track] = 0;
+  // Patch 0 (BRASS 1) mesure comme un cas extreme du banc DEXED (diagnostic
+  // scope live du 2026-09-22, voir AZ2_AUDIT_COMPLET_2026-09-22.md) :
+  // discontinuites d'amplitude bien plus fortes et bien plus longues a se
+  // stabiliser que les 7 autres patches testes (feedback DX7 eleve, typique
+  // d'un preset BRASS agressif). Comme n'importe quelle selection de DEXED
+  // repart TOUJOURS du patch 0, c'est garanti le premier son entendu --
+  // kDexedDefaultPatch pointe plutot vers un patch mesure propre
+  // ("WATER GDN", discontinuites 1-4 sur tout l'essai) pour ne pas infliger
+  // le pire cas de la banque des le premier contact avec ce moteur. Les
+  // autres moteurs repartent bien de 0 comme avant.
+  trackPatch[track] = (engine == az2::kEngineDexed) ? kDexedDefaultPatch : 0;
 
   // patchTrackIn[] rebranche l'ENTREE de l'enveloppe partagee de la
   // piste (2026-09-18, voir le commentaire de trackAnalogEnv[]/
@@ -2222,11 +2239,15 @@ void handleEngineCommand(const String &line) {
 
   setTrackEngine(track, engine);
   relayLine(line);
-  // setTrackEngine() remet toujours le patch a 0 -- previens l'UI tout de
-  // suite, sinon elle resterait affichee sur l'ancien patch jusqu'au
-  // prochain changement.
-  az2::printPatchSelect(Serial, track, 0);
-  az2::printPatchSelect(Serial1, track, 0);
+  // setTrackEngine() remet toujours trackPatch[track] a une valeur de
+  // depart (0, sauf DEXED -> kDexedDefaultPatch, voir son commentaire) --
+  // previens l'UI tout de suite avec la VRAIE valeur, sinon elle resterait
+  // affichee sur l'ancien patch jusqu'au prochain changement. Envoyer un 0
+  // fixe ici desynchronisait l'ecran pour DEXED (2026-09-22, decouvert en
+  // reglant kDexedDefaultPatch) : le Teensy jouait le patch 120 mais
+  // l'ecran affichait "BRASS 1" (nom du patch 0).
+  az2::printPatchSelect(Serial, track, trackPatch[track]);
+  az2::printPatchSelect(Serial1, track, trackPatch[track]);
 }
 
 // PATCH:<piste 0-3>:<index de patch, voir az2::enginePatchCount(moteur actif)>
@@ -2886,6 +2907,18 @@ void updateScope() {
   Serial1.write(az2::kScopePacketMagic);
   Serial1.write(az2::kScopeSamplesPerPacket);
   Serial1.write(scopeBuf, az2::kScopeSamplesPerPacket);
+  // Miroir sur Serial (USB) en plus de Serial1 (2026-09-22, diagnostic
+  // souffle DEXED -- voir AZ2_AUDIT_COMPLET_2026-09-22.md) : le scope
+  // n'etait jusque-la observable que cote UART/ecran (voir
+  // AZ2_ETAT_DES_LIEUX.md, "Fausse alerte sur SCOPE:"), jamais depuis le
+  // port USB de debug seul -- ce qui avait bloque le diagnostic DEXED du
+  // 18/09. Garde volontairement (pas juste temporaire) : permet de
+  // deboguer le moteur audio avec uniquement le cable USB du Teensy, sans
+  // l'ecran branche. Cout negligeable (~1,5 Ko/s max, seulement quand
+  // SCOPE:<piste> est actif).
+  Serial.write(az2::kScopePacketMagic);
+  Serial.write(az2::kScopeSamplesPerPacket);
+  Serial.write(scopeBuf, az2::kScopeSamplesPerPacket);
 }
 
 // CPU? -- charge processeur et memoire audio reelles, demande le
