@@ -429,6 +429,9 @@ void runRackAggregator() {
   Serial.printf("GMAX:RACK:READY:role=%s:bclk=%d:ws=%d:dout=%d:din=%d\n",
                 rackRoleName, az2::rack::kI2sBclkPin, az2::rack::kI2sWsPin,
                 az2::rack::kI2sDataOutPin, az2::rack::kSpectralDataInPin);
+  // Le Teensy utilise ce signal pour recharger automatiquement le dernier
+  // PCM après un reset du S3 (la PSRAM n'est pas persistante).
+  rackControl.println("GMAX:RACK:READY");
 
   uint32_t blocks = 0, shortReads = 0, shortWrites = 0, maxRenderUs = 0;
   int64_t spectralEnergy = 0;

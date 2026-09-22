@@ -914,6 +914,9 @@ struct RackSampleTransfer {
 };
 
 RackSampleTransfer rackSampleTransfer;
+String rackReplyBuffer;
+bool rackAutoLoadPending = false;
+constexpr const char *kGranularStartupSample = "/samples/BASS/Bass_26.wav";
 
 void finishGranularSampleTransfer(const char *error = nullptr) {
   if (rackSampleTransfer.file) rackSampleTransfer.file.close();
@@ -1063,6 +1066,38 @@ void serviceGranularSampleTransfer() {
   Serial1.printf("GRANULAR_SAMPLE:SENT:path=%s:bytes=%lu:rate=%lu\n", xfer.path,
                  static_cast<unsigned long>(xfer.dataBytes), static_cast<unsigned long>(xfer.rate));
   finishGranularSampleTransfer();
+}
+
+void serviceRackReplies() {
+  while (Serial7.available()) {
+    const char c = static_cast<char>(Serial7.read());
+    if (c == '\r') continue;
+    if (c == '\n') {
+      rackReplyBuffer.trim();
+      if (rackReplyBuffer.length()) {
+        Serial.print("AZ2:RACK:REPLY:");
+        Serial.println(rackReplyBuffer);
+        Serial1.print("RACK_REPLY:");
+        Serial1.println(rackReplyBuffer);
+        if (rackReplyBuffer == "GMAX:RACK:READY") rackAutoLoadPending = true;
+      }
+      rackReplyBuffer = "";
+    } else if (rackReplyBuffer.length() < 127) {
+      rackReplyBuffer += c;
+    } else {
+      rackReplyBuffer = "";
+    }
+  }
+
+  if (rackAutoLoadPending &&
+      rackSampleTransfer.phase == RackSampleTransferPhase::Idle) {
+    rackAutoLoadPending = false;
+    if (SD.exists(kGranularStartupSample)) {
+      startWavToGranular(kGranularStartupSample);
+    } else {
+      Serial.println("GRANULAR_SAMPLE:AUTOLOAD:SKIP_NOT_FOUND");
+    }
+  }
 }
 #endif
 
@@ -4515,6 +4550,7 @@ void setup() {
 void loop() {
   readSerialCommands();
 #ifdef AZ2_EXTERNAL_RACK
+  serviceRackReplies();
   serviceGranularSampleTransfer();
 #endif
   reportGbAudioHealth();

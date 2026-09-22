@@ -199,5 +199,12 @@ l'UART. Le test matériel de `Bass_26.wav` a conservé le CRC `33F9A4AF`, attein
 100 % et maintenu `ring_drop=0` pendant toute l'opération. Le flux GB était
 inactif (`packets=0`) pendant ce premier contrôle : un essai simultané avec la
 console active reste nécessaire. Un nouveau chargement interrompt proprement
-l'ancien ; l'annulation explicite depuis l'interface reste à ajouter avec la
-future fenêtre PATCH.
+l'ancien ; une commande d'annulation explicite reste à ajouter dans la fenêtre
+PATCH existante.
+
+Révision de stabilité : le S3 annonce désormais son redémarrage au Teensy,
+qui recharge automatiquement `/samples/BASS/Bass_26.wav` dans la PSRAM. Le
+WROOM replie correctement les phases des partiels très aigus afin d'éviter les
+lectures hors table responsables de bips/craquements. Dans MOTEURS, un choix ne
+redessine plus l'écran complet : seules les lignes, presets et l'aperçu touchés
+sont actualisés.

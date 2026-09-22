@@ -83,7 +83,10 @@ void renderVoices(uint8_t firstVoice, uint8_t lastVoice, uint8_t partialCount,
         const float motion = 1.0f + sinf(motionPhase + voice * 1.7f + partial * 0.11f) *
                                       (spectralParams[7] / 127.0f) * 0.0025f;
         float nextPhase = phase[voice][partial] + phaseIncrement[voice][partial] * motion;
-        if (nextPhase >= kTableSize) nextPhase -= kTableSize;
+        // Les notes aiguës combinées aux partiels étirés peuvent avancer de
+        // plus d'une table par échantillon. Un seul retrait laissait alors
+        // lookup() lire hors tableau, source de bips/craquements aléatoires.
+        nextPhase -= floorf(nextPhase / kTableSize) * kTableSize;
         phase[voice][partial] = nextPhase;
         spectrum += lookup(nextPhase) * amplitude[partial];
       }

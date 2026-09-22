@@ -6053,6 +6053,7 @@ void handleTeensyLine(const String &line) {
       const uint8_t track = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
       const uint8_t engine = static_cast<uint8_t>(line.substring(i2 + 1).toInt());
       if (track < kSeqTrackCount && engine < az2::kEngineCount) {
+        const uint8_t previousEngine = trackEngine[track];
         trackEngine[track] = engine;
         if (currentScreen == Screen::Engines) {
           // Nouveau moteur = nombre de patches different -- repart du
@@ -6060,8 +6061,11 @@ void handleTeensyLine(const String &line) {
           // qui ne correspondrait plus a rien (voir drawEngPatchRow()).
           if (track == selectedEngineTrack) {
             engPatchScroll = 0;
+            drawEngListRow(previousEngine);
+            drawEngListRow(engine);
+            for (uint8_t row = 0; row < kEngListVisibleRows; ++row) drawEngPatchRow(row);
+            drawEngVisualizer();
           }
-          drawEngRow(track);
         } else if (currentScreen == Screen::Patch && track == patchTrack && !screensaverActive) {
           // Les lignes 2-5 changent de sens selon le moteur (ADSR vs
           // ALGO/FEEDBACK Dexed, voir patchRowLabel()), ET le nombre de
@@ -6119,7 +6123,10 @@ void handleTeensyLine(const String &line) {
               (patch < engPatchScroll || patch >= engPatchScroll + kEngListVisibleRows)) {
             engPatchScroll = (patch < kEngListVisibleRows) ? 0 : static_cast<uint16_t>(patch - kEngListVisibleRows + 1);
           }
-          drawEngRow(track);
+          if (track == selectedEngineTrack) {
+            for (uint8_t row = 0; row < kEngListVisibleRows; ++row) drawEngPatchRow(row);
+            drawEngVisualizer();
+          }
         } else if (currentScreen == Screen::Sequencer && track == selectedSeqTrack && !screensaverActive) {
           drawTrkSidePanel();
         } else if (currentScreen == Screen::Patch && track == patchTrack && !screensaverActive) {
