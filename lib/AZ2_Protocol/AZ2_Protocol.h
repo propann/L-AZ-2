@@ -461,9 +461,14 @@ constexpr uint8_t kEngineSampler = 5;
 // Moteur percussion leger de la bibliotheque Audio Teensy. Il utilise un
 // patch par piste et ne depend d'aucun sample externe.
 constexpr uint8_t kEngineDrum = 6;
-constexpr uint8_t kEngineCount = 7;
+constexpr uint8_t kEngineGranular = 7;
+constexpr uint8_t kEngineSpectral = 8;
+constexpr uint8_t kEngineCount = 9;
 
-constexpr const char *kEngineNames[kEngineCount] = {"DEXED", "EPIANO", "BRAIDS", "KARPLUS", "ANALOG", "SAMPLER", "DRUM"};
+constexpr const char *kEngineNames[kEngineCount] = {
+    "DEXED", "EPIANO", "BRAIDS", "KARPLUS", "ANALOG", "SAMPLER", "DRUM",
+    "GRANULAR", "SPECTRAL",
+};
 
 constexpr uint8_t kDexedPatchCount = 255;
 // 255 des 256 vrais patches d'usine du Yamaha DX7 original (banques
@@ -587,6 +592,34 @@ constexpr const char *kDrumPatchNames[kDrumPatchCount] = {
 constexpr uint8_t kSamplerModeOneShot = 0;
 constexpr uint8_t kSamplerModeGate = 1;
 
+constexpr uint8_t kRackPatchCount = 8;
+constexpr const char *kRackGranularPatchNames[kRackPatchCount] = {
+    "CLOUD", "DRONE", "DUST", "SHIMMER", "REVERSE", "TEXTURE", "FREEZE", "PERCUSSIVE",
+};
+constexpr const char *kRackSpectralPatchNames[kRackPatchCount] = {
+    "AIR", "WAVES", "GLASS", "CHOIR", "METAL", "SWARM", "ORGAN", "ABYSS",
+};
+constexpr uint8_t kRackGranularPresets[kRackPatchCount][18] = {
+    {64, 52, 60, 64, 8, 32, 100, 0, 64, 0, 4, 35, 100, 45, 110, 20, 18, 100},
+    {48, 112, 82, 52, 10, 42, 118, 8, 92, 0, 70, 62, 110, 96, 96, 28, 30, 106},
+    {70, 10, 18, 76, 64, 100, 127, 12, 28, 0, 0, 18, 74, 22, 124, 8, 12, 96},
+    {82, 74, 70, 88, 34, 54, 127, 4, 90, 0, 24, 48, 104, 72, 118, 24, 24, 100},
+    {56, 62, 54, 60, 18, 74, 112, 112, 76, 0, 8, 36, 100, 64, 108, 20, 22, 102},
+    {64, 38, 92, 64, 46, 127, 127, 30, 52, 0, 10, 44, 92, 70, 104, 32, 40, 98},
+    {40, 126, 90, 48, 4, 8, 118, 16, 110, 127, 80, 70, 120, 110, 88, 38, 34, 104},
+    {24, 18, 24, 52, 6, 18, 70, 0, 44, 0, 0, 16, 92, 20, 120, 12, 44, 112},
+};
+constexpr uint8_t kRackSpectralPresets[kRackPatchCount][17] = {
+    {72, 86, 8, 92, 64, 5, 110, 18, 78, 5, 30, 55, 100, 76, 118, 10, 94},
+    {96, 52, 14, 62, 64, 10, 100, 38, 66, 10, 18, 50, 104, 64, 108, 18, 102},
+    {112, 32, 28, 98, 78, 4, 116, 12, 42, 4, 2, 26, 92, 58, 122, 34, 92},
+    {88, 70, 5, 58, 52, 18, 92, 22, 92, 12, 34, 60, 112, 72, 104, 24, 104},
+    {127, 38, 82, 84, 74, 8, 104, 16, 35, 54, 1, 22, 96, 46, 116, 52, 94},
+    {104, 62, 24, 66, 58, 76, 127, 72, 58, 22, 8, 40, 90, 62, 110, 28, 94},
+    {80, 76, 0, 48, 90, 3, 54, 8, 104, 14, 2, 34, 120, 48, 114, 18, 108},
+    {127, 94, 54, 24, 40, 20, 118, 26, 112, 64, 44, 70, 108, 96, 72, 58, 112},
+};
+
 // uint16_t (pas uint8_t) depuis le passage de DEXED a 256 patches
 // (2026-09-18, voir kDexedPatchCount plus haut) -- un uint8_t aurait
 // tronque 256 en 0, transformant tout "% count" en division par zero
@@ -601,6 +634,8 @@ inline uint16_t enginePatchCount(uint8_t engine) {
     case kEngineAnalog: return kAnalogPatchCount;
     case kEngineSampler: return kSamplerPatchCount;
     case kEngineDrum: return kDrumPatchCount;
+    case kEngineGranular:
+    case kEngineSpectral: return kRackPatchCount;
     default: return 1;
   }
 }
@@ -614,6 +649,8 @@ inline const char *enginePatchName(uint8_t engine, uint8_t patch) {
     case kEngineAnalog: return patch < kAnalogPatchCount ? kAnalogPatchNames[patch] : "?";
     case kEngineSampler: return patch < kSamplerPatchCount ? kSamplerPatchNames[patch] : "?";
     case kEngineDrum: return patch < kDrumPatchCount ? kDrumPatchNames[patch] : "?";
+    case kEngineGranular: return patch < kRackPatchCount ? kRackGranularPatchNames[patch] : "?";
+    case kEngineSpectral: return patch < kRackPatchCount ? kRackSpectralPatchNames[patch] : "?";
     default: return "?";
   }
 }
@@ -631,7 +668,6 @@ constexpr uint8_t kRackEngineSpectral = 1;
 constexpr uint8_t kRackEngineCount = 2;
 constexpr uint8_t kRackGranularParamCount = 18;
 constexpr uint8_t kRackSpectralParamCount = 17;
-constexpr uint8_t kRackPatchCount = 8;
 
 constexpr const char *kRackEngineNames[kRackEngineCount] = {"GRANULAR", "SPECTRAL"};
 constexpr const char *kRackGranularParamNames[kRackGranularParamCount] = {
@@ -643,12 +679,6 @@ constexpr const char *kRackSpectralParamNames[kRackSpectralParamCount] = {
     "PARTIALS", "MORPH", "STRETCH", "TILT", "ODD/EVEN", "DETUNE", "SPREAD",
     "MOTION", "CHARACTER", "DRIVE", "ATTACK", "DECAY", "SUSTAIN", "RELEASE",
     "CUTOFF", "RESONANCE", "LEVEL",
-};
-constexpr const char *kRackGranularPatchNames[kRackPatchCount] = {
-    "CLOUD", "DRONE", "DUST", "SHIMMER", "REVERSE", "TEXTURE", "FREEZE", "PERCUSSIVE",
-};
-constexpr const char *kRackSpectralPatchNames[kRackPatchCount] = {
-    "AIR", "WAVES", "GLASS", "CHOIR", "METAL", "SWARM", "ORGAN", "ABYSS",
 };
 
 inline uint8_t rackParamCount(uint8_t engine) {

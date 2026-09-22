@@ -4,6 +4,7 @@
 #include <math.h>
 
 #include "rack_pins.h"
+#include "AZ2_Protocol.h"
 #include "../../src_teensy/az2_audio/az2_sampler_data.h"
 
 namespace {
@@ -51,18 +52,27 @@ uint8_t granularParams[18] = {
     64, 52, 60, 64, 8, 32, 100, 0, 64, 0,
     4, 35, 100, 45, 110, 20, 18, 100,
 };
+uint8_t granularPresets[az2::kRackPatchCount][az2::kRackGranularParamCount];
 uint8_t granularNote = 60;
 uint8_t granularVelocity = 100;
 bool granularGate = false;
 float granularEnvelope = 0.0f;
 float granularFilterL = 0.0f;
 float granularFilterR = 0.0f;
+// Frequence d'echantillonnage de la derniere source recue (WAV envoye par
+// le Teensy, voir RACK:WAV_SAMPLE: plus bas) -- utilisee par resetGrain()
+// pour corriger le pas de lecture des grains si cette frequence differe de
+// kSampleRate. Doit rester declaree MEME hors AZ2_RACK_AGGREGATOR (erreur
+// de compilation trouvee le 2026-09-22 : resetGrain() n'est PAS conditionne
+// par cette macro, contrairement au reste de l'etat de reception WAV
+// ci-dessous) -- par defaut = kSampleRate, donc ratio 1.0 (pas de
+// resampling) sur les bancs qui n'ont jamais recu de flux WAV.
+uint32_t sampleRxRate = 44100;
 #ifdef AZ2_RACK_AGGREGATOR
 size_t sampleRxBytesRemaining = 0;
 size_t sampleRxBytesExpected = 0;
 size_t sampleRxOffset = 0;
 size_t sampleRxSamples = 0;
-uint32_t sampleRxRate = 44100;
 uint32_t sampleRxExpectedCrc = 0;
 uint32_t sampleRxCrc = 0xFFFFFFFFU;
 
@@ -140,6 +150,19 @@ void handleRackCommand(const String &line, Stream &reply) {
       reply.printf("GMAX:PARAM:GRANULAR:%d:%d\n", parameter, value);
     } else {
       reply.println("GMAX:PARAM:ERROR");
+    }
+  } else if (line.startsWith("RACK_PATCH:GRANULAR:")) {
+    const int slot = line.substring(line.lastIndexOf(':') + 1).toInt();
+    if (slot >= 0 && slot < az2::kRackPatchCount) {
+      memcpy(granularParams, granularPresets[slot], sizeof(granularParams));
+      initialiseGrains(static_cast<uint16_t>(8U + granularParams[2] * 56U / 127U));
+      reply.printf("GMAX:PATCH:GRANULAR:%d\n", slot);
+    }
+  } else if (line.startsWith("RACK_PATCH_SAVE:GRANULAR:")) {
+    const int slot = line.substring(line.lastIndexOf(':') + 1).toInt();
+    if (slot >= 0 && slot < az2::kRackPatchCount) {
+      memcpy(granularPresets[slot], granularParams, sizeof(granularParams));
+      reply.printf("GMAX:PATCH_SAVED:GRANULAR:%d\n", slot);
     }
   } else if (line.startsWith("RACK_SAMPLE_BEGIN:")) {
     const int p3 = line.lastIndexOf(':');
@@ -527,6 +550,7 @@ void setup() {
   Serial.printf("GMAX:BOOT:chip=%s:cores=%u:cpu_mhz=%u:flash=%u:psram=%u\n",
                 ESP.getChipModel(), ESP.getChipCores(), ESP.getCpuFreqMHz(),
                 ESP.getFlashChipSize(), ESP.getPsramSize());
+  memcpy(granularPresets, az2::kRackGranularPresets, sizeof(granularPresets));
   if (!psramFound() || ESP.getPsramSize() < kSourceCapacityBytes * 2U) {
     Serial.println("GMAX:FAIL:PSRAM");
     return;

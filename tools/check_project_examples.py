@@ -11,11 +11,39 @@ PROJECTS = tuple(Path(f"projects/{slot}.proj") for slot in range(5)) + (
 EXPECTED_STEPS = {(pattern, track, step) for pattern in range(8)
                   for track in range(8) for step in range(16)}
 PROTOCOL = Path("lib/AZ2_Protocol/AZ2_Protocol.h").read_text()
-ENGINE_NAMES = ("Dexed", "EPiano", "Braids", "Karplus", "Analog", "Sampler")
-ENGINE_PATCH_COUNTS = tuple(
-    int(re.search(rf"k{name}PatchCount\s*=\s*(\d+)", PROTOCOL).group(1))
-    for name in ENGINE_NAMES
+
+
+def _protocol_int(name: str) -> int:
+    match = re.search(rf"\bconstexpr\s+uint8_t\s+{name}\s*=\s*(\d+)", PROTOCOL)
+    assert match, f"{name} introuvable dans AZ2_Protocol.h"
+    return int(match.group(1))
+
+
+ENGINE_COUNT = _protocol_int("kEngineCount")
+# Un compte de patches par moteur, DANS L'ORDRE de az2::kEngine* (0=DEXED..
+# 8=SPECTRAL, voir kEngineNames[] dans AZ2_Protocol.h -- meme convention
+# que engineName()/enginePatchCount() cote C++). GRANULAR/SPECTRAL
+# partagent kRackPatchCount (pas de kGranularPatchCount/kSpectralPatchCount
+# dedie, voir enginePatchCount()).
+#
+# Avant le 2026-09-22 (audit complet), cette liste s'arretait a SAMPLER (6
+# entrees) alors que az2::kEngineCount valait deja 9 (DRUM, puis
+# GRANULAR/SPECTRAL) -- la verification de borne ci-dessous utilisait donc
+# un plafond perime, invisible tant qu'aucun projet fourni n'utilisait un
+# moteur >= 6 (CI verte par absence de cas de test, pas par correction).
+# L'assertion juste en dessous fait desormais echouer ce script bruyamment,
+# plutot que de sous-valider en silence, si un moteur est ajoute/retire
+# dans AZ2_Protocol.h sans repercuter le changement ici.
+ENGINE_PATCH_COUNT_NAMES = (
+    "kDexedPatchCount", "kEPianoPatchCount", "kBraidsPatchCount",
+    "kKarplusPatchCount", "kAnalogPatchCount", "kSamplerPatchCount",
+    "kDrumPatchCount", "kRackPatchCount", "kRackPatchCount",
 )
+assert len(ENGINE_PATCH_COUNT_NAMES) == ENGINE_COUNT, (
+    f"az2::kEngineCount = {ENGINE_COUNT} mais ENGINE_PATCH_COUNT_NAMES n'a "
+    f"que {len(ENGINE_PATCH_COUNT_NAMES)} entrees dans "
+    f"{Path(__file__).name} -- mets a jour cette liste.")
+ENGINE_PATCH_COUNTS = tuple(_protocol_int(name) for name in ENGINE_PATCH_COUNT_NAMES)
 
 
 def check_project(path: Path) -> None:

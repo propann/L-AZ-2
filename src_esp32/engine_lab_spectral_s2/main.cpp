@@ -4,6 +4,7 @@
 #include <math.h>
 
 #include "rack_pins.h"
+#include "AZ2_Protocol.h"
 
 namespace {
 constexpr uint32_t kSampleRate = 44100;
@@ -39,16 +40,7 @@ float spectralEnvelope = 0.0f;
 float filterLeft = 0.0f, filterRight = 0.0f;
 float motionPhase = 0.0f;
 
-uint8_t spectralPresets[8][17] = {
-    {72, 86, 8, 92, 64, 5, 110, 18, 78, 5, 30, 55, 100, 76, 118, 10, 94},   // AIR
-    {96, 52, 14, 62, 64, 10, 100, 38, 66, 10, 18, 50, 104, 64, 108, 18, 102}, // WAVES
-    {112, 32, 28, 98, 78, 4, 116, 12, 42, 4, 2, 26, 92, 58, 122, 34, 92},    // GLASS
-    {88, 70, 5, 58, 52, 18, 92, 22, 92, 12, 34, 60, 112, 72, 104, 24, 104},  // CHOIR
-    {127, 38, 82, 84, 74, 8, 104, 16, 35, 54, 1, 22, 96, 46, 116, 52, 94},   // METAL
-    {104, 62, 24, 66, 58, 76, 127, 72, 58, 22, 8, 40, 90, 62, 110, 28, 94},  // SWARM
-    {80, 76, 0, 48, 90, 3, 54, 8, 104, 14, 2, 34, 120, 48, 114, 18, 108},    // ORGAN
-    {127, 94, 54, 24, 40, 20, 118, 26, 112, 64, 44, 70, 108, 96, 72, 58, 112}, // ABYSS
-};
+uint8_t spectralPresets[az2::kRackPatchCount][az2::kRackSpectralParamCount];
 
 inline float lookup(float p) {
   const uint32_t whole = static_cast<uint32_t>(p);
@@ -351,6 +343,7 @@ void setup() {
   delay(1500);
   for (size_t index = 0; index < kTableSize; ++index)
     sineTable[index] = sinf(2.0f * PI * index / kTableSize);
+  memcpy(spectralPresets, az2::kRackSpectralPresets, sizeof(spectralPresets));
   mainTask = xTaskGetCurrentTaskHandle();
   xTaskCreatePinnedToCore(worker, "spectral-core0", 4096, nullptr, 3, &workerTask, 0);
   Serial.printf("SPECTRAL:BOOT:chip=%s:revision=%u:cores=%u:cpu_mhz=%u:psram=%u\n",

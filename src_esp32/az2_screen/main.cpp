@@ -257,7 +257,7 @@ bool inBox(int16_t x, int16_t y, int16_t bx, int16_t by, int16_t bw, int16_t bh)
 // ---------------------------------------------------------------------
 // Etat partage entre les pages / le lien Teensy
 // ---------------------------------------------------------------------
-enum class Screen : uint8_t { Menu, Controls, Audio, Sampler, Sequencer, Engines, Retro, Config, Links, About, Patch, Song, Project, Mixer, Rack };
+enum class Screen : uint8_t { Menu, Controls, Audio, Sampler, Sequencer, Engines, Retro, Config, Links, About, Patch, Song, Project, Mixer };
 Screen currentScreen = Screen::Menu;
 // "Retour" (2026-09-19, "il faut pas que ca revienne aux menu general
 // il faut que ca revienne d'un etage seulement") -- UN SEUL niveau
@@ -389,7 +389,6 @@ constexpr MenuItem kMenuItems[] = {
     {"SONG", "chaine les patterns", Screen::Song, MenuCat::Musique},
     {"PROJETS", "liste, charger et sauver", Screen::Project, MenuCat::Musique},
     {"AUDIO", "jouer le Teensy depuis l'ecran", Screen::Audio, MenuCat::Musique},
-    {"RACK EXTERNE", "granulaire + spectral", Screen::Rack, MenuCat::Musique},
     {"JEUX", "Game Boy / GBC (ROM sur carte SD)", Screen::Retro, MenuCat::Jeux},
     {"CONFIGURATION", "ecran de veille, reglages", Screen::Config, MenuCat::Config},
     {"CONTROLES", "croix + boutons + potards (Teensy)", Screen::Controls, MenuCat::Config},
@@ -1513,6 +1512,15 @@ void drawSequencerPage() {
 uint8_t trackEngine[kSeqTrackCount] = {az2::kEngineAnalog, az2::kEngineAnalog, az2::kEngineEPiano, az2::kEngineBraids,
                                       az2::kEngineAnalog, az2::kEngineAnalog, az2::kEngineEPiano, az2::kEngineBraids};
 uint8_t trackPatch[kSeqTrackCount] = {0, 0, 0, 0, 0, 0, 0, 0};
+
+// Annonce par announceHello() cote Teensy (RACK_CAP:0/1, audit 2026-09-22) :
+// vrai seulement si CE Teensy est compile avec AZ2_EXTERNAL_RACK, donc si
+// GRANULAR/SPECTRAL produisent reellement un son. Faux par defaut (avant
+// le premier HELLO) -- comportement le plus sur, la liste MOTEURS grise
+// ces deux entrees tant qu'on n'a pas la confirmation du Teensy en face.
+// Mise a jour dans handleTeensyLine(), lue par drawEngListRow().
+bool teensyRackCapable = false;
+
 // Mute/solo (MUTE:/SOLO:, priorite #1 de la liste indispensable) --
 // bascules cote Teensy dans trackMuted[]/trackSoloed[]/trackEffectiveGain(),
 // voir le piege Braids documente dans AZ2_FEUILLE_DE_ROUTE.md.
@@ -1563,7 +1571,7 @@ constexpr int16_t kEngListRightX = kMargin + kEngListLeftW + kEngGap;
 constexpr int16_t kEngListRightW = kScreenSize - 2 * kMargin - kEngListLeftW - kEngGap;
 // Sept moteurs tiennent dans la page avec une hauteur compacte ; le même
 // gabarit reste lisible lorsque le catalogue repasse à six.
-constexpr int16_t kEngListRowH = 36;
+constexpr int16_t kEngListRowH = 28;
 // 6 -- tombe pile sur le nombre de moteurs (liste gauche jamais
 // scrollee), la liste PATCH (droite) partage la meme fenetre/hauteur
 // et defile au-dela (voir engPatchScroll), meme principe que
@@ -1619,7 +1627,14 @@ void drawEngListRow(uint8_t engineIdx) {
     }
   }
   gfx->setTextSize(2);
-  gfx->setTextColor(isCurrent ? RGB565_BLACK : RGB565_WHITE);
+  // Texte attenue pour GRANULAR/SPECTRAL si ce Teensy n'a pas confirme
+  // AZ2_EXTERNAL_RACK (RACK_CAP:, voir teensyRackCapable/handleTeensyLine())
+  // -- avant ce garde-fou (audit 2026-09-22), ces deux entrees se
+  // selectionnaient normalement sur le couple de firmwares de production
+  // sans jamais produire le moindre son.
+  const bool rackDisabled = !teensyRackCapable &&
+      (engineIdx == az2::kEngineGranular || engineIdx == az2::kEngineSpectral);
+  gfx->setTextColor(isCurrent ? RGB565_BLACK : (rackDisabled ? kFaint : RGB565_WHITE));
   gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(y + h / 2 - 8));
   gfx->print(az2::engineName(engineIdx));
 }
@@ -1859,6 +1874,45 @@ uint8_t trackRelease[kSeqTrackCount];
 // convention DX7 1-32), feedback 0-7.
 uint8_t trackAlgo[kSeqTrackCount] = {};
 uint8_t trackFeedback[kSeqTrackCount] = {};
+uint8_t rackParamVal[kSeqTrackCount][az2::kRackGranularParamCount] = {};
+uint8_t patchExtraVal[kSeqTrackCount][17] = {};
+
+// Miroir cote ecran de rackOwnerTrack[] (source de verite cote Teensy,
+// voir son commentaire dans src_teensy/az2_audio/main.cpp) -- tenu a jour
+// par les echos RACK_OWNER: (handleTeensyLine()). -1 = pas encore connu/
+// libre. GRANULAR et SPECTRAL n'existant qu'en un seul exemplaire
+// physique sur le rack externe, seule la piste proprietaire doit
+// envoyer RACK_PARAM: en direct (sendPatchExtra()/patchApplyDelta(),
+// SEUL chemin qui contourne le modele par piste normal -- voir le
+// commentaire de rackClaimOwnership() cote Teensy).
+int8_t rackOwnerTrack[az2::kRackEngineCount] = {-1, -1};
+
+bool isRackTrack(uint8_t track) {
+  return trackEngine[track] == az2::kEngineGranular ||
+         trackEngine[track] == az2::kEngineSpectral;
+}
+uint8_t rackEngineForTrack(uint8_t track) {
+  return trackEngine[track] == az2::kEngineGranular ? az2::kRackEngineGranular
+                                                    : az2::kRackEngineSpectral;
+}
+// false si "track" s'est fait voler son moteur rack par une autre piste
+// (voir rackOwnerTrack[] plus haut) -- utilise pour ne PAS envoyer
+// RACK_PARAM: en direct depuis une piste qui ne controle plus la voix
+// physique (sendPatchExtra()/patchApplyDelta()).
+bool isRackOwner(uint8_t track) {
+  return isRackTrack(track) && rackOwnerTrack[rackEngineForTrack(track)] == static_cast<int8_t>(track);
+}
+void loadRackPresetValues(uint8_t track, uint8_t patch) {
+  if (!isRackTrack(track) || patch >= az2::kRackPatchCount) return;
+  const uint8_t count = az2::rackParamCount(rackEngineForTrack(track));
+  for (uint8_t parameter = 0; parameter < count; ++parameter) {
+    const uint8_t value = trackEngine[track] == az2::kEngineGranular
+                              ? az2::kRackGranularPresets[patch][parameter]
+                              : az2::kRackSpectralPresets[patch][parameter];
+    rackParamVal[track][parameter] = value;
+    if (parameter >= 6) patchExtraVal[track][parameter - 6] = value;
+  }
+}
 const char *const kPatchLabels[6] = {"CUTOFF", "RESONANCE", "ATTACK", "DECAY", "SUSTAIN", "RELEASE"};
 const char *const kPatchLabelsDexed[6] = {"CUTOFF", "RESONANCE", "ALGO (DX7)", "FEEDBACK", "--", "--"};
 
@@ -1877,6 +1931,7 @@ bool patchRowActive(uint8_t track, uint8_t row) {
 }
 
 const char *patchRowLabel(uint8_t track, uint8_t row) {
+  if (isRackTrack(track)) return az2::rackParamName(rackEngineForTrack(track), row);
   return (trackEngine[track] == az2::kEngineDexed) ? kPatchLabelsDexed[row] : kPatchLabels[row];
 }
 
@@ -1895,6 +1950,7 @@ uint8_t patchRowMax(uint8_t track, uint8_t row) {
 // jamais envoyes -- voir patchRowActive(), la page ne dessine ni
 // n'autorise le toucher dessus).
 uint8_t &patchParamRef(uint8_t track, uint8_t row) {
+  if (isRackTrack(track)) return rackParamVal[track][row];
   if (trackEngine[track] == az2::kEngineDexed) {
     switch (row) {
       case 0: return trackCutoff[track];
@@ -1932,6 +1988,8 @@ uint8_t patchExtraCount(uint8_t track) {
     case az2::kEngineEPiano: return 12;  // les 12 parametres continus mdaEPiano
     case az2::kEngineBraids: return 2;   // color, timbre (shape reste sur la page MOTEURS)
     case az2::kEngineSampler: return 1;  // MODE: one-shot ou gate
+    case az2::kEngineGranular: return az2::kRackGranularParamCount - 6;
+    case az2::kEngineSpectral: return az2::kRackSpectralParamCount - 6;
     default: return 0;
   }
 }
@@ -2062,6 +2120,9 @@ const char *patchExtraLabel(uint8_t track, uint8_t extraIdx) {
     case az2::kEngineEPiano: return kEPianoExtraLabel[extraIdx];
     case az2::kEngineBraids: return kBraidsExtraLabel[extraIdx];
     case az2::kEngineSampler: return "MODE";
+    case az2::kEngineGranular:
+    case az2::kEngineSpectral:
+      return az2::rackParamName(rackEngineForTrack(track), extraIdx + 6);
     default: return "?";
   }
 }
@@ -2084,11 +2145,10 @@ uint8_t patchExtraMax(uint8_t track, uint8_t extraIdx) {
 // grand des 3 moteurs concernes (DEXED), reutilise tel quel pour
 // EPIANO (12) et BRAIDS (2), le reste de la ligne n'etant simplement
 // jamais lu/affiche pour ces moteurs (voir patchExtraCount()).
-uint8_t patchExtraVal[kSeqTrackCount][17] = {};
 uint8_t trackSamplerGate[kSeqTrackCount] = {};
 
 void sendPatchExtra(uint8_t track, uint8_t extraIdx) {
-  char msg[24];
+  char msg[48];
   switch (trackEngine[track]) {
     case az2::kEngineDexed:
       snprintf(msg, sizeof(msg), "DXR:%d:%d:%d", track, kDexedExtraRaw[extraIdx], patchExtraVal[track][extraIdx]);
@@ -2101,6 +2161,20 @@ void sendPatchExtra(uint8_t track, uint8_t extraIdx) {
       break;
     case az2::kEngineSampler:
       snprintf(msg, sizeof(msg), "SMODE:%d:%d", track, patchExtraVal[track][extraIdx] ? 1 : 0);
+      break;
+    case az2::kEngineGranular:
+    case az2::kEngineSpectral:
+      // Garde localement la valeur voulue meme si "track" n'est plus
+      // proprietaire (reprend effet des qu'elle reclame le moteur, voir
+      // ENGINE: -> setTrackEngine()), mais n'envoie RACK_PARAM: QUE si
+      // elle l'est encore : ce message ne porte aucun identifiant de
+      // piste (voir isRackOwner()) et irait sinon perturber la piste qui
+      // possede reellement la voix physique.
+      rackParamVal[track][extraIdx + 6] = patchExtraVal[track][extraIdx];
+      if (!isRackOwner(track)) return;
+      snprintf(msg, sizeof(msg), "RACK_PARAM:%s:%d:%d",
+               az2::kRackEngineNames[rackEngineForTrack(track)], extraIdx + 6,
+               patchExtraVal[track][extraIdx]);
       break;
     default:
       return;
@@ -2400,7 +2474,7 @@ void drawPatchExtraRow(uint8_t logicalRow) {
 
 void sendPatchFilt() {
   const uint8_t t = static_cast<uint8_t>(patchTrack);
-  char msg[24];
+  char msg[48];
   snprintf(msg, sizeof(msg), "FILT:%d:%d:%d", patchTrack, trackCutoff[t], trackReso[t]);
   sendToTeensy(msg);
 }
@@ -2791,6 +2865,14 @@ void savePatchSlot(uint8_t slot) {
   const bool ok = atomicSaveFile(path, [&](File &f) {
     f.printf("%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", trackEngine[t], trackPatch[t], trackCutoff[t], trackReso[t],
               trackAttack[t], trackDecay[t], trackSustain[t], trackRelease[t], trackAlgo[t], trackFeedback[t]);
+    if (isRackTrack(t)) {
+      f.print("RACK");
+      const uint8_t count = az2::rackParamCount(rackEngineForTrack(t));
+      for (uint8_t parameter = 0; parameter < count; ++parameter) {
+        f.printf(",%u", rackParamVal[t][parameter]);
+      }
+      f.println();
+    }
   });
   if (!ok) {
     Serial.print("PATCH_SAVE_ERROR:");
@@ -2815,6 +2897,7 @@ void loadPatchSlot(uint8_t slot) {
   }
   String line = f.readStringUntil('\n');
   if (line == "AZ2V2") line = f.readStringUntil('\n');
+  const String rackLine = f.available() ? f.readStringUntil('\n') : String();
   f.close();
 
   int vals[10] = {};
@@ -2836,7 +2919,7 @@ void loadPatchSlot(uint8_t slot) {
   const bool hasDxp = (idx >= 10);
 
   const uint8_t t = static_cast<uint8_t>(patchTrack);
-  char msg[24];
+  char msg[48];
   snprintf(msg, sizeof(msg), "ENGINE:%d:%d", t, vals[0]);
   sendToTeensy(msg);
   snprintf(msg, sizeof(msg), "PATCH:%d:%d", t, vals[1]);
@@ -2853,6 +2936,23 @@ void loadPatchSlot(uint8_t slot) {
     sendToTeensy(msg);
     snprintf(msg, sizeof(msg), "DXP:%d:1:%d", t, vals[9]);
     sendToTeensy(msg);
+  }
+  if ((vals[0] == az2::kEngineGranular || vals[0] == az2::kEngineSpectral) &&
+      rackLine.startsWith("RACK,")) {
+    const uint8_t rackEngine = vals[0] == az2::kEngineGranular
+                                   ? az2::kRackEngineGranular : az2::kRackEngineSpectral;
+    const uint8_t count = az2::rackParamCount(rackEngine);
+    int position = 5;
+    for (uint8_t parameter = 0; parameter < count; ++parameter) {
+      const int comma = rackLine.indexOf(',', position);
+      const String field = comma < 0 ? rackLine.substring(position)
+                                     : rackLine.substring(position, comma);
+      const int value = constrain(field.toInt(), 0, 127);
+      snprintf(msg, sizeof(msg), "RACK_PARAM:%s:%u:%d",
+               az2::kRackEngineNames[rackEngine], parameter, value);
+      sendToTeensy(msg);
+      position = comma < 0 ? rackLine.length() : comma + 1;
+    }
   }
   Serial.print("PATCH_LOADED:");
   Serial.println(path);
@@ -3027,7 +3127,17 @@ void patchApplyDelta(uint8_t t, int delta) {
     param = static_cast<uint8_t>(constrain(static_cast<int>(param) + delta, 0,
                                              static_cast<int>(patchRowMax(t, static_cast<uint8_t>(selectedPatchRow)))));
     drawPatchRow(static_cast<uint8_t>(selectedPatchRow));
-    if (selectedPatchRow < 2) {
+    if (isRackTrack(t)) {
+      // Valeur locale (param, reference dans rackParamVal[]) deja mise a
+      // jour ci-dessus meme si "t" n'est plus proprietaire -- seul
+      // l'envoi reel est conditionne, voir isRackOwner().
+      if (isRackOwner(t)) {
+        char msg[48];
+        snprintf(msg, sizeof(msg), "RACK_PARAM:%s:%d:%d",
+                 az2::kRackEngineNames[rackEngineForTrack(t)], selectedPatchRow, param);
+        sendToTeensy(msg);
+      }
+    } else if (selectedPatchRow < 2) {
       sendPatchFilt();
     } else if (trackEngine[t] == az2::kEngineDexed) {
       sendPatchDxp(static_cast<uint8_t>(selectedPatchRow - 2));
@@ -3193,113 +3303,6 @@ bool hitTestMixerTrack(int16_t x, int16_t y, uint8_t &track) {
   }
   track = static_cast<uint8_t>(col);
   return true;
-}
-
-// ---------------------------------------------------------------------
-// Page RACK EXTERNE -- les deux DSP soudes au Teensy restent des moteurs
-// materiels uniques. Cette page edite leur patch partage sans les faire
-// passer pour des moteurs de piste internes.
-// ---------------------------------------------------------------------
-uint8_t rackUiEngine = az2::kRackEngineGranular;
-uint8_t rackUiPatch[az2::kRackEngineCount] = {};
-uint8_t rackUiPage[az2::kRackEngineCount] = {};
-bool rackUiEnabled[az2::kRackEngineCount] = {true, true};
-uint8_t rackUiParams[az2::kRackEngineCount][az2::kRackGranularParamCount] = {
-    {64, 52, 60, 64, 8, 32, 100, 0, 64, 0, 4, 35, 100, 45, 110, 20, 18, 100},
-    {96, 52, 18, 64, 64, 12, 90, 28, 54, 16, 4, 32, 100, 42, 112, 18},
-};
-constexpr uint8_t kRackUiRows = 6;
-constexpr int16_t kRackEngineY = 76;
-constexpr int16_t kRackPatchY = 120;
-constexpr int16_t kRackParamsY = 170;
-constexpr int16_t kRackParamH = 40;
-
-void sendRackEngineState() {
-  char msg[40];
-  snprintf(msg, sizeof(msg), "RACK_ENGINE:%s:%s", az2::kRackEngineNames[rackUiEngine],
-           rackUiEnabled[rackUiEngine] ? "ON" : "OFF");
-  sendToTeensy(msg);
-}
-
-void sendRackParam(uint8_t parameter) {
-  char msg[48];
-  snprintf(msg, sizeof(msg), "RACK_PARAM:%s:%u:%u", az2::kRackEngineNames[rackUiEngine],
-           parameter, rackUiParams[rackUiEngine][parameter]);
-  sendToTeensy(msg);
-}
-
-void drawRackPage() {
-  const uint16_t accent = rackUiEngine == az2::kRackEngineGranular ? kPalette[2] : kPalette[5];
-  drawSubHeader("RACK EXTERNE", accent);
-  drawEncoderHints("PARAM", "VALEUR");
-  gfx->setTextSize(2);
-  gfx->setTextColor(RGB565_WHITE);
-  gfx->drawRect(kMargin, kRackEngineY, kScreenSize - 2 * kMargin, 34, accent);
-  gfx->setCursor(kMargin + 10, kRackEngineY + 8);
-  gfx->printf("< %s >", az2::kRackEngineNames[rackUiEngine]);
-  gfx->setTextColor(rackUiEnabled[rackUiEngine] ? RGB565(70, 240, 110) : RGB565_RED);
-  gfx->setCursor(350, kRackEngineY + 8);
-  gfx->print(rackUiEnabled[rackUiEngine] ? "ON" : "OFF");
-
-  gfx->drawRect(kMargin, kRackPatchY, kScreenSize - 2 * kMargin, 34, kFaint);
-  gfx->setTextColor(RGB565_WHITE);
-  gfx->setCursor(kMargin + 10, kRackPatchY + 8);
-  gfx->printf("PATCH < %s >", az2::rackPatchName(rackUiEngine, rackUiPatch[rackUiEngine]));
-  gfx->setTextSize(1);
-  gfx->setTextColor(kDim);
-  gfx->setCursor(366, kRackPatchY + 5);
-  gfx->print("SAVE");
-
-  const uint8_t count = az2::rackParamCount(rackUiEngine);
-  const uint8_t first = rackUiPage[rackUiEngine] * kRackUiRows;
-  for (uint8_t row = 0; row < kRackUiRows; ++row) {
-    const int16_t y = kRackParamsY + row * kRackParamH;
-    const uint8_t parameter = first + row;
-    gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, kRackParamH - 4, RGB565_BLACK);
-    gfx->drawRect(kMargin, y, kScreenSize - 2 * kMargin, kRackParamH - 4,
-                  parameter < count ? kFaint : RGB565_BLACK);
-    if (parameter >= count) continue;
-    gfx->setTextSize(1);
-    gfx->setTextColor(accent);
-    gfx->setCursor(kMargin + 8, y + 5);
-    gfx->print(az2::rackParamName(rackUiEngine, parameter));
-    gfx->setTextSize(2);
-    gfx->setTextColor(RGB565_WHITE);
-    gfx->setCursor(350, y + 9);
-    gfx->printf("%3u", rackUiParams[rackUiEngine][parameter]);
-    gfx->setCursor(300, y + 9);
-    gfx->print("-");
-    gfx->setCursor(425, y + 9);
-    gfx->print("+");
-  }
-  gfx->setTextSize(1);
-  gfx->setTextColor(kDim);
-  gfx->setCursor(kMargin, 422);
-  gfx->printf("PAGE %u/3     B:TEST  C:STOP  D:ON/OFF", rackUiPage[rackUiEngine] + 1);
-}
-
-void rackChangeEngine(int delta) {
-  rackUiEngine = static_cast<uint8_t>((rackUiEngine + az2::kRackEngineCount + delta) %
-                                      az2::kRackEngineCount);
-  drawRackPage();
-}
-
-void rackChangePatch(int delta) {
-  uint8_t &patch = rackUiPatch[rackUiEngine];
-  patch = static_cast<uint8_t>((patch + az2::kRackPatchCount + delta) % az2::kRackPatchCount);
-  char msg[40];
-  snprintf(msg, sizeof(msg), "RACK_PATCH:%s:%u", az2::kRackEngineNames[rackUiEngine], patch);
-  sendToTeensy(msg);
-  drawRackPage();
-}
-
-void rackChangeParam(uint8_t parameter, int delta) {
-  const uint8_t count = az2::rackParamCount(rackUiEngine);
-  if (parameter >= count) return;
-  uint8_t &value = rackUiParams[rackUiEngine][parameter];
-  value = static_cast<uint8_t>(constrain(static_cast<int>(value) + delta, 0, 127));
-  sendRackParam(parameter);
-  drawRackPage();
 }
 
 // ---------------------------------------------------------------------
@@ -4658,7 +4661,6 @@ void drawScreen(Screen s) {
     case Screen::Song: drawSongPage(); break;
     case Screen::Project: drawProjectPage(); break;
     case Screen::Mixer: drawMixerPage(); break;
-    case Screen::Rack: drawRackPage(); break;
   }
   flushUiCanvas();
 }
@@ -4769,6 +4771,12 @@ void handleTeensyLine(const String &line) {
     gbSetAudioV2Ready(true);
   } else if (line == "GBV2:DISABLED") {
     gbSetAudioV2Ready(false);
+  } else if (line == "RACK_CAP:1" || line == "RACK_CAP:0") {
+    const bool cap = (line == "RACK_CAP:1");
+    if (cap != teensyRackCapable) {
+      teensyRackCapable = cap;
+      if (currentScreen == Screen::Engines && !screensaverActive) drawEnginesPage();
+    }
   }
   Serial.print("TEENSY:");
   Serial.println(line);
@@ -5455,18 +5463,6 @@ void handleTeensyLine(const String &line) {
           }
         }
       }
-      if (currentScreen == Screen::Rack && letter == 'B') {
-        char msg[48];
-        snprintf(msg, sizeof(msg), "RACK_NOTE_%s:%s:48%s",
-                 pressed ? "ON" : "OFF", az2::kRackEngineNames[rackUiEngine],
-                 pressed ? ":110" : "");
-        sendToTeensy(msg);
-      }
-      if (pressed && currentScreen == Screen::Rack && letter == 'D') {
-        rackUiEnabled[rackUiEngine] = !rackUiEnabled[rackUiEngine];
-        sendRackEngineState();
-        drawRackPage();
-      }
       // Page MOTEURS (2026-09-19) : A ouvre la page PATCH complete pour
       // le patch actuellement selectionne -- demande explicite ("si on
       // en selectionne un [patch] il faut que quand on presse A ca
@@ -6025,6 +6021,26 @@ void handleTeensyLine(const String &line) {
         }
       }
     }
+  } else if (line.startsWith("RACK_OWNER:")) {
+    // Echo de rackClaimOwnership() cote Teensy (voir son commentaire) --
+    // "RACK_OWNER:GRANULAR:<piste>" ou "RACK_OWNER:SPECTRAL:<piste>".
+    // Tient a jour rackOwnerTrack[] pour que sendPatchExtra()/
+    // patchApplyDelta() sachent si CETTE piste a encore le droit
+    // d'envoyer RACK_PARAM: en direct (isRackOwner()).
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    if (i1 >= 0 && i2 >= 0) {
+      const String engineName = line.substring(i1 + 1, i2);
+      const uint8_t track = static_cast<uint8_t>(line.substring(i2 + 1).toInt());
+      if (track < kSeqTrackCount) {
+        for (uint8_t slot = 0; slot < az2::kRackEngineCount; ++slot) {
+          if (engineName == az2::kRackEngineNames[slot]) {
+            rackOwnerTrack[slot] = static_cast<int8_t>(track);
+            break;
+          }
+        }
+      }
+    }
   } else if (line.startsWith("PATCH:")) {
     const int i1 = line.indexOf(':');
     const int i2 = line.indexOf(':', i1 + 1);
@@ -6033,6 +6049,7 @@ void handleTeensyLine(const String &line) {
       const uint8_t patch = static_cast<uint8_t>(line.substring(i2 + 1).toInt());
       if (track < kSeqTrackCount) {
         trackPatch[track] = patch;
+        loadRackPresetValues(track, patch);
         if (currentScreen == Screen::Engines) {
           // Fait suivre le defilement de la liste PATCH si besoin --
           // meme si ce changement vient d'ailleurs que cette page (ex:
@@ -6045,6 +6062,8 @@ void handleTeensyLine(const String &line) {
           drawEngRow(track);
         } else if (currentScreen == Screen::Sequencer && track == selectedSeqTrack && !screensaverActive) {
           drawTrkSidePanel();
+        } else if (currentScreen == Screen::Patch && track == patchTrack && !screensaverActive) {
+          drawPatchPage();
         }
       }
     }
@@ -7075,35 +7094,6 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       } else if (hitTestPatchSlotLoad(x, y)) {
         loadPatchSlot(patchSlot);
       }
-    }
-  } else if (currentScreen == Screen::Rack) {
-    if (inBox(x, y, kMargin, kRackEngineY, 150, 34)) {
-      rackChangeEngine(-1);
-    } else if (inBox(x, y, kMargin + 150, kRackEngineY, 170, 34)) {
-      rackChangeEngine(1);
-    } else if (inBox(x, y, 330, kRackEngineY, 126, 34)) {
-      rackUiEnabled[rackUiEngine] = !rackUiEnabled[rackUiEngine];
-      sendRackEngineState();
-      drawRackPage();
-    } else if (inBox(x, y, kMargin, kRackPatchY, 180, 34)) {
-      rackChangePatch(-1);
-    } else if (inBox(x, y, kMargin + 180, kRackPatchY, 160, 34)) {
-      rackChangePatch(1);
-    } else if (inBox(x, y, 360, kRackPatchY, 96, 34)) {
-      char msg[48];
-      snprintf(msg, sizeof(msg), "RACK_PATCH_SAVE:%s:%u",
-               az2::kRackEngineNames[rackUiEngine], rackUiPatch[rackUiEngine]);
-      sendToTeensy(msg);
-    } else if (y >= kRackParamsY && y < kRackParamsY + kRackUiRows * kRackParamH) {
-      const uint8_t row = static_cast<uint8_t>((y - kRackParamsY) / kRackParamH);
-      const uint8_t parameter = rackUiPage[rackUiEngine] * kRackUiRows + row;
-      rackChangeParam(parameter, x < kScreenSize / 2 ? -4 : 4);
-    } else if (y >= 412) {
-      const uint8_t pages = static_cast<uint8_t>((az2::rackParamCount(rackUiEngine) +
-                                                  kRackUiRows - 1) / kRackUiRows);
-      rackUiPage[rackUiEngine] = static_cast<uint8_t>(
-          (rackUiPage[rackUiEngine] + (x < kScreenSize / 2 ? pages - 1 : 1)) % pages);
-      drawRackPage();
     }
   } else if (currentScreen == Screen::Mixer) {
     // Tap = SELECTIONNE seulement (meme convention que partout ce soir)

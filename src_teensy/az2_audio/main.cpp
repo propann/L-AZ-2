@@ -423,6 +423,74 @@ uint8_t trackEngine[kTrackCount] = {
     az2::kEngineAnalog, az2::kEngineAnalog, az2::kEngineEPiano, az2::kEngineBraids,
 };
 uint8_t trackPatch[kTrackCount] = {0, 0, 0, 0, 0, 0, 0, 0};
+
+// Propriete exclusive des moteurs de rack externes (audit 2026-09-22,
+// "modele par piste sans identifiant de piste dans le protocole rack") :
+// il n'existe qu'UNE seule instance physique GRANULAR et UNE seule
+// SPECTRAL sur le rack externe (voir az2::kRackEngineCount), alors que
+// n'importe quelle piste du sequenceur peut selectionner ces moteurs
+// (trackEngine[track] == kEngineGranular/kEngineSpectral). Sans ce
+// verrou, deux pistes sur le meme moteur rack pilotaient la MEME voix
+// physique : un noteOff() de la piste A coupait une note tenue par la
+// piste B, et un changement de patch depuis A changeait aussi le son
+// entendu par B. rackOwnerTrack[slot] retient quelle piste a le droit
+// d'envoyer RACK_NOTE_ON/OFF/PATCH pour ce moteur ; -1 = libre. La
+// piste qui SELECTIONNE le moteur (setTrackEngine()) devient
+// proprietaire immediatement (vol du moteur autorise, comme sur un
+// synthe externe partage entre plusieurs sequenceurs) ; toute AUTRE
+// piste encore configuree sur ce moteur devient silencieuse dessus
+// (trackNoteOn/trackNoteOff/applyTrackPatch verifient la propriete
+// avant d'emettre sur Serial7) plutot que de continuer a interferer.
+int8_t rackOwnerTrack[az2::kRackEngineCount] = {-1, -1};
+
+// -1 si engine n'est pas un moteur de rack externe (GRANULAR/SPECTRAL).
+int8_t rackEngineSlotFor(uint8_t engine) {
+  if (engine == az2::kEngineGranular) return static_cast<int8_t>(az2::kRackEngineGranular);
+  if (engine == az2::kEngineSpectral) return static_cast<int8_t>(az2::kRackEngineSpectral);
+  return -1;
+}
+
+// Libere toute propriete de rack tenue par cette piste (appele quand
+// elle quitte GRANULAR/SPECTRAL pour un autre moteur, voir
+// setTrackEngine()) -- evite un "vol" fantome plus tard si une autre
+// piste reclame ce meme moteur alors que "track" ne l'utilise plus.
+void rackReleaseOwnership(uint8_t track) {
+  for (uint8_t slot = 0; slot < az2::kRackEngineCount; ++slot) {
+    if (rackOwnerTrack[slot] == static_cast<int8_t>(track)) {
+      rackOwnerTrack[slot] = -1;
+    }
+  }
+}
+
+// Rend "track" proprietaire du moteur rack correspondant a "engine" (no-op
+// si engine n'est pas GRANULAR/SPECTRAL, ou si "track" l'est deja). Si un
+// AUTRE piste en etait proprietaire, on lui vole le moteur : sa note en
+// cours (si elle existe) ne recevra plus jamais son propre RACK_NOTE_OFF
+// une fois la propriete transferee (voir trackNoteOff()), donc on coupe
+// explicitement la voix ici pour ne pas laisser un son bloque indefiniment.
+void rackClaimOwnership(uint8_t track, uint8_t engine) {
+  const int8_t slot = rackEngineSlotFor(engine);
+  if (slot < 0 || rackOwnerTrack[slot] == static_cast<int8_t>(track)) return;
+#ifdef AZ2_EXTERNAL_RACK
+  if (rackOwnerTrack[slot] >= 0) {
+    if (engine == az2::kEngineGranular) Serial7.println("RACK_NOTE_OFF:GRANULAR:0");
+    else if (engine == az2::kEngineSpectral) Serial7.println("RACK_NOTE_OFF:SPECTRAL:0");
+  }
+#endif
+  rackOwnerTrack[slot] = static_cast<int8_t>(track);
+  // L'ecran ignore tout ce mecanisme de propriete (il n'a pas acces a
+  // rackOwnerTrack[], qui n'existe que cote Teensy) : sans cette annonce,
+  // sendPatchExtra()/patchApplyDelta() cote ESP32 continueraient d'envoyer
+  // RACK_PARAM: pour la piste qui vient de perdre le moteur, en direct
+  // (ce chemin-la ne passe PAS par trackNoteOn/trackNoteOff/
+  // applyTrackPatch ci-dessus -- c'est un forward brut vers Serial7, voir
+  // le bloc RACK_PARAM:/RACK_PATCH: plus bas). Diffuse sur Serial ET
+  // Serial1 comme announceStatus()/relayLine() -- l'ecran filtrera cote
+  // handleTeensyLine().
+  Serial.printf("RACK_OWNER:%s:%d\n", az2::kRackEngineNames[slot], track);
+  Serial1.printf("RACK_OWNER:%s:%d\n", az2::kRackEngineNames[slot], track);
+}
+
 // Le sampler de piste est one-shot par defaut (Kick/Snare/GB Capture).
 // Quand le mode gate est active, un note-off coupe immediatement le sample
 // et l'enveloppe partagee. Le mode one-shot laisse le sample finir sans que
@@ -1099,6 +1167,18 @@ void applyTrackPatch(uint8_t track) {
       trackDrumEngine[track].secondMix(kDrumSecondMixValues[p]);
       break;
     }
+#ifdef AZ2_EXTERNAL_RACK
+    case az2::kEngineGranular:
+      // Propriete exclusive (voir rackOwnerTrack[]) : une piste qui s'est
+      // fait voler ce moteur par une autre ne doit plus changer SON patch.
+      if (rackOwnerTrack[az2::kRackEngineGranular] == static_cast<int8_t>(track))
+        Serial7.printf("RACK_PATCH:GRANULAR:%u\n", patch % az2::kRackPatchCount);
+      break;
+    case az2::kEngineSpectral:
+      if (rackOwnerTrack[az2::kRackEngineSpectral] == static_cast<int8_t>(track))
+        Serial7.printf("RACK_PATCH:SPECTRAL:%u\n", patch % az2::kRackPatchCount);
+      break;
+#endif
   }
 }
 
@@ -1123,12 +1203,29 @@ void setTrackEngine(uint8_t track, uint8_t engine) {
   if (track >= kTrackCount || engine >= az2::kEngineCount) {
     return;
   }
+#ifndef AZ2_EXTERNAL_RACK
+  // Filet de securite : handleEngineCommand() rejette deja GRANULAR/
+  // SPECTRAL sur ce firmware (pas de AZ2_EXTERNAL_RACK -> pas de Serial7
+  // initialise), mais un futur appelant direct de setTrackEngine() ne
+  // doit pas pouvoir laisser une piste "silencieusement morte" non plus.
+  if (engine == az2::kEngineGranular || engine == az2::kEngineSpectral) {
+    return;
+  }
+#endif
 
   allTrackNotesOff();
   // Une piste peut changer de moteur pendant qu'un one-shot est en cours.
   // Fermer l'enveloppe avant de detacher l'ancien moteur evite de conserver
   // un etat ADSR suspendu jusqu'au prochain note-on.
   trackAnalogEnv[track].noteOff();
+
+  // Propriete exclusive des moteurs de rack (voir le commentaire de
+  // rackOwnerTrack[] plus haut) : liberer AVANT de changer trackEngine[]
+  // (allTrackNotesOff() ci-dessus a deja coupe une eventuelle note tenue
+  // pendant que "track" etait encore proprietaire), puis reclamer le
+  // nouveau moteur si applicable.
+  rackReleaseOwnership(track);
+  rackClaimOwnership(track, engine);
 
   trackEngine[track] = engine;
   trackPatch[track] = 0;
@@ -1169,6 +1266,10 @@ void setTrackEngine(uint8_t track, uint8_t engine) {
       break;
     case az2::kEngineDrum:
       patchTrackIn[track].connect(trackDrumEngine[track], 0, trackAnalogEnv[track], 0);
+      break;
+    case az2::kEngineGranular:
+    case az2::kEngineSpectral:
+      // Leur audio revient deja par l'entree I2S globale du rack.
       break;
   }
 
@@ -1392,6 +1493,18 @@ void announceClock() {
 void announceHello() {
   Serial.println(az2::kHelloAudio);
   Serial1.println(az2::kHelloAudio);
+  // Capacite rack externe (audit 2026-09-22) : annonce si CE firmware a
+  // ete compile avec AZ2_EXTERNAL_RACK (donc si GRANULAR/SPECTRAL ont un
+  // vrai chemin audio, voir handleEngineCommand()) -- permet a l'ecran de
+  // griser ces deux entrees plutot que de laisser l'utilisateur les
+  // selectionner pour rien sur le couple de firmwares de production.
+#ifdef AZ2_EXTERNAL_RACK
+  Serial.println("RACK_CAP:1");
+  Serial1.println("RACK_CAP:1");
+#else
+  Serial.println("RACK_CAP:0");
+  Serial1.println("RACK_CAP:0");
+#endif
 
   // Reenvoie l'etat courant a la connexion/reconnexion de l'ESP32 -- sans
   // ca, l'ecran redemarre sur des valeurs par defaut fausses alors que le
@@ -1474,12 +1587,27 @@ void trackNoteOn(uint8_t track, uint8_t note, uint8_t velocity) {
     case az2::kEngineDrum:
       trackDrumEngine[track].noteOn();
       break;
+#ifdef AZ2_EXTERNAL_RACK
+    case az2::kEngineGranular:
+      // Propriete exclusive (voir rackOwnerTrack[]) : une piste qui s'est
+      // fait voler ce moteur ne doit plus pouvoir declencher/couper SA
+      // note dessus -- elle jouerait sur la voix de la piste proprietaire.
+      if (rackOwnerTrack[az2::kRackEngineGranular] == static_cast<int8_t>(track))
+        Serial7.printf("RACK_NOTE_ON:GRANULAR:%u:%u\n", note, velocity);
+      break;
+    case az2::kEngineSpectral:
+      if (rackOwnerTrack[az2::kRackEngineSpectral] == static_cast<int8_t>(track))
+        Serial7.printf("RACK_NOTE_ON:SPECTRAL:%u:%u\n", note, velocity);
+      break;
+#endif
   }
   // Enveloppe PARTAGEE par les 6 moteurs (2026-09-18, voir le
   // commentaire de trackAnalogEnv[] plus haut) -- declenchee ici pour
   // TOUS, pas seulement ANALOG (qui l'utilisait deja seul avant ce
   // fix).
-  trackAnalogEnv[track].noteOn();
+  if (trackEngine[track] != az2::kEngineGranular &&
+      trackEngine[track] != az2::kEngineSpectral)
+    trackAnalogEnv[track].noteOn();
 }
 
 void trackNoteOff(uint8_t track, uint8_t note) {
@@ -1505,6 +1633,18 @@ void trackNoteOff(uint8_t track, uint8_t note) {
     case az2::kEngineDrum:
       // AudioSynthSimpleDrum est un one-shot : la decay interne gere la fin.
       break;
+#ifdef AZ2_EXTERNAL_RACK
+    case az2::kEngineGranular:
+      if (rackOwnerTrack[az2::kRackEngineGranular] == static_cast<int8_t>(track))
+        Serial7.printf("RACK_NOTE_OFF:GRANULAR:%u\n", note);
+      releaseEnvelope = false;
+      break;
+    case az2::kEngineSpectral:
+      if (rackOwnerTrack[az2::kRackEngineSpectral] == static_cast<int8_t>(track))
+        Serial7.printf("RACK_NOTE_OFF:SPECTRAL:%u\n", note);
+      releaseEnvelope = false;
+      break;
+#endif
   }
   // Meme enveloppe partagee qu'a l'allumage ci-dessus -- coupe TOUS les
   // moteurs, pas seulement ANALOG.
@@ -2062,6 +2202,23 @@ void handleEngineCommand(const String &line) {
     sendCommandError("ENGINE", "OUT_OF_RANGE");
     return;
   }
+#ifndef AZ2_EXTERNAL_RACK
+  // Audit 2026-09-22 ("asymetrie de compilation ESP32/Teensy") : sur ce
+  // firmware, GRANULAR/SPECTRAL n'ont AUCUN chemin audio (Serial7 meme pas
+  // initialise, voir setup()) -- avant ce garde-fou, selectionner l'un des
+  // deux depuis l'ecran mettait la piste a jour cote UI sans jamais
+  // produire un seul son, ni la moindre erreur. On refuse desormais
+  // explicitement, avec le meme mecanisme <COMMANDE>:ERROR:<raison> que
+  // les autres rejets de ce fichier -- l'ecran ignore aujourd'hui cette
+  // ligne (voir son commentaire dans sendCommandError()), donc ce garde-
+  // fou ne casse rien de plus : il empeche juste ENGINE: de relayer la
+  // selection et de la faire apparaitre comme active cote UI (voir
+  // relayLine() plus bas, qui echoue trackEngine[] a l'ecran).
+  if (engine == az2::kEngineGranular || engine == az2::kEngineSpectral) {
+    sendCommandError("ENGINE", "RACK_UNAVAILABLE");
+    return;
+  }
+#endif
 
   setTrackEngine(track, engine);
   relayLine(line);

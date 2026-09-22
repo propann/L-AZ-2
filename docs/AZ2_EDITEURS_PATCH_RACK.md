@@ -167,8 +167,10 @@ sur un moteur purement synthétique.
   vers le WROOM sur GPIO4/GPIO5 ; son firmware est flashé.
 - Le Teensy relaie maintenant toutes les commandes `RACK_*` reçues de
   l'écran ; son firmware est flashé.
-- L'écran possède une page dédiée **RACK EXTERNE** : sélection du moteur,
-  ON/OFF, presets, sauvegarde, paramètres paginés et note de test avec B.
+- GRANULAR et SPECTRAL sont intégrés à la liste **MOTEURS** existante. Leurs
+  huit presets apparaissent dans la colonne PATCH ; la fenêtre **PATCH**
+  existante expose tous leurs paramètres, la note de test B et les slots
+  SAVE/LOAD. Aucune page RACK supplémentaire n'est conservée.
 - Les firmwares WROOM spectral et écran compilent, mais restent à flasher sur
   leurs cartes respectives avant le test audio complet.
 

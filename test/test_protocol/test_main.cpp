@@ -217,6 +217,48 @@ void test_engine_patch_count_and_name() {
   TEST_ASSERT_EQUAL_STRING("?", az2::engineName(99));  // moteur invalide -> pas de crash, "?" attendu
 }
 
+// Ajoute 2026-09-22 (audit complet) : GRANULAR/SPECTRAL (kEngineGranular/
+// kEngineSpectral) n'avaient aucune assertion malgre le diff qui les a
+// ajoutes au coeur du protocole partage -- ni pour kRackPatchCount/
+// rackParamName/rackParamCount, cote rack (kRackEngine*, identifiants
+// SEPARES de kEngine*, voir le commentaire ligne 662-665 de
+// AZ2_Protocol.h).
+void test_rack_engine_patch_count_and_name() {
+  TEST_ASSERT_EQUAL_UINT16(az2::kRackPatchCount, az2::enginePatchCount(az2::kEngineGranular));
+  TEST_ASSERT_EQUAL_UINT16(az2::kRackPatchCount, az2::enginePatchCount(az2::kEngineSpectral));
+  TEST_ASSERT_EQUAL_STRING("GRANULAR", az2::engineName(az2::kEngineGranular));
+  TEST_ASSERT_EQUAL_STRING("SPECTRAL", az2::engineName(az2::kEngineSpectral));
+
+  TEST_ASSERT_EQUAL_STRING("CLOUD", az2::enginePatchName(az2::kEngineGranular, 0));
+  TEST_ASSERT_EQUAL_STRING("PERCUSSIVE",
+                            az2::enginePatchName(az2::kEngineGranular, az2::kRackPatchCount - 1));
+  TEST_ASSERT_EQUAL_STRING("?", az2::enginePatchName(az2::kEngineGranular, az2::kRackPatchCount));
+  TEST_ASSERT_EQUAL_STRING("AIR", az2::enginePatchName(az2::kEngineSpectral, 0));
+  TEST_ASSERT_EQUAL_STRING("ABYSS",
+                            az2::enginePatchName(az2::kEngineSpectral, az2::kRackPatchCount - 1));
+  TEST_ASSERT_EQUAL_STRING("?", az2::enginePatchName(az2::kEngineSpectral, az2::kRackPatchCount));
+}
+
+void test_rack_param_count_and_name() {
+  TEST_ASSERT_EQUAL_UINT8(az2::kRackGranularParamCount, az2::rackParamCount(az2::kRackEngineGranular));
+  TEST_ASSERT_EQUAL_UINT8(az2::kRackSpectralParamCount, az2::rackParamCount(az2::kRackEngineSpectral));
+  TEST_ASSERT_EQUAL_UINT8(0, az2::rackParamCount(99));  // moteur rack invalide -> 0, pas de crash
+
+  TEST_ASSERT_EQUAL_STRING("POSITION", az2::rackParamName(az2::kRackEngineGranular, 0));
+  TEST_ASSERT_EQUAL_STRING("?",
+      az2::rackParamName(az2::kRackEngineGranular, az2::kRackGranularParamCount));
+  TEST_ASSERT_EQUAL_STRING("PARTIALS", az2::rackParamName(az2::kRackEngineSpectral, 0));
+  TEST_ASSERT_EQUAL_STRING("?",
+      az2::rackParamName(az2::kRackEngineSpectral, az2::kRackSpectralParamCount));
+
+  // Precaution de compatibilite documentee ligne 662-665 de AZ2_Protocol.h :
+  // ces deux jeux d'identifiants doivent rester numeriquement distincts,
+  // sinon un ecran plus recent pourrait selectionner un moteur absent d'un
+  // Teensy/S3 plus ancien (voir aussi rackEngineSlotFor() cote Teensy).
+  TEST_ASSERT_NOT_EQUAL(static_cast<int>(az2::kRackEngineGranular), static_cast<int>(az2::kEngineGranular));
+  TEST_ASSERT_NOT_EQUAL(static_cast<int>(az2::kRackEngineSpectral), static_cast<int>(az2::kEngineSpectral));
+}
+
 void test_sampler_modes_are_stable_wire_values() {
   TEST_ASSERT_EQUAL_UINT8(0, az2::kSamplerModeOneShot);
   TEST_ASSERT_EQUAL_UINT8(1, az2::kSamplerModeGate);
@@ -258,6 +300,8 @@ int main(int argc, char **argv) {
   RUN_TEST(test_division_label_known_values);
   RUN_TEST(test_pad_id_and_valid_pad);
   RUN_TEST(test_engine_patch_count_and_name);
+  RUN_TEST(test_rack_engine_patch_count_and_name);
+  RUN_TEST(test_rack_param_count_and_name);
   RUN_TEST(test_sampler_modes_are_stable_wire_values);
   RUN_TEST(test_sampler_playback_step);
   RUN_TEST(test_sampler_linear_interpolation);
