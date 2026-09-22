@@ -622,6 +622,54 @@ inline const char *engineName(uint8_t engine) {
   return engine < kEngineCount ? kEngineNames[engine] : "?";
 }
 
+// Rack audio externe. Les identifiants restent separes de kEngine* tant que
+// les deux DSP ne sont pas encore exposes comme moteurs de piste : cela evite
+// qu'un firmware ecran plus recent selectionne un moteur absent d'un ancien
+// firmware Teensy/S3.
+constexpr uint8_t kRackEngineGranular = 0;
+constexpr uint8_t kRackEngineSpectral = 1;
+constexpr uint8_t kRackEngineCount = 2;
+constexpr uint8_t kRackGranularParamCount = 18;
+constexpr uint8_t kRackSpectralParamCount = 17;
+constexpr uint8_t kRackPatchCount = 8;
+
+constexpr const char *kRackEngineNames[kRackEngineCount] = {"GRANULAR", "SPECTRAL"};
+constexpr const char *kRackGranularParamNames[kRackGranularParamCount] = {
+    "POSITION", "SIZE", "DENSITY", "PITCH", "PITCH SPRAY", "POSITION SPRAY",
+    "PAN SPREAD", "REVERSE", "WINDOW", "FREEZE", "ATTACK", "DECAY",
+    "SUSTAIN", "RELEASE", "CUTOFF", "RESONANCE", "DRIVE", "LEVEL",
+};
+constexpr const char *kRackSpectralParamNames[kRackSpectralParamCount] = {
+    "PARTIALS", "MORPH", "STRETCH", "TILT", "ODD/EVEN", "DETUNE", "SPREAD",
+    "MOTION", "CHARACTER", "DRIVE", "ATTACK", "DECAY", "SUSTAIN", "RELEASE",
+    "CUTOFF", "RESONANCE", "LEVEL",
+};
+constexpr const char *kRackGranularPatchNames[kRackPatchCount] = {
+    "CLOUD", "DRONE", "DUST", "SHIMMER", "REVERSE", "TEXTURE", "FREEZE", "PERCUSSIVE",
+};
+constexpr const char *kRackSpectralPatchNames[kRackPatchCount] = {
+    "AIR", "WAVES", "GLASS", "CHOIR", "METAL", "SWARM", "ORGAN", "ABYSS",
+};
+
+inline uint8_t rackParamCount(uint8_t engine) {
+  return engine == kRackEngineGranular ? kRackGranularParamCount :
+         engine == kRackEngineSpectral ? kRackSpectralParamCount : 0;
+}
+
+inline const char *rackParamName(uint8_t engine, uint8_t parameter) {
+  if (engine == kRackEngineGranular && parameter < kRackGranularParamCount)
+    return kRackGranularParamNames[parameter];
+  if (engine == kRackEngineSpectral && parameter < kRackSpectralParamCount)
+    return kRackSpectralParamNames[parameter];
+  return "?";
+}
+
+inline const char *rackPatchName(uint8_t engine, uint8_t patch) {
+  if (patch >= kRackPatchCount) return "?";
+  return engine == kRackEngineGranular ? kRackGranularPatchNames[patch] :
+         engine == kRackEngineSpectral ? kRackSpectralPatchNames[patch] : "?";
+}
+
 // ESP32/Pico -> Teensy: choix direct (pas de +1/-1, l'ecran calcule le
 // prochain index avec enginePatchCount()/kEngineCount et l'envoie tel
 // quel ; le Teensy renvoie confirmation sur les 3 liens, voir relayLine

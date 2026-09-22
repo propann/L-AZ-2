@@ -20,14 +20,18 @@ Le firmware fonctionne et mesure le DMA même sans DAC branché. Pour une
 écoute, vérifier d'abord la tension VIN acceptée par le breakout DAC. Les
 GPIO du S3 restent exclusivement en logique 3,3 V.
 
-## Réservation pour l'intégration Teensy ↔ ESP32-S3
+## Contrôle Teensy ↔ ESP32-S3 — câblage physique confirmé
 
 | Fonction | Teensy 4.1 | ESP32-S3 | Direction |
 |---|---:|---:|---|
 | Contrôle UART TX du S3 | pin 28 / RX7 | GPIO16 / TX | S3 → Teensy |
 | Contrôle UART RX du S3 | pin 29 / TX7 | GPIO18 / RX | Teensy → S3 |
 | Masse logique | GND | GND | commun |
-| Débit prévu | Serial7, 921600 | UART, 921600 | bidirectionnel |
+| Débit firmware | Serial7, 115200 | UART, 115200 | bidirectionnel |
+
+État physique confirmé par l'utilisateur le 22 septembre 2026 : le fil de
+commande **Teensy pin 29 / TX7 → S3 GPIO18 / RX est connecté**, avec masse
+commune. Le retour S3 GPIO16 → Teensy pin 28 reste à confirmer séparément.
 
 ## Audio intégré futur : Teensy maître d'horloge
 
@@ -97,10 +101,50 @@ Firmware correspondant :
 - S3 : `engine_rack_granular_s3_teensy_slave` — agrégateur esclave ;
 - Teensy : `master_teensy_rack_lab` — maître I2S et mixeur final.
 
-Les trois liaisons Teensy vers le rack sont donc pin 21 vers S3 GPIO7, pin 20
-vers S3 GPIO9 et S3 GPIO11 vers Teensy pin 8, plus la masse commune. Les
-horloges 21/20 existent déjà pour le PCM5102A : elles sont simplement
-distribuées aussi au rack.
+Le faisceau Teensy/S3 comprend donc pin 21 vers S3 GPIO7, pin 20 vers S3
+GPIO9, S3 GPIO11 vers Teensy pin 8, **Teensy pin 29 vers S3 GPIO18 pour les
+commandes**, plus la masse commune. Le retour S3 GPIO16 vers Teensy pin 28
+est recommandé pour les diagnostics. Les horloges 21/20 existent déjà pour
+le PCM5102A : elles sont simplement distribuées aussi au rack.
+
+## Résultat du premier essai intégré — 22 septembre 2026
+
+- flux WROOM → S3 : 345 blocs/s, aucune erreur DMA pendant le contrôle ;
+- entrée rack mesurée par le Teensy pin 8 : crête gauche 0,446, droite 0,452 ;
+- le chemin audio physique S3 GPIO11 → Teensy pin 8 → mixeur → DAC fonctionne ;
+- le son brut entendu est un grondement continu : les deux moteurs doivent
+  encore être isolés et commandés séparément avant validation musicale ;
+- le fil pin 29 → GPIO18 était bien connecté ; le débit initial de 921600
+  bauds était trop agressif pour cette liaison physique ;
+- après passage des deux firmwares à **115200 bauds**, `RACK:ON` envoyé au
+  Teensy a fait passer le S3 à `gain=1.000:target=1.0`, puis `RACK:OFF` l'a
+  ramené à `gain=0.000:target=0.0` ;
+- le rack a été laissé coupé après validation.
+
+Conclusion : ne pas modifier le câblage audio ni le fil UART. La liaison de
+commande Teensy → S3 est validée à 115200 bauds. La prochaine étape est
+l'écoute séparée de GRANULAR et SPECTRAL, puis leur contrôle depuis l'écran.
+
+### Écoute séparée validée
+
+Les commandes de sélection ajoutées au S3 et relayées par le Teensy sont :
+
+- `RACK_ENGINE:GRANULAR:ON|OFF` ;
+- `RACK_ENGINE:SPECTRAL:ON|OFF` ;
+- `RACK:ON|OFF` comme coupe-circuit général.
+
+Résultat d'écoute du 22 septembre 2026 :
+
+- GRANULAR seul : grondement et tonalité longue issus de la source
+  synthétique de banc ;
+- SPECTRAL seul : vagues/ambiance et tonalité longue ;
+- rack et deux moteurs à OFF : silence, tonalité disparue.
+
+La tonalité n'est donc pas produite par le DAC, le Teensy ou le câblage. Elle
+vient des oscillateurs continus des firmwares de banc. Le transport, le
+mixage, la sélection indépendante et la coupure générale sont validés. Avant
+l'intégration UI, les moteurs doivent passer d'un rendu continu de benchmark
+à des voix déclenchées par `NOTE_ON`/`NOTE_OFF` avec hauteur et enveloppe.
 
 ## MIDI DIN IN réservé au Teensy
 

@@ -170,6 +170,10 @@ AudioOutputI2S i2sOut;
 // maître, reçoit le flux agrégé S3 sur pin 8 et continue de sortir vers le
 // PCM5102A sur pin 7. Deux mixeurs préservent la stéréo du rack.
 AudioInputI2S rackAudioIn;
+AudioAnalyzePeak rackPeakL;
+AudioAnalyzePeak rackPeakR;
+AudioAnalyzePeak rackFinalPeakL;
+AudioAnalyzePeak rackFinalPeakR;
 AudioMixer4 mixOutputL;
 AudioMixer4 mixOutputR;
 #endif
@@ -377,6 +381,10 @@ AudioConnection patchMasterToOutputL(mixMaster, 0, mixOutputL, 0);
 AudioConnection patchMasterToOutputR(mixMaster, 0, mixOutputR, 0);
 AudioConnection patchRackToOutputL(rackAudioIn, 0, mixOutputL, 1);
 AudioConnection patchRackToOutputR(rackAudioIn, 1, mixOutputR, 1);
+AudioConnection patchRackPeakL(rackAudioIn, 0, rackPeakL, 0);
+AudioConnection patchRackPeakR(rackAudioIn, 1, rackPeakR, 0);
+AudioConnection patchRackFinalPeakL(mixOutputL, 0, rackFinalPeakL, 0);
+AudioConnection patchRackFinalPeakR(mixOutputR, 0, rackFinalPeakR, 0);
 AudioConnection patchOutL(mixOutputL, 0, i2sOut, 0);
 AudioConnection patchOutR(mixOutputR, 0, i2sOut, 1);
 #else
@@ -804,6 +812,109 @@ bool loadWavIntoPadSampler(uint8_t pad, const char *path) {
   Serial1.println(path);
   return true;
 }
+
+#ifdef AZ2_EXTERNAL_RACK
+uint32_t rackSampleCrc32Byte(uint32_t crc, uint8_t value) {
+  crc ^= value;
+  for (uint8_t bit = 0; bit < 8; ++bit)
+    crc = (crc >> 1) ^ (0xEDB88320U & (0U - (crc & 1U)));
+  return crc;
+}
+
+bool streamWavToGranular(const char *path) {
+  if (strncmp(path, "/samples/", 9) != 0 || strstr(path, "..") != nullptr) {
+    Serial.println("GRANULAR_SAMPLE:ERROR:PATH");
+    return false;
+  }
+  File f = SD.open(path);
+  if (!f) {
+    Serial.println("GRANULAR_SAMPLE:ERROR:OPEN");
+    return false;
+  }
+  uint8_t riff[12];
+  if (f.read(riff, sizeof(riff)) != sizeof(riff) || memcmp(riff, "RIFF", 4) || memcmp(riff + 8, "WAVE", 4)) {
+    f.close();
+    Serial.println("GRANULAR_SAMPLE:ERROR:WAV");
+    return false;
+  }
+  bool haveFmt = false, haveData = false;
+  uint16_t format = 0, channels = 0, bits = 0;
+  uint32_t rate = 0, dataBytes = 0, dataPosition = 0;
+  while (!haveData) {
+    uint8_t chunk[8];
+    if (f.read(chunk, sizeof(chunk)) != sizeof(chunk)) break;
+    const uint32_t size = wavLe32(chunk + 4);
+    if (memcmp(chunk, "fmt ", 4) == 0) {
+      uint8_t fmt[16];
+      if (size < 16 || f.read(fmt, sizeof(fmt)) != sizeof(fmt)) break;
+      format = wavLe16(fmt);
+      channels = wavLe16(fmt + 2);
+      rate = wavLe32(fmt + 4);
+      bits = wavLe16(fmt + 14);
+      haveFmt = true;
+      if (size > 16) f.seek(f.position() + size - 16);
+    } else if (memcmp(chunk, "data", 4) == 0) {
+      dataBytes = size;
+      dataPosition = f.position();
+      haveData = true;
+    } else {
+      f.seek(f.position() + size + (size & 1U));
+    }
+  }
+  constexpr uint32_t kRackBankBytes = 5U * 1024U * 1024U / 2U;
+  if (!haveFmt || !haveData || format != 1 || channels != 1 || bits != 16 ||
+      rate < 8000 || rate > 48000 || dataBytes < 4 || dataBytes > kRackBankBytes ||
+      dataPosition + dataBytes > f.size()) {
+    f.close();
+    Serial.println("GRANULAR_SAMPLE:ERROR:FORMAT_OR_SIZE");
+    return false;
+  }
+  uint8_t buffer[512];
+  uint32_t crc = 0xFFFFFFFFU;
+  uint32_t remaining = dataBytes;
+  f.seek(dataPosition);
+  while (remaining) {
+    const size_t chunk = min(static_cast<uint32_t>(sizeof(buffer)), remaining);
+    if (f.read(buffer, chunk) != chunk) {
+      f.close();
+      Serial.println("GRANULAR_SAMPLE:ERROR:READ");
+      return false;
+    }
+    for (size_t i = 0; i < chunk; ++i) crc = rackSampleCrc32Byte(crc, buffer[i]);
+    remaining -= chunk;
+  }
+  crc ^= 0xFFFFFFFFU;
+  f.seek(dataPosition);
+  Serial7.printf("RACK_SAMPLE_BEGIN:%lu:%lu:%08lX\n",
+                 static_cast<unsigned long>(dataBytes / 2U),
+                 static_cast<unsigned long>(rate), static_cast<unsigned long>(crc));
+  remaining = dataBytes;
+  uint32_t sent = 0, nextProgress = 10;
+  while (remaining) {
+    const size_t chunk = min(static_cast<uint32_t>(sizeof(buffer)), remaining);
+    if (f.read(buffer, chunk) != chunk || Serial7.write(buffer, chunk) != chunk) {
+      f.close();
+      Serial.println("GRANULAR_SAMPLE:ERROR:TRANSFER");
+      return false;
+    }
+    sent += chunk;
+    remaining -= chunk;
+    const uint32_t progress = sent * 100U / dataBytes;
+    if (progress >= nextProgress) {
+      Serial.printf("GRANULAR_SAMPLE:PROGRESS:%lu\n", static_cast<unsigned long>(progress));
+      Serial1.printf("GRANULAR_SAMPLE:PROGRESS:%lu\n", static_cast<unsigned long>(progress));
+      nextProgress += 10;
+    }
+  }
+  f.close();
+  Serial.printf("GRANULAR_SAMPLE:SENT:path=%s:bytes=%lu:rate=%lu:crc=%08lX\n", path,
+                static_cast<unsigned long>(dataBytes), static_cast<unsigned long>(rate),
+                static_cast<unsigned long>(crc));
+  Serial1.printf("GRANULAR_SAMPLE:SENT:path=%s:bytes=%lu:rate=%lu\n", path,
+                 static_cast<unsigned long>(dataBytes), static_cast<unsigned long>(rate));
+  return true;
+}
+#endif
 
 // Explore un dossier a la fois, comme la structure reelle de /samples.
 // SAMPLELIST:<dossier>:<offset> renvoie six dossiers/WAV et une 7e
@@ -2967,6 +3078,9 @@ void handleCommand(const String &line) {
   }
 
   if (line == az2::kPanic) {
+#ifdef AZ2_EXTERNAL_RACK
+    Serial7.println("RACK:PANIC");
+#endif
     AudioNoInterrupts();
     panicAllAudio();
     AudioInterrupts();
@@ -2974,6 +3088,29 @@ void handleCommand(const String &line) {
     announceStatus(az2::kStatusStopped);
     return;
   }
+#ifdef AZ2_EXTERNAL_RACK
+  if (line.startsWith("GRANULAR_SAMPLE:")) {
+    const String path = line.substring(16);
+    streamWavToGranular(path.c_str());
+    return;
+  }
+  if (line == "RACK:ON" || line == "RACK:OFF" || line == "RACK:PANIC" ||
+      line == "RACK:STATUS" || line.startsWith("RACK_ENGINE:") ||
+      line.startsWith("NOTE_ON:") || line.startsWith("NOTE_OFF:")) {
+    Serial7.println(line);
+    Serial.print("AZ2:RACK:FORWARDED:");
+    Serial.println(line);
+    if (line == "RACK:STATUS") {
+      const float peakL = rackPeakL.available() ? rackPeakL.read() : -1.0f;
+      const float peakR = rackPeakR.available() ? rackPeakR.read() : -1.0f;
+      const float finalL = rackFinalPeakL.available() ? rackFinalPeakL.read() : -1.0f;
+      const float finalR = rackFinalPeakR.available() ? rackFinalPeakR.read() : -1.0f;
+      Serial.printf("AZ2:RACK:INPUT:peak_l=%.6f:peak_r=%.6f:final_l=%.6f:final_r=%.6f\n",
+                    peakL, peakR, finalL, finalR);
+    }
+    return;
+  }
+#endif
 
   if (line.startsWith("PAD:")) {
     handlePadCommand(line);
@@ -3951,7 +4088,7 @@ void setup() {
   Serial1.addMemoryForRead(serial1RxBuf, sizeof(serial1RxBuf));
   Serial1.begin(az2::kControlBaud);
 #ifdef AZ2_EXTERNAL_RACK
-  Serial7.begin(921600);  // pins 28 RX7 / 29 TX7 vers le S3
+  Serial7.begin(115200);  // pins 28 RX7 / 29 TX7 vers le S3, contrôle seulement
 #endif
   // Graine pour random() (PROB:, voir advanceTick()) -- micros() au boot
   // varie assez d'un demarrage a l'autre (delais SD/audio/etc. avant ici)

@@ -20,6 +20,8 @@ constexpr int8_t kSpectralControlRxPin = 5; // S3 RX <- WROOM GPIO17 TX
 constexpr int8_t kControlTxPin = 16;  // S3 TX -> Teensy pin 28 RX7
 constexpr int8_t kControlRxPin = 18;  // S3 RX <- Teensy pin 29 TX7
 
-constexpr uint32_t kControlBaud = 921600;
+// Liaison de commande sur fils internes : 115200 est volontairement retenu
+// pour la marge électrique. Le débit audio ne passe jamais sur cet UART.
+constexpr uint32_t kControlBaud = 115200;
 
 }  // namespace az2::rack

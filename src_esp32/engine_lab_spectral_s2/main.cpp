@@ -21,6 +21,9 @@ float state1[kVoiceCount] = {}, state2[kVoiceCount] = {};
 float coreMix[2][kBlockSamples] = {};
 int16_t outputBlock[kBlockSamples];
 int16_t outputInterleaved[kBlockSamples * 2];
+#ifdef AZ2_RACK_SLAVE
+int32_t rackOutputInterleaved[kBlockSamples * 2];
+#endif
 TaskHandle_t mainTask = nullptr, workerTask = nullptr;
 volatile uint8_t requestedPartials = 16;
 I2SClass i2s;
@@ -147,7 +150,7 @@ void runRealtimeI2S(uint32_t seconds) {
 void runRackSlave() {
   i2s.setPins(az2::spectral::kI2sBclkPin, az2::spectral::kI2sWsPin,
               az2::spectral::kI2sDataOutPin);
-  if (!i2s.begin(I2S_MODE_STD, kSampleRate, I2S_DATA_BIT_WIDTH_16BIT,
+  if (!i2s.begin(I2S_MODE_STD, kSampleRate, I2S_DATA_BIT_WIDTH_32BIT,
                  I2S_SLOT_MODE_STEREO, -1, I2S_ROLE_SLAVE)) {
     Serial.printf("SPECTRAL:RACK:FAIL:I2S:error=%d\n", i2s.lastError());
     return;
@@ -159,10 +162,10 @@ void runRackSlave() {
   for (;;) {
     renderBlock(kRealtimePartials, 0.5f + 0.5f * sinf(blocks * 0.003f));
     for (size_t frame = 0; frame < kBlockSamples; ++frame) {
-      outputInterleaved[frame * 2] = outputBlock[frame];
-      outputInterleaved[frame * 2 + 1] = outputBlock[frame];
+      rackOutputInterleaved[frame * 2] = static_cast<int32_t>(outputBlock[frame]) << 16;
+      rackOutputInterleaved[frame * 2 + 1] = static_cast<int32_t>(outputBlock[frame]) << 16;
     }
-    if (i2s.write(outputInterleaved, sizeof(outputInterleaved)) != sizeof(outputInterleaved))
+    if (i2s.write(rackOutputInterleaved, sizeof(rackOutputInterleaved)) != sizeof(rackOutputInterleaved))
       ++shortWrites;
     ++blocks;
     const uint32_t now = millis();
