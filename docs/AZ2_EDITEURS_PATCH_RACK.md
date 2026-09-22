@@ -175,8 +175,12 @@ Premier transfert réel validé avec
 - charge maximale observée environ 2,15 ms pour un budget de 2,90 ms, sans
   nouvelle erreur I2S.
 
-Limite encore ouverte : l'envoi UART est actuellement bloquant côté Teensy.
-Durant un chargement, la télémétrie a montré des pertes du ring audio Game Boy.
-La version production devra envoyer les blocs depuis une machine d'état dans
-`loop()` avec budget par itération, progression, annulation et priorité aux
-paquets audio, au lieu d'écrire tout le fichier dans une seule commande.
+Le transfert Teensy est désormais non bloquant : une machine d'état dans
+`loop()` sépare le calcul CRC, l'en-tête et les données. Elle ne lit qu'un bloc
+SD de 512 octets par passage et n'écrit que l'espace annoncé disponible par
+l'UART. Le test matériel de `Bass_26.wav` a conservé le CRC `33F9A4AF`, atteint
+100 % et maintenu `ring_drop=0` pendant toute l'opération. Le flux GB était
+inactif (`packets=0`) pendant ce premier contrôle : un essai simultané avec la
+console active reste nécessaire. Un nouveau chargement interrompt proprement
+l'ancien ; l'annulation explicite depuis l'interface reste à ajouter avec la
+future fenêtre PATCH.

@@ -821,12 +821,46 @@ uint32_t rackSampleCrc32Byte(uint32_t crc, uint8_t value) {
   return crc;
 }
 
-bool streamWavToGranular(const char *path) {
+enum class RackSampleTransferPhase : uint8_t { Idle, CrcScan, Header, Data };
+
+struct RackSampleTransfer {
+  File file;
+  RackSampleTransferPhase phase = RackSampleTransferPhase::Idle;
+  char path[96] = {};
+  char header[80] = {};
+  uint32_t dataPosition = 0;
+  uint32_t dataBytes = 0;
+  uint32_t rate = 0;
+  uint32_t processed = 0;
+  uint32_t crc = 0xFFFFFFFFU;
+  uint32_t nextProgress = 10;
+  size_t headerLength = 0;
+  size_t headerSent = 0;
+};
+
+RackSampleTransfer rackSampleTransfer;
+
+void finishGranularSampleTransfer(const char *error = nullptr) {
+  if (rackSampleTransfer.file) rackSampleTransfer.file.close();
+  if (error) {
+    Serial.print("GRANULAR_SAMPLE:ERROR:");
+    Serial.println(error);
+    Serial1.print("GRANULAR_SAMPLE:ERROR:");
+    Serial1.println(error);
+  }
+  rackSampleTransfer.phase = RackSampleTransferPhase::Idle;
+}
+
+bool startWavToGranular(const char *path) {
   if (strncmp(path, "/samples/", 9) != 0 || strstr(path, "..") != nullptr) {
     Serial.println("GRANULAR_SAMPLE:ERROR:PATH");
     return false;
   }
-  File f = SD.open(path);
+  if (rackSampleTransfer.phase != RackSampleTransferPhase::Idle) {
+    finishGranularSampleTransfer("RESTARTED");
+  }
+  File &f = rackSampleTransfer.file;
+  f = SD.open(path);
   if (!f) {
     Serial.println("GRANULAR_SAMPLE:ERROR:OPEN");
     return false;
@@ -869,50 +903,91 @@ bool streamWavToGranular(const char *path) {
     Serial.println("GRANULAR_SAMPLE:ERROR:FORMAT_OR_SIZE");
     return false;
   }
-  uint8_t buffer[512];
-  uint32_t crc = 0xFFFFFFFFU;
-  uint32_t remaining = dataBytes;
+  snprintf(rackSampleTransfer.path, sizeof(rackSampleTransfer.path), "%s", path);
+  rackSampleTransfer.dataPosition = dataPosition;
+  rackSampleTransfer.dataBytes = dataBytes;
+  rackSampleTransfer.rate = rate;
+  rackSampleTransfer.processed = 0;
+  rackSampleTransfer.crc = 0xFFFFFFFFU;
+  rackSampleTransfer.nextProgress = 10;
+  rackSampleTransfer.headerLength = 0;
+  rackSampleTransfer.headerSent = 0;
   f.seek(dataPosition);
-  while (remaining) {
-    const size_t chunk = min(static_cast<uint32_t>(sizeof(buffer)), remaining);
-    if (f.read(buffer, chunk) != chunk) {
-      f.close();
-      Serial.println("GRANULAR_SAMPLE:ERROR:READ");
-      return false;
-    }
-    for (size_t i = 0; i < chunk; ++i) crc = rackSampleCrc32Byte(crc, buffer[i]);
-    remaining -= chunk;
-  }
-  crc ^= 0xFFFFFFFFU;
-  f.seek(dataPosition);
-  Serial7.printf("RACK_SAMPLE_BEGIN:%lu:%lu:%08lX\n",
-                 static_cast<unsigned long>(dataBytes / 2U),
-                 static_cast<unsigned long>(rate), static_cast<unsigned long>(crc));
-  remaining = dataBytes;
-  uint32_t sent = 0, nextProgress = 10;
-  while (remaining) {
-    const size_t chunk = min(static_cast<uint32_t>(sizeof(buffer)), remaining);
-    if (f.read(buffer, chunk) != chunk || Serial7.write(buffer, chunk) != chunk) {
-      f.close();
-      Serial.println("GRANULAR_SAMPLE:ERROR:TRANSFER");
-      return false;
-    }
-    sent += chunk;
-    remaining -= chunk;
-    const uint32_t progress = sent * 100U / dataBytes;
-    if (progress >= nextProgress) {
-      Serial.printf("GRANULAR_SAMPLE:PROGRESS:%lu\n", static_cast<unsigned long>(progress));
-      Serial1.printf("GRANULAR_SAMPLE:PROGRESS:%lu\n", static_cast<unsigned long>(progress));
-      nextProgress += 10;
-    }
-  }
-  f.close();
-  Serial.printf("GRANULAR_SAMPLE:SENT:path=%s:bytes=%lu:rate=%lu:crc=%08lX\n", path,
-                static_cast<unsigned long>(dataBytes), static_cast<unsigned long>(rate),
-                static_cast<unsigned long>(crc));
-  Serial1.printf("GRANULAR_SAMPLE:SENT:path=%s:bytes=%lu:rate=%lu\n", path,
-                 static_cast<unsigned long>(dataBytes), static_cast<unsigned long>(rate));
+  rackSampleTransfer.phase = RackSampleTransferPhase::CrcScan;
+  Serial.printf("GRANULAR_SAMPLE:QUEUED:path=%s:bytes=%lu:rate=%lu\n", path,
+                static_cast<unsigned long>(dataBytes), static_cast<unsigned long>(rate));
   return true;
+}
+
+void serviceGranularSampleTransfer() {
+  auto &xfer = rackSampleTransfer;
+  if (xfer.phase == RackSampleTransferPhase::Idle) return;
+
+  // Une seule petite lecture SD par loop : l'audio, le GB et l'UI gardent la main.
+  uint8_t buffer[512];
+  if (xfer.phase == RackSampleTransferPhase::CrcScan) {
+    const uint32_t remaining = xfer.dataBytes - xfer.processed;
+    const size_t count = min(static_cast<uint32_t>(sizeof(buffer)), remaining);
+    if (xfer.file.read(buffer, count) != count) {
+      finishGranularSampleTransfer("READ");
+      return;
+    }
+    for (size_t i = 0; i < count; ++i) xfer.crc = rackSampleCrc32Byte(xfer.crc, buffer[i]);
+    xfer.processed += count;
+    if (xfer.processed == xfer.dataBytes) {
+      xfer.crc ^= 0xFFFFFFFFU;
+      if (!xfer.file.seek(xfer.dataPosition)) {
+        finishGranularSampleTransfer("SEEK");
+        return;
+      }
+      xfer.processed = 0;
+      xfer.headerLength = snprintf(
+          xfer.header, sizeof(xfer.header), "RACK_SAMPLE_BEGIN:%lu:%lu:%08lX\n",
+          static_cast<unsigned long>(xfer.dataBytes / 2U),
+          static_cast<unsigned long>(xfer.rate), static_cast<unsigned long>(xfer.crc));
+      xfer.phase = RackSampleTransferPhase::Header;
+    }
+    return;
+  }
+
+  const int writable = Serial7.availableForWrite();
+  if (writable <= 0) return;
+  if (xfer.phase == RackSampleTransferPhase::Header) {
+    const size_t count = min(static_cast<size_t>(writable), xfer.headerLength - xfer.headerSent);
+    xfer.headerSent += Serial7.write(
+        reinterpret_cast<const uint8_t *>(xfer.header + xfer.headerSent), count);
+    if (xfer.headerSent == xfer.headerLength) xfer.phase = RackSampleTransferPhase::Data;
+    return;
+  }
+
+  const uint32_t remaining = xfer.dataBytes - xfer.processed;
+  const size_t count = min(min(static_cast<size_t>(writable), sizeof(buffer)),
+                           static_cast<size_t>(remaining));
+  if (xfer.file.read(buffer, count) != count) {
+    finishGranularSampleTransfer("READ");
+    return;
+  }
+  const size_t sent = Serial7.write(buffer, count);
+  if (sent != count) {
+    // availableForWrite() garantit normalement l'ecriture complete. Si le
+    // pilote change, revenir au bon octet évite de corrompre le PCM.
+    xfer.file.seek(xfer.dataPosition + xfer.processed + sent);
+  }
+  xfer.processed += sent;
+  const uint32_t progress = xfer.processed * 100U / xfer.dataBytes;
+  if (progress >= xfer.nextProgress) {
+    Serial.printf("GRANULAR_SAMPLE:PROGRESS:%lu\n", static_cast<unsigned long>(progress));
+    Serial1.printf("GRANULAR_SAMPLE:PROGRESS:%lu\n", static_cast<unsigned long>(progress));
+    xfer.nextProgress += 10;
+  }
+  if (xfer.processed != xfer.dataBytes) return;
+
+  Serial.printf("GRANULAR_SAMPLE:SENT:path=%s:bytes=%lu:rate=%lu:crc=%08lX\n", xfer.path,
+                static_cast<unsigned long>(xfer.dataBytes), static_cast<unsigned long>(xfer.rate),
+                static_cast<unsigned long>(xfer.crc));
+  Serial1.printf("GRANULAR_SAMPLE:SENT:path=%s:bytes=%lu:rate=%lu\n", xfer.path,
+                 static_cast<unsigned long>(xfer.dataBytes), static_cast<unsigned long>(xfer.rate));
+  finishGranularSampleTransfer();
 }
 #endif
 
@@ -3091,7 +3166,7 @@ void handleCommand(const String &line) {
 #ifdef AZ2_EXTERNAL_RACK
   if (line.startsWith("GRANULAR_SAMPLE:")) {
     const String path = line.substring(16);
-    streamWavToGranular(path.c_str());
+    startWavToGranular(path.c_str());
     return;
   }
   if (line == "RACK:ON" || line == "RACK:OFF" || line == "RACK:PANIC" ||
@@ -4246,6 +4321,9 @@ void setup() {
 
 void loop() {
   readSerialCommands();
+#ifdef AZ2_EXTERNAL_RACK
+  serviceGranularSampleTransfer();
+#endif
   reportGbAudioHealth();
   updateMidiIn();
   feedGbAudioQueue();
