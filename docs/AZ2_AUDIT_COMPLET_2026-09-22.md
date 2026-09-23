@@ -565,3 +565,84 @@ mécanisme réutilise cependant tel quel `readWavPcm16Mono()`, déjà prouvé
 par le chemin pads — confiance élevée mais pas une preuve par l'écoute.
 Écran ESP32 compilé et vérifié (pas encore flashé, port non branché au
 moment d'écrire ceci).
+
+## Réactivité des boutons cassée + effets patchables (23 septembre, suite)
+
+**Symptôme signalé en usage réel** : croix/boutons demandant jusqu'à 10
+appuis pour réagir, apparu "depuis ce soir" après une session d'utilisation
+normale. Plusieurs pistes explorées et écartées avant la vraie cause
+(dans l'ordre) : redessin synchrone pendant la lecture Serial1 sur la page
+PATCH (vrai problème architectural, corrigé par redessin différé, mais
+**ne corrigeait pas le symptôme réel** — confirmé par test physique) ;
+câblage/soudure du rewire bouton B (pin 8→10, permanent, fait plus tôt
+cette session pour le rack) — câblage revérifié bon par l'utilisateur.
+
+**Cause réelle** : `updateMidiDin()` (ajoutée le matin même, commit
+`42b339a`, "improve control responsiveness" — ironique) lisait `Serial8`
+dans un `while (Serial8.available())` **sans limite**. Le circuit MIDI DIN
+(opto 6N138) n'est pas câblé physiquement — RX8 flotte et capte du bruit
+électrique lu comme un flux quasi continu d'octets parasites, ce qui
+pouvait monopoliser `loop()` et empêcher `updateDigitalControls()` de
+tourner à temps. Corrigé en désactivant complètement le MIDI DIN
+(`Serial8.begin()`/`updateMidiDin()` commentés) tant que le 6N138 n'est
+pas réellement câblé, plus une boucle bornée en prévision de sa
+réactivation future. Confirmé en direct sur le vrai matériel : réactivité
+normale immédiatement après ce correctif (commit `3f5dcc6`).
+
+**Second bug trouvé en marge** (signalé "la sauvegarde plante la
+machine") : `projectStructureValid()`, appelée par `atomicSaveFile()`
+juste après l'écriture d'un fichier projet pour le vérifier, déclarait
+`bool seenStep[8][8][128]` (8192 octets) **sur la pile**. La tâche
+principale ESP32 a ~8 Ko de pile par défaut — ce seul tableau la saturait,
+débordement garanti à chaque sauvegarde de morceau. Corrigé en le rendant
+`static` (BSS, pas la pile) avec un `memset()` explicite en tête de
+fonction (l'initialiseur `= {}` d'un tableau `static` ne s'exécute qu'une
+seule fois, pas à chaque appel — piège classique).
+
+**Étiquette moteur sur la page SEQUENCEUR** : `drawTrkTrackRow()`
+n'affichait que `< PISTE N >` sans nom de moteur ni couleur d'identité,
+contrairement à PATCH/MOTEURS déjà alignés le 22. Même motif appliqué
+(`patchAccent()`, `az2::engineName()`, centrage dynamique) — nécessite une
+déclaration anticipée de `trackEngine[]`/`patchAccent()` (définis plus bas
+dans le fichier, même contrainte d'ordre que `drawSamplerTrackPanel()`
+plus tôt).
+
+**Effets par piste rendus accessibles (CRUSH/DELAY)** : `AudioEffect-
+Bitcrusher`/`AudioEffectDelay` par piste existaient déjà côté Teensy
+(commandes `CRUSH:`/`DELAY:`) mais sans aucun accès UI — zéro bouton, zéro
+page ne les déclenchait. Demande : les regrouper dans le système d'effets
+du tracker déjà en place (colonne FX, bouton EFFET) plutôt que créer une
+page séparée, et les rendre "patchables" (des presets numérotés, pas des
+valeurs brutes). Réalisé :
+
+- `StepFx` (`sequencer.h`) étendu : `kStepFxCrush = 4`, `kStepFxDelay = 5`
+  aux côtés de None/Arp/Cut/Retrig. `kStepFxCount` 4→6 des deux côtés
+  (Teensy + tableaux `kStepFxNames[]`/`kStepFxColors[]` côté écran).
+- Deux banques de presets Teensy : `kCrushPresets[]` (10 profondeurs de
+  bits, CLEAN→NOISE) et `kDelayPresets[]` (16 couples temps+mix, slap à
+  echo long) — la colonne VAL du tracker devient un **numéro de patch**
+  pour ces deux effets (indexe modulo la taille de banque), pas une valeur
+  continue comme ARP/CUT/RET.
+- Appliqués **une fois** au déclenchement du pas (dans le bloc
+  `shouldTrigger` de l'ISR séquenceur), pas à chaque tick comme
+  ARP/CUT/RET dans `triggerStepFx()` — ce sont des réglages d'effet
+  continu, pas un ré-déclenchement de note. Reste actif sur la piste
+  jusqu'au prochain pas qui change cet effet (comportement tracker
+  classique, comme LSDJ/M8).
+- Aucun changement de format de sauvegarde projet nécessaire : `STEP:`
+  incluait déjà `stepFx`/`stepFxVal`.
+- Pas encore fait : banque de presets éditable/sauvegardable par
+  l'utilisateur (v1 = banque fixe câblée en dur, mais non vide dès le
+  départ comme demandé) ; fusion visuelle ARP/CUT/RET et CRUSH/DELAY dans
+  une seule page d'édition façon PATCH (le bouton EFFET existant reste
+  inchangé — raccourci vers la colonne FX du pas, ce qui couvre déjà les 6
+  effets puisqu'ils partagent la même colonne).
+
+**Firmware de production redéfini** : le bouton B est ressoudé en
+permanence sur la pin 10 (rewire fait plus tôt cette session pour libérer
+la pin 8 côté rack) — `master_teensy` (pin 8, sans `AZ2_EXTERNAL_RACK`) ne
+correspond donc plus au câblage réel de l'unité physique.
+`master_teensy_rack_lab` devient le firmware de production, pas un banc
+d'essai à part : `default_envs` dans `platformio.ini`, la CI
+(`.github/workflows/ci.yml`) et `tools/check_firmware_contract.py` mis à
+jour en conséquence.

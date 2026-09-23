@@ -1071,7 +1071,7 @@ bool songMode = false;
 // la grille ET la vue detail, demande le 2026-09-15 ("on met de la
 // couleur, des effets"). kDim pour "aucun effet" (index 0). Doit rester
 // alignee avec StepFx cote Teensy (None/Arp/Cut/Retrig).
-const uint16_t kStepFxColors[] = {kDim, kPalette[1], kPalette[2], kPalette[3]};
+const uint16_t kStepFxColors[] = {kDim, kPalette[1], kPalette[2], kPalette[3], kPalette[4], kPalette[0]};
 uint8_t seqCurrentStep = 0;
 bool seqPlaying = false;
 bool seqRecording = false;
@@ -1149,7 +1149,11 @@ constexpr int16_t kDetailGridRight = kDetailLeft + kDetailStepW + kDetailNoteW +
                                       kDetailValW + kDetailProbW + kDetailCondW;
 
 const char *const kNoteNames[12] = {"C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"};
-const char *const kStepFxNames[] = {"---", "ARP", "CUT", "RET"};
+// CRUSH/DELAY (2026-09-23) : effets audio par piste (bitcrusher/echo),
+// jusque-la sans aucun acces UI, rejoignent ARP/CUT/RET dans la meme
+// colonne FX -- VAL devient un numero de patch pour ces deux-la (voir
+// kCrushPresets[]/kDelayPresets[] cote Teensy), pas une valeur brute.
+const char *const kStepFxNames[] = {"---", "ARP", "CUT", "RET", "CRUSH", "DELAY"};
 constexpr uint8_t kStepFxCount = sizeof(kStepFxNames) / sizeof(kStepFxNames[0]);
 
 void formatNoteName(uint8_t note, char *out, size_t outSize) {
@@ -1319,18 +1323,30 @@ void drawDetailRow(uint8_t step) {
   gfx->print(buf);
 }
 
+// trackEngine[]/patchAccent() sont definis plus bas (page MOTEURS) --
+// declares en avance ici pour que drawTrkTrackRow() puisse afficher le nom
+// et la couleur du moteur de la piste (2026-09-23).
+extern uint8_t trackEngine[];
+uint16_t patchAccent(uint8_t track);
+
 // Selecteur de piste ("< PISTE N >", meme motif que la page PATCH) --
 // desormais AU-DESSUS des colonnes NOTE/INST/FX/VAL/PROB/COND, toujours visible
 // (plus besoin de toucher deux fois un pas pour changer de piste).
 void drawTrkTrackRow() {
   gfx->fillRect(kMargin, kTrkTrackRowY, kScreenSize - 2 * kMargin, kTrkTrackRowH, RGB565_BLACK);
   gfx->setTextSize(2);
-  const uint16_t accent = kPalette[selectedSeqTrack % kPaletteCount];
+  // Couleur + nom du moteur (pas juste la couleur de piste generique) --
+  // meme motif que drawPatchTrackRow()/drawEngTrackRow() (2026-09-23,
+  // "il faut ajouter le moteur dans la page principale du tracker") :
+  // centrage dynamique puisque la largeur du texte varie selon le nom.
+  const uint16_t accent = patchAccent(selectedSeqTrack);
   if (seqVerticalFocus == 1) gfx->drawRect(kMargin, kTrkTrackRowY, kScreenSize - 2 * kMargin, kTrkTrackRowH, accent);
   gfx->setTextColor(accent);
-  char buf[16];
-  snprintf(buf, sizeof(buf), "< PISTE %d >", selectedSeqTrack + 1);  // +1 : affichage "plus musicien"
-  gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - 55), kTrkTrackRowY);
+  char buf[32];
+  snprintf(buf, sizeof(buf), "< PISTE %d - %s >", selectedSeqTrack + 1,
+           az2::engineName(trackEngine[selectedSeqTrack]));  // +1 : affichage "plus musicien"
+  const int16_t textW = static_cast<int16_t>(strlen(buf) * 12);
+  gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - textW / 2), kTrkTrackRowY);
   gfx->print(buf);
 }
 
@@ -4426,7 +4442,15 @@ bool projectStructureValid(File &f) {
   bool seenPadSample[az2::kPadCount] = {};
   bool seenTrackSample[kSeqTrackCount] = {};
   bool seenTrack[kSeqTrackCount] = {};
-  bool seenStep[kPatternCount][kSeqTrackCount][kSeqStepCount] = {};
+  // static, pas une variable locale ordinaire : 8*8*128 = 8192 octets, soit
+  // a peu pres toute la pile par defaut de la tache principale sur l'ESP32
+  // (~8 Ko) -- l'allouer sur la pile faisait planter/redemarrer la carte
+  // pile au moment de la sauvegarde du morceau (atomicSaveFile() appelle
+  // cette fonction juste apres l'ecriture pour verifier le fichier).
+  // memset() le reinitialise a chaque appel puisque l'init "= {}" d'un
+  // tableau static ne s'execute qu'une seule fois, au tout premier appel.
+  static bool seenStep[kPatternCount][kSeqTrackCount][kSeqStepCount];
+  memset(seenStep, 0, sizeof(seenStep));
   bool seenPatternLength[kPatternCount] = {};
   uint8_t filePatternMeasures[kPatternCount] = {1, 1, 1, 1, 1, 1, 1, 1};
   bool valid = true;

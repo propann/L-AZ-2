@@ -64,6 +64,8 @@ using az2::kStepFxNone;
 using az2::kStepFxArp;
 using az2::kStepFxCut;
 using az2::kStepFxRetrig;
+using az2::kStepFxCrush;
+using az2::kStepFxDelay;
 constexpr uint8_t kNotesPerTrack = 2;  // polyphonie legere par piste (accords)
 constexpr uint8_t kLiveNotes = 4;      // polyphonie de la voix "jeu au clavier"
 
@@ -1495,7 +1497,40 @@ void sendCommandError(const char *command, const char *reason) {
 // piste ; stocke/transmis mais PAS ENCORE applique en temps reel, voir
 // note dans triggerStepFx()/advanceTick() plus bas -- changer un patch
 // Dexed coute trop cher pour une ISR), FX+VAL (stepFx/stepFxVal).
-constexpr uint8_t kStepFxCount = 4;  // kStepFxNone..kStepFxRetrig
+constexpr uint8_t kStepFxCount = 6;  // kStepFxNone..kStepFxDelay
+
+// Presets CRUSH/DELAY (2026-09-23, voir StepFx dans sequencer.h) : la
+// colonne VAL du tracker devient un NUMERO DE PATCH pour ces deux effets
+// (pas une valeur brute comme ARP/CUT/RET) -- "des patch qu'on peut
+// appeler dans le tracker", et "il faut faire des patch de reglage pour
+// que les trucs soient pas vides" (banque pre-remplie, pas de slot vide
+// au premier contact). stepFxVal (0-255) indexe modulo la taille de la
+// banque.
+struct CrushPreset { uint8_t bits; const char *name; };
+constexpr CrushPreset kCrushPresets[] = {
+    {16, "CLEAN"}, {12, "SOFT"}, {10, "WARM"}, {8, "LOFI"},
+    {6, "GRIT"},   {5, "DIRTY"}, {4, "CRUNCH"}, {3, "HARSH"},
+    {2, "BROKEN"}, {1, "NOISE"},
+};
+constexpr uint8_t kCrushPresetCount = sizeof(kCrushPresets) / sizeof(kCrushPresets[0]);
+
+struct DelayPreset { float ms; float mix; const char *name; };
+constexpr DelayPreset kDelayPresets[] = {
+    {60.0f, 0.25f},  {90.0f, 0.35f},  {125.0f, 0.45f}, {180.0f, 0.5f},
+    {250.0f, 0.55f}, {350.0f, 0.6f},  {420.0f, 0.65f}, {500.0f, 0.7f},
+    {350.0f, 0.85f}, {180.0f, 0.9f},  {90.0f, 0.95f},  {60.0f, 0.5f},
+    {250.0f, 0.75f}, {125.0f, 0.85f}, {420.0f, 0.4f},  {500.0f, 0.3f},
+};
+constexpr uint8_t kDelayPresetCount = sizeof(kDelayPresets) / sizeof(kDelayPresets[0]);
+
+void applyCrushPreset(uint8_t track, uint8_t presetIdx) {
+  trackCrush[track].bits(kCrushPresets[presetIdx % kCrushPresetCount].bits);
+}
+void applyDelayPreset(uint8_t track, uint8_t presetIdx) {
+  const DelayPreset &p = kDelayPresets[presetIdx % kDelayPresetCount];
+  trackDelay[track].delay(0, p.ms);
+  trackFx[track].gain(1, p.mix);
+}
 
 // Plusieurs patterns + chainage en "song", demande le 2026-09-16 ("il
 // faut un tracker complet ... plus qu'un sequenceur qui permet
@@ -1956,6 +1991,17 @@ void advanceTick() {
         tr.activeFx = tr.stepFx[currentStep];
         tr.activeFxVal = tr.stepFxVal[currentStep];
         tr.ticksSinceTrigger = 0;
+        // CRUSH/DELAY : applique UNE fois au declenchement du pas (pas a
+        // chaque tick comme ARP/CUT/RET dans triggerStepFx() -- ce sont des
+        // reglages d'effet continu, pas un ré-déclenchement de note). Reste
+        // actif sur la piste jusqu'au prochain pas qui change cet effet
+        // (comportement tracker classique : une valeur d'effet "tient"
+        // jusqu'a la prochaine commande).
+        if (tr.activeFx == kStepFxCrush) {
+          applyCrushPreset(t, tr.activeFxVal);
+        } else if (tr.activeFx == kStepFxDelay) {
+          applyDelayPreset(t, tr.activeFxVal);
+        }
       } else {
         tr.stepPlaying = false;
         tr.activeFx = kStepFxNone;

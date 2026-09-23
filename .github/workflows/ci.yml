@@ -31,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        environment: [master_teensy, screen_esp]
+        environment: [master_teensy, master_teensy_rack_lab, screen_esp]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
