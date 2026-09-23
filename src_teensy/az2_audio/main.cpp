@@ -3506,7 +3506,16 @@ void handleMidiDinRealtime(uint8_t value) {
 }
 
 void updateMidiDin() {
-  while (Serial8.available() > 0) {
+  // Borne le nombre d'octets draines par appel : si rien n'est branche sur
+  // l'entree DIN, la broche RX du 6N138 flotte et le bruit electrique peut
+  // etre lu comme un flux quasi continu d'octets parasites par l'UART. Un
+  // "while (Serial8.available())" sans limite pouvait alors monopoliser
+  // loop() et retarder updateDigitalControls() (boutons/croix) de facon
+  // intermittente -- suspecte le 2026-09-23 apres un signalement de
+  // controles qui repondent mal.
+  uint8_t drained = 0;
+  while (Serial8.available() > 0 && drained < 64) {
+    ++drained;
     const uint8_t value = static_cast<uint8_t>(Serial8.read());
     if (value >= 0xF8) {
       handleMidiDinRealtime(value);
@@ -4625,7 +4634,14 @@ void setup() {
   static uint8_t serial1RxBuf[2048];
   Serial1.addMemoryForRead(serial1RxBuf, sizeof(serial1RxBuf));
   Serial1.begin(az2::kControlBaud);
-  Serial8.begin(31250);  // MIDI DIN IN : RX8 pin 34 depuis la sortie du 6N138
+  // MIDI DIN IN desactive le 2026-09-23 : le circuit 6N138 n'est pas encore
+  // cable, donc RX8 (pin 34) flotte. Un pin flottant ouvert par Serial8.begin()
+  // peut capter du bruit electrique lu comme un flux d'octets parasites --
+  // combine au "while (Serial8.available())" sans limite d'updateMidiDin(),
+  // ca a probablement monopolise loop() et retarde la lecture des boutons/
+  // croix (signalement "faut presser 10 fois", 2026-09-23). A reactiver
+  // seulement une fois le 6N138 reellement cable.
+  // Serial8.begin(31250);
 #ifdef AZ2_EXTERNAL_RACK
   Serial7.begin(115200);  // pins 28 RX7 / 29 TX7 vers le S3, contrôle seulement
 #endif
@@ -4791,7 +4807,7 @@ void loop() {
 #endif
   reportGbAudioHealth();
   updateMidiIn();
-  updateMidiDin();
+  // updateMidiDin();  // desactive : voir la note pres de Serial8.begin() dans setup()
   feedGbAudioQueue();
   updateScope();
   updateSequencer();
