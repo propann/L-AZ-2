@@ -2339,13 +2339,17 @@ float masterVolume = 1.0f;  // potard 1
 float reverbWet = 0.0f;     // potard 2 ou FX:reverb:
 float delayWet = 0.0f;      // potard 3 ou FX:delay:
 
-// Une course lineaire en amplitude parait concentree pres du maximum a
-// l'oreille. La racine carree etale donc la zone audible sur toute la course
-// de l'encodeur, tout en conservant le silence exact a 0.
+// Le volume percu est logarithmique. L'ancienne courbe sqrt(normalized)
+// faisait exactement l'inverse de l'effet recherche : des la premiere partie
+// de la course le gain etait deja eleve, puis presque toute la plage semblait
+// ne rien changer avant la coupure nette a zero. Une courbe quadratique donne
+// une vraie reserve de reglage aux niveaux faibles et moyens, conserve le
+// silence numerique exact a 0 et rejoint progressivement la marge de tete au
+// maximum.
 float masterGainFromEncoder(uint8_t value) {
   const float normalized = static_cast<float>(value) / 127.0f;
   constexpr float kMasterHeadroom = 0.75f;
-  return kMasterHeadroom * sqrtf(normalized);
+  return kMasterHeadroom * normalized * normalized;
 }
 
 void applyMasterMix() {
