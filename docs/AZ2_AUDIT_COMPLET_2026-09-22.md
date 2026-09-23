@@ -521,3 +521,47 @@ Aucun commit git n'a été fait — modifications encore dans l'arbre de travail
 | Moteurs au catalogue (`kEngineCount`) | 6 | 9 (avec le diff non committé) | +3 |
 | Environnements PlatformIO | — | 15 (2 en `default_envs`) | — |
 | Environnements construits par la CI | — | 2 / 15 | — |
+
+## Fusion sampler piste/pads (23 septembre)
+
+Demande : le moteur SAMPLER d'une piste (page PATCH) ne choisissait que
+parmi 3 sons fixes (Kick/Snare/GB Capture) alors que les 16 pads (écran
+SAMPLEUR dédié) peuvent déjà charger n'importe quel WAV de la SD — fusionner
+les deux.
+
+- `kSamplerPatchCount` 3→4, nouveau `kSamplerCustomPatch = 3` ("CUSTOM")
+  dans `AZ2_Protocol.h`.
+- Teensy : buffer PSRAM dédié par piste (`trackSampleBuffer[8]`, même
+  capacité que les pads, +~1,5 Mo EXTRAM confirmé au lien — 5,59 Mo au
+  total, largement dans les 16 Mo). Nouvelle commande `TRACKSAMPLE:
+  <piste>:<chemin>` (charge, réutilise `readWavPcm16Mono()` déjà partagée
+  avec les pads/la capture GB) et `TRACKSAMPLE:<piste>:-` (efface) ;
+  bascule automatiquement `trackPatch[piste]` sur CUSTOM après un
+  chargement réussi. `applyTrackPatch()` sait revenir sur ce patch sans
+  recharger le fichier (buffer conservé tant qu'aucun autre n'est chargé).
+- Écran : l'écran SAMPLEUR (jusqu'ici pads uniquement) accepte un mode
+  cible "piste" (`samplerTargetIsTrack`) — même navigateur SD, mais
+  affiche un panneau piste (couleur d'identité du moteur, nom de piste,
+  sample actuel) à la place de la grille de 16 pads, et envoie
+  `TRACKSAMPLE:` au lieu de `PADSAMPLE:`. Le bouton retour (C/tactile)
+  ramène à la page PATCH plutôt qu'à AUDIO en mode piste. Nouvelle ligne
+  "SAMPLE" sur la page PATCH du moteur SAMPLER (à côté de MODE) : la
+  sélectionner puis faire le geste habituel A+croix ouvre ce navigateur au
+  lieu de régler une valeur numérique.
+- Persistance projet : `TRACKSAMPLE:<piste>:<chemin>` écrit/lu dans les
+  fichiers projet, même convention que `PADSAMPLE:` (uniquement les pistes
+  réellement chargées).
+- Test natif mis à jour (`kSamplerPatchCount` était en dur à 3 dans
+  `test_engine_patch_count_and_name`) — 21/21 toujours au vert.
+
+**Validé en direct sur le vrai Teensy** : `TRACKSAMPLE:` répond
+correctement à un chemin invalide (`SAMPLER:TRACK:<n>:OPEN_ERROR`), une
+piste hors bornes (`TRACKSAMPLE:ERROR:OUT_OF_RANGE`), une commande mal
+formée et l'effacement. **Non vérifié** : le chargement réel d'un WAV
+existant — la carte SD de ce banc de test n'a pas encore la bibliothèque
+de samples complète (les chemins par défaut de `kDefaultKitPaths[]`, déjà
+utilisés par le kit de batterie au boot, retournent `OPEN_ERROR` ici). Le
+mécanisme réutilise cependant tel quel `readWavPcm16Mono()`, déjà prouvé
+par le chemin pads — confiance élevée mais pas une preuve par l'écoute.
+Écran ESP32 compilé et vérifié (pas encore flashé, port non branché au
+moment d'écrire ceci).

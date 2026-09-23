@@ -828,10 +828,21 @@ uint8_t samplerKitSlot = 0;
 bool samplerNeedsRedraw = false;
 int8_t heldSamplerFile[2] = {-1, -1};
 char samplerUiStatus[40] = {};
+// Fusion PATCH <-> navigateur SD (2026-09-23, "attribuer des samples ...
+// il faut faire une fusion") : cet ecran servait jusqu'ici exclusivement
+// aux 16 pads. samplerTargetIsTrack bascule son comportement pour cibler
+// a la place le moteur SAMPLER d'UNE piste (samplerTargetTrack) -- la
+// grille de 16 pads est alors remplacee par un simple indicateur de
+// piste (voir drawSamplerPage()), et "AFFECTER" envoie TRACKSAMPLE: au
+// lieu de PADSAMPLE: (voir samplerAssignSelected()). false = comportement
+// pads inchange.
+bool samplerTargetIsTrack = false;
+int8_t samplerTargetTrack = -1;
 void saveSamplerKit();
 void loadSamplerKit();
 extern bool screensaverActive;
 void drawSamplerPage();
+void drawSamplerTrackPanel(uint8_t track);  // definie plus bas, voir son commentaire
 void goTo(Screen s);
 
 void requestSamplerList() {
@@ -856,7 +867,15 @@ void samplerOpenSelected() {
 
 void samplerGoUp() {
   if (strcmp(samplerFolder, "/samples") == 0) {
-    goTo(Screen::Audio);
+    // Mode piste (2026-09-23, voir samplerTargetIsTrack) : retour a la
+    // page PATCH d'ou l'on est venu, pas a la page AUDIO/pads -- cet
+    // ecran n'a jamais ete ouvert depuis le menu PAD dans ce cas.
+    if (samplerTargetIsTrack) {
+      samplerTargetIsTrack = false;
+      goTo(Screen::Patch);
+    } else {
+      goTo(Screen::Audio);
+    }
     return;
   }
   char *slash = strrchr(samplerFolder, '/');
@@ -869,24 +888,36 @@ void samplerGoUp() {
 }
 
 void drawSamplerPage() {
+  const uint8_t targetTrack = static_cast<uint8_t>(samplerTargetTrack);
   drawSubHeader("SAMPLEUR", kPalette[2]);
   gfx->setTextSize(1);
   gfx->setTextColor(kDim);
   gfx->setCursor(20, 72);
-  gfx->print("PAD   toucher pour jouer / choisir");
+  gfx->print(samplerTargetIsTrack ? "PISTE  choisir un WAV pour son SAMPLER" : "PAD   toucher pour jouer / choisir");
   gfx->setCursor(242, 72);
   gfx->print(String(samplerFolder).substring(0, 35));
-  for (uint8_t pad = 0; pad < az2::kPadCount; ++pad) {
-    const int16_t x = 20 + (pad % 4) * 49;
-    const int16_t y = 96 + (pad / 4) * 49;
-    const bool selected = pad == samplerSelectedPad;
-    gfx->fillRect(x, y, 44, 44, selected ? kPalette[2] : RGB565_BLACK);
-    gfx->drawRect(x, y, 44, 44, selected ? RGB565_WHITE : kFaint);
-    gfx->setTextColor(selected ? RGB565_BLACK : RGB565_WHITE);
-    gfx->setCursor(x + 10, y + 5);
-    gfx->printf("%02u", pad);
-    gfx->setCursor(x + 6, y + 23);
-    gfx->print(padSamplePath[pad][0] ? "WAV" : "---");
+  if (samplerTargetIsTrack) {
+    // Fusion PATCH <-> navigateur SD (2026-09-23) : la grille de 16 pads
+    // n'a pas de sens ici (une seule piste, pas 16 cibles) -- un panneau
+    // unique rappelle plutot quelle piste va recevoir le fichier choisi
+    // dans la liste. Fonction definie PLUS BAS dans ce fichier (pas ici)
+    // : elle a besoin de patchAccent()/trackEngine[]/trackSamplePath[],
+    // tous declares apres ce point -- drawSamplerPage() est appelee bien
+    // avant leur declaration par plusieurs sites (menu PAD, etc.).
+    drawSamplerTrackPanel(targetTrack);
+  } else {
+    for (uint8_t pad = 0; pad < az2::kPadCount; ++pad) {
+      const int16_t x = 20 + (pad % 4) * 49;
+      const int16_t y = 96 + (pad / 4) * 49;
+      const bool selected = pad == samplerSelectedPad;
+      gfx->fillRect(x, y, 44, 44, selected ? kPalette[2] : RGB565_BLACK);
+      gfx->drawRect(x, y, 44, 44, selected ? RGB565_WHITE : kFaint);
+      gfx->setTextColor(selected ? RGB565_BLACK : RGB565_WHITE);
+      gfx->setCursor(x + 10, y + 5);
+      gfx->printf("%02u", pad);
+      gfx->setCursor(x + 6, y + 23);
+      gfx->print(padSamplePath[pad][0] ? "WAV" : "---");
+    }
   }
   for (uint8_t row = 0; row < kSamplerRows; ++row) {
     const int16_t y = 96 + row * 43;
@@ -904,11 +935,15 @@ void drawSamplerPage() {
   }
   gfx->setTextColor(RGB565_WHITE);
   gfx->setCursor(20, 310);
-  gfx->printf("PAD %02u : %.55s", samplerSelectedPad,
-              padSamplePath[samplerSelectedPad][0] ? padSamplePath[samplerSelectedPad] : "aucun sample");
+  if (!samplerTargetIsTrack) {
+    gfx->printf("PAD %02u : %.55s", samplerSelectedPad,
+                padSamplePath[samplerSelectedPad][0] ? padSamplePath[samplerSelectedPad] : "aucun sample");
+  }
   gfx->setTextColor(kDim);
   gfx->setCursor(20, 336);
-  gfx->print(samplerUiStatus[0] ? samplerUiStatus : "Glisser WAV vers pad");
+  gfx->print(samplerUiStatus[0] ? samplerUiStatus
+             : samplerTargetIsTrack ? "Retour (C) : garde le sample actuel"
+                                     : "Glisser WAV vers pad");
   gfx->drawRect(20, 354, 95, 42, kFaint);
   gfx->drawRect(123, 354, 95, 42, kFaint);
   gfx->drawRect(240, 354, 220, 42, kPalette[2]);
@@ -916,23 +951,52 @@ void drawSamplerPage() {
   gfx->setCursor(145, 369); gfx->print("LISTE >");
   gfx->setCursor(298, 369);
   gfx->print(samplerIsDir[samplerSelectedRow] ? "OUVRIR (A)" : "AFFECTER (A)");
-  gfx->drawRect(20, 408, 145, 38, kFaint);
-  gfx->drawRect(170, 408, 135, 38, kPalette[2]);
-  gfx->drawRect(310, 408, 150, 38, kPalette[3]);
-  gfx->setTextColor(RGB565_WHITE);
-  gfx->setCursor(31, 422); gfx->printf("KIT %u / 4", samplerKitSlot + 1);
-  gfx->setCursor(207, 422); gfx->print("SAUVER");
-  gfx->setCursor(360, 422); gfx->print("CHARGER");
+  // KIT sauver/charger n'a de sens que pour les pads (2026-09-23) -- une
+  // piste n'a qu'UN sample CUSTOM, pas 16, rien a grouper en kit.
+  if (!samplerTargetIsTrack) {
+    gfx->drawRect(20, 408, 145, 38, kFaint);
+    gfx->drawRect(170, 408, 135, 38, kPalette[2]);
+    gfx->drawRect(310, 408, 150, 38, kPalette[3]);
+    gfx->setTextColor(RGB565_WHITE);
+    gfx->setCursor(31, 422); gfx->printf("KIT %u / 4", samplerKitSlot + 1);
+    gfx->setCursor(207, 422); gfx->print("SAUVER");
+    gfx->setCursor(360, 422); gfx->print("CHARGER");
+  }
 }
 
 void samplerAssignSelected() {
   if (samplerSelectedRow >= samplerVisible || samplerIsDir[samplerSelectedRow] ||
       !samplerFiles[samplerSelectedRow][0]) return;
   char msg[96];
-  snprintf(msg, sizeof(msg), "PADSAMPLE:%u:%s", samplerSelectedPad, samplerFiles[samplerSelectedRow]);
-  sendToTeensy(msg);
-  snprintf(samplerUiStatus, sizeof(samplerUiStatus), "Chargement pad %u...", samplerSelectedPad);
+  if (samplerTargetIsTrack) {
+    // Fusion PATCH <-> navigateur SD (2026-09-23) : meme fichier, meme
+    // liste, mais destination = TRACKSAMPLE:<piste> au lieu de
+    // PADSAMPLE:<pad> -- voir loadWavIntoTrackSampler() cote Teensy.
+    snprintf(msg, sizeof(msg), "TRACKSAMPLE:%d:%s", samplerTargetTrack, samplerFiles[samplerSelectedRow]);
+    sendToTeensy(msg);
+    snprintf(samplerUiStatus, sizeof(samplerUiStatus), "Chargement piste %d...", samplerTargetTrack + 1);
+  } else {
+    snprintf(msg, sizeof(msg), "PADSAMPLE:%u:%s", samplerSelectedPad, samplerFiles[samplerSelectedRow]);
+    sendToTeensy(msg);
+    snprintf(samplerUiStatus, sizeof(samplerUiStatus), "Chargement pad %u...", samplerSelectedPad);
+  }
   drawSamplerPage();
+}
+
+// Ouvre le navigateur SD (ecran SAMPLEUR) cible sur la piste `track` au
+// lieu des pads (2026-09-23, "fusion" demandee -- voir
+// samplerTargetIsTrack). Repart toujours de la racine /samples : la
+// derniere position de navigation des PADS (samplerFolder) n'a pas de
+// raison de rester pertinente en changeant de cible, et inversement.
+void goTo(Screen s);
+void openSamplerForTrack(uint8_t track) {
+  samplerTargetIsTrack = true;
+  samplerTargetTrack = static_cast<int8_t>(track);
+  snprintf(samplerFolder, sizeof(samplerFolder), "/samples");
+  samplerOffset = 0;
+  samplerSelectedRow = 0;
+  samplerUiStatus[0] = '\0';
+  goTo(Screen::Sampler);
 }
 
 int8_t hitTestAudioPad(int16_t x, int16_t y) {
@@ -2037,7 +2101,7 @@ uint8_t patchExtraCount(uint8_t track) {
     case az2::kEngineDexed: return 17;   // parametres globaux DX7 (hors algo/feedback deja lignes 2-3, hors nom)
     case az2::kEngineEPiano: return 12;  // les 12 parametres continus mdaEPiano
     case az2::kEngineBraids: return 2;   // color, timbre (shape reste sur la page MOTEURS)
-    case az2::kEngineSampler: return 1;  // MODE: one-shot ou gate
+    case az2::kEngineSampler: return 2;  // MODE (one-shot/gate) + SAMPLE (2026-09-23, choix libre d'un WAV)
     case az2::kEngineGranular: return az2::kRackGranularParamCount - 6;
     case az2::kEngineSpectral: return az2::kRackSpectralParamCount - 6;
     default: return 0;
@@ -2169,7 +2233,7 @@ const char *patchExtraLabel(uint8_t track, uint8_t extraIdx) {
     case az2::kEngineDexed: return kDexedExtraLabel[extraIdx];
     case az2::kEngineEPiano: return kEPianoExtraLabel[extraIdx];
     case az2::kEngineBraids: return kBraidsExtraLabel[extraIdx];
-    case az2::kEngineSampler: return "MODE";
+    case az2::kEngineSampler: return extraIdx == 0 ? "MODE" : "SAMPLE";
     case az2::kEngineGranular:
     case az2::kEngineSpectral:
       return az2::rackParamName(rackEngineForTrack(track), extraIdx + 6);
@@ -2196,6 +2260,42 @@ uint8_t patchExtraMax(uint8_t track, uint8_t extraIdx) {
 // EPIANO (12) et BRAIDS (2), le reste de la ligne n'etant simplement
 // jamais lu/affiche pour ces moteurs (voir patchExtraCount()).
 uint8_t trackSamplerGate[kSeqTrackCount] = {};
+// Chemin SD (carte du Teensy) charge dans le buffer CUSTOM de chaque
+// piste (2026-09-23, voir samplerTargetIsTrack plus haut) -- "" = aucun.
+// Meme convention que padSamplePath[] : jamais ecrit directement ici,
+// seulement via l'echo TRACKSAMPLE:<piste>:READY:path=.../CLEARED cote
+// Teensy (voir handleTeensyLine()), donc toujours synchronise avec ce qui
+// est reellement charge.
+char trackSamplePath[kSeqTrackCount][64] = {};
+
+// Panneau affiche par drawSamplerPage() a la place de la grille de 16
+// pads quand samplerTargetIsTrack est actif (2026-09-23, voir son
+// commentaire pres de la declaration de drawSamplerPage()). Definie ici
+// (et non avec le reste de l'ecran SAMPLEUR, bien plus haut dans ce
+// fichier) car elle a besoin de patchAccent()/trackEngine[]/
+// trackSamplePath[], tous declares apres cet ancien emplacement.
+void drawSamplerTrackPanel(uint8_t track) {
+  const uint16_t accent = patchAccent(track);
+  gfx->fillRect(20, 96, 196, 196, RGB565_BLACK);
+  gfx->drawRect(20, 96, 196, 196, accent);
+  gfx->setTextColor(accent);
+  gfx->setTextSize(2);
+  gfx->setCursor(36, 116);
+  gfx->printf("PISTE %d", track + 1);
+  gfx->setTextSize(1);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(36, 148);
+  gfx->print(az2::engineName(trackEngine[track]));
+  gfx->setTextColor(kDim);
+  gfx->setCursor(36, 172);
+  gfx->print(trackSamplePath[track][0] ? "sample actuel :" : "aucun sample");
+  if (trackSamplePath[track][0]) {
+    gfx->setTextColor(RGB565_WHITE);
+    const char *name = strrchr(trackSamplePath[track], '/');
+    gfx->setCursor(36, 188);
+    gfx->print(String(name ? name + 1 : trackSamplePath[track]).substring(0, 28));
+  }
+}
 
 void sendPatchExtra(uint8_t track, uint8_t extraIdx) {
   char msg[48];
@@ -2210,6 +2310,17 @@ void sendPatchExtra(uint8_t track, uint8_t extraIdx) {
       snprintf(msg, sizeof(msg), "BXP:%d:%d:%d", track, extraIdx, patchExtraVal[track][extraIdx]);
       break;
     case az2::kEngineSampler:
+      if (extraIdx == 1) {
+        // Ligne SAMPLE (2026-09-23) : pas un reglage numerique -- ouvre
+        // directement le navigateur SD (voir openSamplerForTrack()) des
+        // que l'utilisateur "regle" cette ligne (A + HAUT/BAS, meme geste
+        // que n'importe quel autre parametre). patchExtraVal[] vient
+        // d'etre modifie par le delta qui a mene ici mais n'est jamais
+        // lu pour cette ligne (voir patchExtraLabel()/drawPatchExtraRow()) --
+        // sans consequence.
+        openSamplerForTrack(track);
+        return;
+      }
       snprintf(msg, sizeof(msg), "SMODE:%d:%d", track, patchExtraVal[track][extraIdx] ? 1 : 0);
       break;
     case az2::kEngineGranular:
@@ -2530,9 +2641,21 @@ void drawPatchExtraRow(uint8_t logicalRow) {
   gfx->setCursor(static_cast<int16_t>(x + 4), static_cast<int16_t>(y + 3));
   gfx->print(patchExtraLabel(track, extraIdx));
 
+  // Ligne SAMPLE du moteur SAMPLER (2026-09-23) : pas une valeur
+  // numerique (voir sendPatchExtra()) -- la ligne est trop etroite pour
+  // un nom de fichier complet (moitie de largeur, appariee 2 par ligne),
+  // juste un indicateur "charge/vide" comme les cellules pad de l'ecran
+  // SAMPLEUR (voir drawSamplerPage()).
+  gfx->setTextSize(2);
+  if (trackEngine[track] == az2::kEngineSampler && extraIdx == 1) {
+    gfx->setTextColor(trackSamplePath[track][0] ? RGB565_WHITE : kFaint);
+    gfx->setCursor(static_cast<int16_t>(x + w - 50), static_cast<int16_t>(y + 3));
+    gfx->print(trackSamplePath[track][0] ? "WAV" : "...");
+    return;
+  }
+
   char buf[6];
   snprintf(buf, sizeof(buf), "%3d", patchExtraVal[track][extraIdx]);
-  gfx->setTextSize(2);
   gfx->setTextColor(RGB565_WHITE);
   gfx->setCursor(static_cast<int16_t>(x + w - 34), static_cast<int16_t>(y + 3));
   gfx->print(buf);
@@ -4226,6 +4349,18 @@ void saveProject(uint8_t slot) {
         f.printf("PADSAMPLE:%d:%s\n", pad, padSamplePath[pad]);
       }
     }
+    // Sample CUSTOM du moteur SAMPLER d'une piste (2026-09-23, "fusion"
+    // avec le navigateur SD des pads) -- meme convention que ci-dessus :
+    // seules les pistes reellement chargees (trackSamplePath[t][0] !=
+    // '\0') apparaissent. trackPatch[t] (deja ecrit par la ligne TRACK:
+    // ci-dessus) peut valoir kSamplerCustomPatch (3) sans que ce fichier
+    // ne soit encore charge au retour (SD retiree, chemin efface) --
+    // loadProject() doit rester tolerant a cette absence.
+    for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
+      if (trackSamplePath[t][0] != '\0') {
+        f.printf("TRACKSAMPLE:%d:%s\n", t, trackSamplePath[t]);
+      }
+    }
     for (uint8_t p = 0; p < kPatternCount; ++p) {
       for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
         const uint8_t activeSteps = static_cast<uint8_t>(patternMeasures[p] * kSeqStepsPerMeasure);
@@ -4289,6 +4424,7 @@ bool projectStructureValid(File &f) {
   bool hasSongLen = false;
   bool seenSongSet[kSongLength] = {};
   bool seenPadSample[az2::kPadCount] = {};
+  bool seenTrackSample[kSeqTrackCount] = {};
   bool seenTrack[kSeqTrackCount] = {};
   bool seenStep[kPatternCount][kSeqTrackCount][kSeqStepCount] = {};
   bool seenPatternLength[kPatternCount] = {};
@@ -4347,6 +4483,15 @@ bool projectStructureValid(File &f) {
                               wav.length() < sizeof(padSamplePath[0]);
       valid &= entryValid;
       if (entryValid) seenPadSample[v] = true;
+    } else if (line.startsWith("TRACKSAMPLE:")) {
+      const String rest = afterColon(line);
+      const int colon = rest.indexOf(':');
+      const String wav = colon > 0 ? rest.substring(colon + 1) : String();
+      const bool entryValid = colon > 0 && projectNumber(rest.substring(0, colon), 0, kSeqTrackCount - 1, v) &&
+                              !seenTrackSample[v] && wav.startsWith("/samples/") &&
+                              wav.length() < sizeof(trackSamplePath[0]);
+      valid &= entryValid;
+      if (entryValid) seenTrackSample[v] = true;
     } else if (line.startsWith("TRACK:")) {
       if (!projectCsv(afterColon(line), values, 11, 13, count)) { valid = false; continue; }
       const int t = values[0];
@@ -4482,6 +4627,22 @@ void loadProject(uint8_t slot) {
         char padMsg[96];
         snprintf(padMsg, sizeof(padMsg), "PADSAMPLE:%s:%s", rest.substring(0, c).c_str(), rest.substring(c + 1).c_str());
         sendToTeensy(padMsg);
+      }
+    } else if (line.startsWith("TRACKSAMPLE:")) {
+      // Meme principe que PADSAMPLE: ci-dessus, pour le sample CUSTOM
+      // d'une piste (2026-09-23) -- le Teensy charge le WAV et bascule
+      // lui-meme trackPatch[] sur kSamplerCustomPatch (voir
+      // loadWavIntoTrackSampler()), donc envoye APRES la ligne TRACK: ci-
+      // dessous n'ecraserait rien : c'est l'ordre inverse qui compterait
+      // (une ligne TRACK: DOIT deja avoir mis trackPatch a 3 pour ce cas,
+      // ce chargement ne fait alors que remplir le buffer correspondant).
+      const String rest = afterColon(line);
+      const int c = rest.indexOf(':');
+      if (c >= 0) {
+        char trackMsg[96];
+        snprintf(trackMsg, sizeof(trackMsg), "TRACKSAMPLE:%s:%s", rest.substring(0, c).c_str(),
+                 rest.substring(c + 1).c_str());
+        sendToTeensy(trackMsg);
       }
     } else if (line.startsWith("TRACK:")) {
       // 13 champs depuis l'ajout de MUTE (12e = volume, 13e = mute) --
@@ -6300,6 +6461,37 @@ void handleTeensyLine(const String &line) {
         samplerNeedsRedraw = true;
       }
     }
+  } else if (line.startsWith("TRACKSAMPLE:") && line.endsWith(":CLEARED")) {
+    const int track = line.substring(12, line.indexOf(':', 12)).toInt();
+    if (track >= 0 && track < kSeqTrackCount) {
+      trackSamplePath[track][0] = '\0';
+      samplerNeedsRedraw = true;
+      if (currentScreen == Screen::Patch && track == patchTrack && !screensaverActive &&
+          trackEngine[track] == az2::kEngineSampler) {
+        drawPatchExtraRow(static_cast<uint8_t>(1 + 6));
+      }
+    }
+  } else if (line.startsWith("TRACKSAMPLE:") && line.indexOf(":READY:path=") > 0) {
+    // Meme principe que l'echo PADSAMPLE:...:READY: ci-dessus, pour le
+    // sample CUSTOM d'une piste (2026-09-23) -- garde trackSamplePath[]
+    // a jour quelle que soit l'origine (choix depuis cet ecran, ou
+    // chargement de projet).
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    const int pathIdx = line.indexOf("path=");
+    if (i1 >= 0 && i2 >= 0 && pathIdx >= 0) {
+      const uint8_t track = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
+      if (track < kSeqTrackCount) {
+        const String path = line.substring(pathIdx + 5);
+        path.toCharArray(trackSamplePath[track], sizeof(trackSamplePath[track]));
+        snprintf(samplerUiStatus, sizeof(samplerUiStatus), "Piste %d prete", track + 1);
+        samplerNeedsRedraw = true;
+        if (currentScreen == Screen::Patch && track == patchTrack && !screensaverActive &&
+            trackEngine[track] == az2::kEngineSampler) {
+          drawPatchExtraRow(static_cast<uint8_t>(1 + 6));
+        }
+      }
+    }
   } else if (line.startsWith("MUTE:") || line.startsWith("SOLO:")) {
     // Echo mute/solo (voir handleMuteCommand()/handleSoloCommand() cote
     // Teensy) -- garde trackMuted[]/trackSoloed[] a jour meme si le
@@ -6990,12 +7182,16 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       }
     }
   } else if (currentScreen == Screen::Sampler) {
-    if (inBox(x, y, 20, 408, 145, 38)) {
+    // KIT sauver/charger n'existe que pour les pads (2026-09-23, voir le
+    // commentaire de drawSamplerPage()) -- le bouton n'est plus dessine en
+    // mode piste, mais garde quand meme le tap ici pour ne rien declencher
+    // sur une zone d'ecran devenue vide.
+    if (!samplerTargetIsTrack && inBox(x, y, 20, 408, 145, 38)) {
       samplerKitSlot = static_cast<uint8_t>((samplerKitSlot + 1) % 4);
       drawSamplerPage();
-    } else if (inBox(x, y, 170, 408, 135, 38)) {
+    } else if (!samplerTargetIsTrack && inBox(x, y, 170, 408, 135, 38)) {
       saveSamplerKit();
-    } else if (inBox(x, y, 310, 408, 150, 38)) {
+    } else if (!samplerTargetIsTrack && inBox(x, y, 310, 408, 150, 38)) {
       loadSamplerKit();
     } else if (inBox(x, y, 20, 354, 95, 42)) {
       samplerOffset = samplerOffset >= kSamplerRows ? samplerOffset - kSamplerRows : 0;
@@ -7010,7 +7206,7 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
     } else if (inBox(x, y, 240, 354, 220, 42)) {
       if (samplerIsDir[samplerSelectedRow]) samplerOpenSelected();
       else samplerAssignSelected();
-    } else if (inBox(x, y, 20, 96, 191, 191)) {
+    } else if (!samplerTargetIsTrack && inBox(x, y, 20, 96, 191, 191)) {
       const int col = (x - 20) / 49;
       const int row = (y - 96) / 49;
       if (col < 4 && row < 4 && (x - 20) % 49 < 44 && (y - 96) % 49 < 44) {

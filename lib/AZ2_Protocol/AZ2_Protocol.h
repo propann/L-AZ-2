@@ -572,14 +572,21 @@ constexpr const char *kAnalogPatchNames[kAnalogPatchCount] = {
 
 // SAMPLER (2026-09-18) : 2 samples de depart embarques en flash (voir
 // az2_sampler_data.h cote Teensy), deja vendores dans le repo avec
-// MicroDexed-touch (meme licence GPLv3, voir AZ2_LICENCES.md) --
-// d'autres pourront s'ajouter (SD/PSRAM, voir docs/AZ2_SAMPLEUR.md)
-// sans que cette table grandisse necessairement au meme rythme (un
-// index au-dela de kSamplerPatchCount reste gere -- voir
-// applyTrackPatch() cote Teensy).
-constexpr uint8_t kSamplerPatchCount = 3;
+// MicroDexed-touch (meme licence GPLv3, voir AZ2_LICENCES.md).
+//
+// 4e entree ajoutee le 2026-09-23 ("fusion" demandee entre le moteur
+// SAMPLER d'une piste et le navigateur SD deja utilise par les pads,
+// voir docs/AZ2_SAMPLEUR.md) : CUSTOM n'a pas de contenu FIXE comme les
+// 3 precedents (Kick/Snare/GB Capture pointent vers des tableaux PROGMEM
+// ou un buffer de capture GB partages entre pistes) -- chaque piste a
+// desormais SON PROPRE buffer PSRAM (trackSampleBuffer[] cote Teensy),
+// rempli en chargeant n'importe quel WAV de la SD via TRACKSAMPLE:<piste>:
+// <chemin>, exactement comme PADSAMPLE:<pad>:<chemin> le fait deja pour
+// les pads. Voir applyTrackPatch() cote Teensy pour le branchement.
+constexpr uint8_t kSamplerPatchCount = 4;
 constexpr uint8_t kSamplerGbCapturePatch = 2;
-constexpr const char *kSamplerPatchNames[kSamplerPatchCount] = {"Kick", "Snare", "GB Capture"};
+constexpr uint8_t kSamplerCustomPatch = 3;
+constexpr const char *kSamplerPatchNames[kSamplerPatchCount] = {"Kick", "Snare", "GB Capture", "CUSTOM"};
 
 constexpr uint8_t kDrumPatchCount = 6;
 constexpr const char *kDrumPatchNames[kDrumPatchCount] = {

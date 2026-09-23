@@ -209,10 +209,17 @@ void test_engine_patch_count_and_name() {
   // commentaire de kDexedPatchCount dans AZ2_Protocol.h.
   TEST_ASSERT_EQUAL_UINT16(255, az2::enginePatchCount(az2::kEngineDexed));
   TEST_ASSERT_EQUAL_UINT16(1, az2::enginePatchCount(az2::kEngineKarplus));  // un seul "patch" possible
-  TEST_ASSERT_EQUAL_UINT16(3, az2::enginePatchCount(az2::kEngineSampler));
+  // 4 depuis le 2026-09-23 ("fusion" du moteur SAMPLER d'une piste avec le
+  // navigateur SD des pads -- voir kSamplerCustomPatch dans AZ2_Protocol.h) :
+  // Kick/Snare/GB Capture (fixes) + CUSTOM (WAV libre charge par piste,
+  // voir loadWavIntoTrackSampler() cote Teensy).
+  TEST_ASSERT_EQUAL_UINT16(4, az2::enginePatchCount(az2::kEngineSampler));
   TEST_ASSERT_EQUAL_UINT8(2, az2::kSamplerGbCapturePatch);
+  TEST_ASSERT_EQUAL_UINT8(3, az2::kSamplerCustomPatch);
   TEST_ASSERT_EQUAL_STRING("GB Capture",
                            az2::enginePatchName(az2::kEngineSampler, az2::kSamplerGbCapturePatch));
+  TEST_ASSERT_EQUAL_STRING("CUSTOM",
+                           az2::enginePatchName(az2::kEngineSampler, az2::kSamplerCustomPatch));
   TEST_ASSERT_EQUAL_STRING("DEXED", az2::engineName(az2::kEngineDexed));
   TEST_ASSERT_EQUAL_STRING("?", az2::engineName(99));  // moteur invalide -> pas de crash, "?" attendu
 }

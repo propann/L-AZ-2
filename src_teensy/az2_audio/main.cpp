@@ -327,6 +327,24 @@ AudioPlaySampler padSampler[az2::kPadCount];
 char padSamplePathLive[az2::kPadCount][64] = {};
 bool padSamplerLoaded[az2::kPadCount] = {};
 
+// Meme principe pour le moteur SAMPLER d'une PISTE (2026-09-23, "fusion"
+// demandee entre la page PATCH et le navigateur SD deja utilise par les
+// pads) : chaque piste a son propre buffer PSRAM, rempli par
+// TRACKSAMPLE:<piste>:<chemin> (voir loadWavIntoTrackSampler() plus bas),
+// joue via trackSamplerEngine[] des que trackPatch[piste] ==
+// az2::kSamplerCustomPatch (voir applyTrackPatch()). Meme capacite que
+// les pads : 8 x 192 Ko = ~1,5 Mo de plus, confirme largement dans les 16
+// Mo de PSRAM aux cotes des 16 pads (~3 Mo) et du reste.
+EXTMEM int16_t trackSampleBuffer[kTrackCount][kPadSampleCapacity];
+char trackSamplePathLive[kTrackCount][64] = {};
+bool trackSampleLoaded[kTrackCount] = {};
+// AudioPlaySampler (az2_sampler.h, classe maison) n'expose pas d'accesseur
+// pour relire la longueur d'un echantillon deja charge -- retenue ici pour
+// pouvoir rebrancher trackSampleBuffer[] sans recharger le fichier quand
+// la piste revient sur le patch CUSTOM (voir applyTrackPatch()).
+uint32_t trackSampleLen[kTrackCount] = {};
+uint32_t trackSampleRate[kTrackCount] = {};
+
 // Meme principe de mixage a etages que les pistes (AudioMixer4 = 4
 // entrees max) : 4 groupes de 4 pads -> 1 bus pads -> combine avec
 // liveVoice AVANT mixFinal (dont les 4 canaux sont deja tous pris,
@@ -888,6 +906,58 @@ bool loadWavIntoPadSampler(uint8_t pad, const char *path) {
   return true;
 }
 
+// Charge un WAV (carte SD du Teensy) dans le buffer PSRAM DEDIE de la
+// piste `track` pour le moteur SAMPLER (2026-09-23, "fusion" demandee
+// entre la page PATCH et le navigateur SD deja utilise par les pads --
+// voir trackSampleBuffer[] plus haut). Meme prudence stopNow()/section
+// critique que loadWavIntoPadSampler() ci-dessus, meme raison (l'ecriture
+// SD peut prendre plusieurs millisecondes, ne doit jamais chevaucher
+// update()). Bascule aussi automatiquement la piste sur le patch CUSTOM
+// une fois le chargement reussi : on vient de choisir explicitement ce
+// fichier depuis l'ecran, la piste doit jouer avec tout de suite, pas
+// rester sur son ancien patch jusqu'a un geste supplementaire.
+bool loadWavIntoTrackSampler(uint8_t track, const char *path) {
+  if (track >= kTrackCount) {
+    return false;
+  }
+  AudioNoInterrupts();
+  trackSamplerEngine[track].stopNow();
+  AudioInterrupts();
+  char errPrefix[24];
+  snprintf(errPrefix, sizeof(errPrefix), "SAMPLER:TRACK:%d", track);
+  uint32_t sampleCount = 0;
+  uint32_t sampleRate = 0;
+  if (!readWavPcm16Mono(path, trackSampleBuffer[track], kPadSampleCapacity, errPrefix, sampleCount, sampleRate)) {
+    trackSampleLoaded[track] = false;
+    return false;
+  }
+  // sampleRate REEL du fichier, meme piege deja documente pour les pads
+  // ci-dessus (une bibliotheque en 24kHz jouerait ~1,84x trop vite/trop
+  // aigu avec le defaut 44100 de setSample()).
+  AudioNoInterrupts();
+  trackSamplerEngine[track].setSample(trackSampleBuffer[track], sampleCount, 60, sampleRate);
+  AudioInterrupts();
+  trackSampleLoaded[track] = true;
+  trackSampleLen[track] = sampleCount;
+  trackSampleRate[track] = sampleRate;
+  snprintf(trackSamplePathLive[track], sizeof(trackSamplePathLive[track]), "%s", path);
+  trackPatch[track] = az2::kSamplerCustomPatch;
+  Serial.print("TRACKSAMPLE:");
+  Serial.print(track);
+  Serial.print(":READY:path=");
+  Serial.println(path);
+  Serial1.print("TRACKSAMPLE:");
+  Serial1.print(track);
+  Serial1.print(":READY:path=");
+  Serial1.println(path);
+  // Previens l'ecran du nouveau patch actif -- meme raison/meme geste que
+  // handleEngineCommand() apres un changement de moteur : sans ca l'ecran
+  // resterait affiche sur l'ancien patch jusqu'a un changement manuel.
+  az2::printPatchSelect(Serial, track, az2::kSamplerCustomPatch);
+  az2::printPatchSelect(Serial1, track, az2::kSamplerCustomPatch);
+  return true;
+}
+
 #ifdef AZ2_EXTERNAL_RACK
 uint32_t rackSampleCrc32Byte(uint32_t crc, uint8_t value) {
   crc ^= value;
@@ -1190,6 +1260,24 @@ void applyTrackPatch(uint8_t track) {
       trackAnalogWave[track].begin(kAnalogWaveformValues[patch % az2::kAnalogPatchCount]);
       break;
     case az2::kEngineSampler: {
+      // CUSTOM (2026-09-23) : contenu PAR PISTE (trackSampleBuffer[],
+      // rempli par TRACKSAMPLE:<piste>:<chemin> -- voir
+      // loadWavIntoTrackSampler()), pas une entree partagee de
+      // kSamplerBank[]. Permet de revenir sur ce patch (ex. cycle de
+      // patches 0->3->0 depuis la page PATCH) sans avoir a recharger le
+      // fichier a chaque fois : le buffer PSRAM reste rempli tant que la
+      // piste n'en charge pas un autre.
+      if (patch == az2::kSamplerCustomPatch) {
+        AudioNoInterrupts();
+        trackSamplerEngine[track].stopNow();
+        if (trackSampleLoaded[track]) {
+          trackSamplerEngine[track].setSample(trackSampleBuffer[track], trackSampleLen[track], 60, trackSampleRate[track]);
+        } else {
+          trackSamplerEngine[track].setSample(nullptr, 0, 60, 44100);
+        }
+        AudioInterrupts();
+        break;
+      }
       const SamplerBankEntry &entry = kSamplerBank[patch % az2::kSamplerPatchCount];
       // setSample() remplace plusieurs champs lus depuis l'ISR audio. Couper
       // la lecture et effectuer la mutation sous verrou audio évite un état
@@ -1588,6 +1676,14 @@ void announceHello() {
     Serial1.print(t);
     Serial1.print(':');
     Serial1.println(trackSamplerGate[t] ? 1 : 0);
+    // Chemin du sample CUSTOM (2026-09-23) -- meme raison que PADSAMPLE?
+    // pour les pads : sans cet echo, l'ecran ne saurait pas quel fichier
+    // est charge apres une reconnexion/un redemarrage (le HELLO courant
+    // ci-dessus ne renvoyait deja que ENGINE:/PATCH:/SMODE:).
+    if (trackSampleLoaded[t] && trackSamplePathLive[t][0]) {
+      Serial.printf("TRACKSAMPLE:%u:READY:path=%s\n", t, trackSamplePathLive[t]);
+      Serial1.printf("TRACKSAMPLE:%u:READY:path=%s\n", t, trackSamplePathLive[t]);
+    }
   }
 
   // Pattern/song (voir patterns[]/songPatterns[] plus haut) -- pas les
@@ -3553,6 +3649,43 @@ void handleCommand(const String &line) {
     if (!loadWavIntoPadSampler(static_cast<uint8_t>(pad), path.c_str())) {
       // Erreur deja rapportee par loadWavIntoPadSampler()/readWavPcm16Mono()
       // (prefixe "SAMPLER:PAD:<n>:..."), rien de plus a faire ici.
+    }
+    return;
+  }
+
+  // TRACKSAMPLE:<piste 0-7>:<chemin SD> -- meme principe que PADSAMPLE:
+  // ci-dessus, mais pour le moteur SAMPLER d'une PISTE (2026-09-23,
+  // "fusion" demandee entre la page PATCH et le navigateur SD des pads).
+  // Bascule automatiquement la piste sur kSamplerCustomPatch (voir
+  // loadWavIntoTrackSampler()) -- contrairement aux pads, une piste doit
+  // aussi rester utilisable avec les patches fixes 0-2 (Kick/Snare/GB
+  // Capture), donc SEUL ce chemin change le patch, jamais en silence.
+  if (line.startsWith("TRACKSAMPLE:")) {
+    const int idx1 = line.indexOf(':');
+    const int idx2 = line.indexOf(':', idx1 + 1);
+    if (idx1 < 0 || idx2 < 0) {
+      sendCommandError("TRACKSAMPLE", "MALFORMED");
+      return;
+    }
+    const int track = line.substring(idx1 + 1, idx2).toInt();
+    if (track < 0 || track >= static_cast<int>(kTrackCount)) {
+      sendCommandError("TRACKSAMPLE", "OUT_OF_RANGE");
+      return;
+    }
+    const String path = line.substring(idx2 + 1);
+    if (path == "-") {
+      AudioNoInterrupts();
+      trackSamplerEngine[track].stopNow();
+      AudioInterrupts();
+      trackSampleLoaded[track] = false;
+      trackSamplePathLive[track][0] = '\0';
+      Serial1.printf("TRACKSAMPLE:%d:CLEARED\n", track);
+      return;
+    }
+    if (!loadWavIntoTrackSampler(static_cast<uint8_t>(track), path.c_str())) {
+      // Erreur deja rapportee par loadWavIntoTrackSampler()/
+      // readWavPcm16Mono() (prefixe "SAMPLER:TRACK:<n>:..."), rien de
+      // plus a faire ici.
     }
     return;
   }
