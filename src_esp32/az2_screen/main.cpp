@@ -1892,6 +1892,11 @@ int8_t patchTrack = 0;
 // car utilise des la definition de cette fonction, plus bas dans ce
 // meme bloc.
 bool patchOnTrackRow = false;
+// Focus de la liste de presets placee a droite de l'oscilloscope. Cette
+// liste etait tactile uniquement : avec la croix il etait impossible de
+// choisir CLOUD/AIR/etc. La page PATCH s'ouvre maintenant sur cette liste ;
+// HAUT/BAS choisissent un preset et DROITE entre dans les reglages.
+bool patchOnPresetList = true;
 // cutoff, resonance, attaque, chute, maintien, relachement -- tous 0-127,
 // memes defauts "neutres" que cote Teensy (grand ouvert / ADSR rapide).
 // PAR PISTE (pas juste un etat transitoire de la page PATCH) -- demande
@@ -2311,7 +2316,10 @@ void drawPatchList() {
   const uint16_t count = az2::enginePatchCount(trackEngine[t]);
   keepPatchListVisible();
   gfx->fillRect(kPatchListX, kPatchScopeTop, kPatchListW, kPatchScopeH, RGB565_BLACK);
-  gfx->drawRect(kPatchListX, kPatchScopeTop, kPatchListW, kPatchScopeH, accent);
+  gfx->drawRect(kPatchListX, kPatchScopeTop, kPatchListW, kPatchScopeH,
+                patchOnPresetList ? RGB565_WHITE : accent);
+  if (patchOnPresetList)
+    gfx->drawRect(kPatchListX + 1, kPatchScopeTop + 1, kPatchListW - 2, kPatchScopeH - 2, accent);
   gfx->setTextSize(1);
   for (uint8_t row = 0; row < kPatchListRows; ++row) {
     const uint16_t patch = static_cast<uint16_t>(patchListScroll + row);
@@ -4822,6 +4830,7 @@ void goTo(Screen s) {
     selectedPatchRow = 0;
     patchScroll = 0;
     patchOnTrackRow = false;  // atterrit dans la grille de parametres, pas sur la ligne PISTE
+    patchOnPresetList = true; // HAUT/BAS choisissent immediatement le preset affiche a cote de l'onde
     queryPatchExtra(static_cast<uint8_t>(patchTrack));
   } else if (currentScreen == Screen::Patch) {
     sendToTeensy("SCOPE:OFF");
@@ -5265,7 +5274,29 @@ void handleTeensyLine(const String &line) {
           const uint8_t t = static_cast<uint8_t>(patchTrack);
           const uint8_t total = patchTotalRows(t);
           const uint8_t slotRow = patchSlotRow(t);
-          if (btnState[0] && !patchOnTrackRow && selectedPatchRow == static_cast<int8_t>(slotRow) &&
+          if (patchOnPresetList && !btnState[0]) {
+            if (index == 0 || index == 1) {
+              const uint16_t count = az2::enginePatchCount(trackEngine[t]);
+              if (count > 0) {
+                const int direction = index == 0 ? -1 : 1;
+                const uint16_t next = static_cast<uint16_t>(
+                    (static_cast<int>(trackPatch[t]) + direction + count) % count);
+                char msg[20];
+                snprintf(msg, sizeof(msg), "PATCH:%u:%u", t, next);
+                sendToTeensy(msg);
+              }
+            } else if (index == 3) {
+              patchOnPresetList = false;
+              drawPatchList();
+              redrawPatchLogicalRow(t, static_cast<uint8_t>(selectedPatchRow));
+              updatePatchEncoderHints();
+            } else if (index == 2) {
+              patchOnPresetList = false;
+              patchOnTrackRow = true;
+              drawPatchList();
+              drawPatchTrackRow();
+            }
+          } else if (btnState[0] && !patchOnTrackRow && selectedPatchRow == static_cast<int8_t>(slotRow) &&
               (index == 2 || index == 3)) {
             if (index == 3) {
               savePatchSlot(patchSlot);
@@ -5289,8 +5320,9 @@ void handleTeensyLine(const String &line) {
               drawPatchPage();
             } else if (index == 1) {  // BAS -- entre dans la grille au focus
               patchOnTrackRow = false;
+              patchOnPresetList = true;
               drawPatchTrackRow();
-              redrawPatchLogicalRow(t, static_cast<uint8_t>(selectedPatchRow));
+              drawPatchList();
             }
             // HAUT : deja tout en haut, no-op.
           } else if ((index == 2 || index == 3) && !btnState[0]) {
@@ -7141,6 +7173,7 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       selectedPatchRow = 0;
       patchScroll = 0;
       patchOnTrackRow = true;
+      patchOnPresetList = false;
       char msg[12];
       snprintf(msg, sizeof(msg), "SCOPE:%d", patchTrack);
       sendToTeensy(msg);
@@ -7150,14 +7183,20 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       const int16_t patchHit = hitTestPatchList(x, y);
       const int8_t row = hitTestPatchParam(x, y);
       if (patchHit >= 0) {
+        patchOnPresetList = true;
+        patchOnTrackRow = false;
         char msg[16];
         snprintf(msg, sizeof(msg), "PATCH:%u:%u", t, static_cast<unsigned>(patchHit));
         sendToTeensy(msg);
+        drawPatchTrackRow();
+        drawPatchList();
       } else if (row >= 0 && (row >= 6 || patchRowActive(t, static_cast<uint8_t>(row)))) {
         const int8_t prevRow = selectedPatchRow;
         selectedPatchRow = row;
         const bool leavingTrackRow = patchOnTrackRow;
         patchOnTrackRow = false;
+        patchOnPresetList = false;
+        drawPatchList();
         if (leavingTrackRow) {
           drawPatchTrackRow();
         }

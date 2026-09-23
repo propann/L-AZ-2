@@ -231,3 +231,15 @@ sont actualisés.
 
 Le granulaire ne possède pas de carte SD : les fichiers audio restent lus sur
 la SD du Teensy, transférés par UART puis conservés dans la PSRAM du S3.
+
+## Correctif sélection et oscilloscope — 23 septembre 2026
+
+- La liste placée à droite de l'oscilloscope possède désormais un vrai focus
+  croix : la page PATCH s'ouvre dessus, HAUT/BAS sélectionnent le preset
+  (CLOUD, AIR, ORGAN, etc.), DROITE ouvre la grille de paramètres et GAUCHE
+  remonte au choix de piste. Le tactile conserve la sélection directe.
+- Le scope des pistes GRANULAR/SPECTRAL est branché sur `rackAudioIn` au lieu
+  de `trackFx[]`. Les moteurs externes entrent directement dans le mixeur de
+  sortie et ne traversent pas la chaîne audio interne par piste ; l'ancien
+  branchement ne pouvait donc afficher qu'une ligne plate.
+- Firmware écran et firmware Teensy rack compilés puis flashés sur le matériel.

@@ -2879,11 +2879,23 @@ void handleScopeCommand(const String &line) {
       return;
     }
     scopeTrack = static_cast<int8_t>(track);
-    // trackFx[] (sortie de la chaine d'effets), pas trackFilter[]
-    // directement (2026-09-19) -- affiche ce qui est REELLEMENT
-    // entendu (filtre + bitcrusher + delay dedies), pas juste le signal
-    // avant les nouveaux effets par piste.
-    patchScopeTap.connect(trackFx[track], 0, scopeQueue, 0);
+    // Les moteurs internes passent dans trackFx[]. GRANULAR/SPECTRAL
+    // arrivent en revanche directement sur l'entree I2S rackAudioIn et
+    // contournent toute la chaine par piste : les brancher sur trackFx[]
+    // produisait donc une ligne plate dans PATCH. Le rack transporte les
+    // deux moteurs sur le meme flux stereo ; le moteur non joue etant
+    // silencieux, le canal gauche montre le signal reellement recu.
+#ifdef AZ2_EXTERNAL_RACK
+    if (trackEngine[track] == az2::kEngineGranular ||
+        trackEngine[track] == az2::kEngineSpectral) {
+      patchScopeTap.connect(rackAudioIn, 0, scopeQueue, 0);
+    } else
+#endif
+    {
+      // Sortie de la chaine d'effets : affiche ce qui est reellement
+      // entendu (filtre + bitcrusher + delay dedies).
+      patchScopeTap.connect(trackFx[track], 0, scopeQueue, 0);
+    }
     scopeQueue.begin();
   }
   relayLine(line);
