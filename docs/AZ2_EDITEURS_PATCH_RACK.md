@@ -208,3 +208,26 @@ WROOM replie correctement les phases des partiels très aigus afin d'éviter les
 lectures hors table responsables de bips/craquements. Dans MOTEURS, un choix ne
 redessine plus l'écran complet : seules les lignes, presets et l'aperçu touchés
 sont actualisés.
+
+## Passe musicalité, niveau et affichage — 23 septembre 2026
+
+- Correction de la page PATCH : `patchScroll` désigne maintenant une ligne
+  visuelle contenant jusqu'à deux paramètres. Tous les paramètres GRANULAR et
+  SPECTRAL sont donc accessibles sans doublon ni saut pendant le défilement.
+- Ajout d'un indicateur compact de position (`1-8/11`, par exemple) afin de
+  rendre immédiatement visible la présence de réglages sous l'écran.
+- Refonte des huit presets GRANULAR : densités plus basses, grains plus courts
+  pour les percussions, drones et gels mieux contrôlés, niveau preset à 127.
+- Refonte des huit presets SPECTRAL : moins de partiels agressifs, étirement et
+  drive contenus, niveau preset à 127.
+- Gain du flux granulaire porté à 1,35 avant le limiteur ; flux spectral reçu
+  par le S3 porté à 0,85 × son gain au lieu de 0,5 × son gain. La conversion
+  finale reste saturée en int16 afin de protéger la sortie.
+- Validation matérielle : S3 granulaire (MAC `9c:13:9e:b7:a5:3c`) sans lecture
+  ni écriture I2S courte et rendu autour de 2,08 ms ; WROOM spectral (MAC
+  `08:b6:1f:bc:8e:30`) avec `short=0` ; écran S3 (MAC
+  `fc:01:2c:d6:04:8c`) vivant et dialogue Teensy confirmé par
+  `DISPLAY:ALIVE:TICK` et `TEENSY_AUDIO:READY`.
+
+Le granulaire ne possède pas de carte SD : les fichiers audio restent lus sur
+la SD du Teensy, transférés par UART puis conservés dans la PSRAM du S3.

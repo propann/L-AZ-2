@@ -510,8 +510,10 @@ void runRackAggregator() {
       granularSample = filterState + (granularSample - filterState) * resonance;
       const float driven = granularSample / 32768.0f * drive;
       granularSample = (driven / (1.0f + fabsf(driven))) * (32768.0f / drive) * level;
-      const int32_t granularPart = static_cast<int32_t>(granularSample);
-      const int32_t spectralPart = static_cast<int32_t>((spectral / 2) * spectralGain);
+      // Marge du chemin I2S externe : les deux moteurs arrivaient nettement
+      // sous les moteurs Teensy. Le limiteur final borne toujours le bus.
+      const int32_t granularPart = static_cast<int32_t>(granularSample * 1.35f);
+      const int32_t spectralPart = static_cast<int32_t>(spectral * 0.85f * spectralGain);
       const int32_t mixed = granularPart + spectralPart;
 #ifdef AZ2_TEENSY_CLOCK_SLAVE
       const int16_t sample16 = static_cast<int16_t>(

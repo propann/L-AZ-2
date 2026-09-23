@@ -3022,28 +3022,39 @@ void loadPatchSlot(uint8_t slot) {
 // scope qui a son propre chemin dedie).
 void drawPatchWindow() {
   const uint8_t t = static_cast<uint8_t>(patchTrack);
-  const uint8_t total = patchTotalRows(t);
   const uint8_t volRow = patchVolRow(t);
   const uint8_t slotRow = patchSlotRow(t);
+  const uint8_t totalVisual = patchTotalVisualRows(t);
+  const uint8_t slotVisual = static_cast<uint8_t>(patchVisualRow(t, slotRow));
   for (uint8_t slot = 0; slot < kPatchVisibleRows; ++slot) {
-    const uint8_t logicalRow = static_cast<uint8_t>(patchScroll + slot);
-    if (logicalRow >= total) {
-      int16_t y, rx, rw;
-      if (patchRowVisible(logicalRow, y, rx, rw)) {
-        gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, kPatchRowH - 4, RGB565_BLACK);
-      }
+    const uint8_t visualRow = static_cast<uint8_t>(patchScroll + slot);
+    const int16_t y = static_cast<int16_t>(kPatchRowTop + slot * kPatchRowH);
+    gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, kPatchRowH - 4, RGB565_BLACK);
+    if (visualRow >= totalVisual) {
       continue;
     }
-    if (logicalRow < 6) {
-      drawPatchRow(logicalRow);
-    } else if (logicalRow == volRow) {
-      drawVolRow();
-    } else if (logicalRow == slotRow) {
+    if (visualRow == slotVisual) {
       drawPatchSlotRow();
-    } else {
-      drawPatchExtraRow(logicalRow);
+      continue;
+    }
+    const uint8_t left = static_cast<uint8_t>(visualRow * 2U);
+    const uint8_t right = static_cast<uint8_t>(left + 1U);
+    const uint8_t rows[2] = {left, right};
+    for (const uint8_t logicalRow : rows) {
+      if (logicalRow > volRow) continue;
+      if (logicalRow < 6) drawPatchRow(logicalRow);
+      else if (logicalRow == volRow) drawVolRow();
+      else drawPatchExtraRow(logicalRow);
     }
   }
+
+  // Repère compact : la croix BAS/HAUT fait défiler les pages de réglages.
+  gfx->fillRect(kScreenSize - 88, kPatchRowTop - 14, 64, 12, RGB565_BLACK);
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(kScreenSize - 88, kPatchRowTop - 13);
+  gfx->printf("%u-%u/%u", patchScroll + 1,
+              min(static_cast<uint8_t>(patchScroll + kPatchVisibleRows), totalVisual), totalVisual);
 }
 
 // Redessine UNE ligne logique par son numero, quel que soit son type
