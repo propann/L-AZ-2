@@ -72,3 +72,11 @@ observation ou une ambition propre à cette ancienne révision.
 5. lancer un test rack prolongé avec métriques CPU, I2S et niveaux ;
 6. reprendre l'émulation séparément sans la déclarer fonctionnelle avant une
    validation complète.
+
+## Vérifications de l'alignement
+
+- les quatre environnements firmware concernés compilent sur la branche ;
+- `tools/check_firmware_contract.py` : PASS (14 kHz, UART 921600) ;
+- `pio test -e native` : **21/21 tests réussis** le 23 septembre 2026 ;
+- le stress matériel combiné reste à relancer lorsque le port USB du Teensy
+  est visible avec les deux moteurs alimentés.
