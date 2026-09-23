@@ -1895,8 +1895,10 @@ bool patchOnTrackRow = false;
 // Focus de la liste de presets placee a droite de l'oscilloscope. Cette
 // liste etait tactile uniquement : avec la croix il etait impossible de
 // choisir CLOUD/AIR/etc. La page PATCH s'ouvre maintenant sur cette liste ;
-// HAUT/BAS choisissent un preset et DROITE entre dans les reglages.
+// A entre/sort de l'edition, HAUT/BAS choisissent alors le preset. Hors
+// edition, BAS/DROITE descend dans les reglages comme dans les autres pages.
 bool patchOnPresetList = true;
+bool patchPresetEditing = false;  // A bascule navigation <-> modification du cadre
 // cutoff, resonance, attaque, chute, maintien, relachement -- tous 0-127,
 // memes defauts "neutres" que cote Teensy (grand ouvert / ADSR rapide).
 // PAR PISTE (pas juste un etat transitoire de la page PATCH) -- demande
@@ -2316,8 +2318,9 @@ void drawPatchList() {
   const uint16_t count = az2::enginePatchCount(trackEngine[t]);
   keepPatchListVisible();
   gfx->fillRect(kPatchListX, kPatchScopeTop, kPatchListW, kPatchScopeH, RGB565_BLACK);
-  gfx->drawRect(kPatchListX, kPatchScopeTop, kPatchListW, kPatchScopeH,
-                patchOnPresetList ? RGB565_WHITE : accent);
+  const uint16_t listBorder = patchPresetEditing ? RGB565(255, 210, 40)
+                              : patchOnPresetList ? RGB565_WHITE : accent;
+  gfx->drawRect(kPatchListX, kPatchScopeTop, kPatchListW, kPatchScopeH, listBorder);
   if (patchOnPresetList)
     gfx->drawRect(kPatchListX + 1, kPatchScopeTop + 1, kPatchListW - 2, kPatchScopeH - 2, accent);
   gfx->setTextSize(1);
@@ -4830,7 +4833,8 @@ void goTo(Screen s) {
     selectedPatchRow = 0;
     patchScroll = 0;
     patchOnTrackRow = false;  // atterrit dans la grille de parametres, pas sur la ligne PISTE
-    patchOnPresetList = true; // HAUT/BAS choisissent immediatement le preset affiche a cote de l'onde
+    patchOnPresetList = true; // A puis HAUT/BAS modifient le preset affiche a cote de l'onde
+    patchPresetEditing = false;
     queryPatchExtra(static_cast<uint8_t>(patchTrack));
   } else if (currentScreen == Screen::Patch) {
     sendToTeensy("SCOPE:OFF");
@@ -5274,8 +5278,11 @@ void handleTeensyLine(const String &line) {
           const uint8_t t = static_cast<uint8_t>(patchTrack);
           const uint8_t total = patchTotalRows(t);
           const uint8_t slotRow = patchSlotRow(t);
-          if (patchOnPresetList && !btnState[0]) {
-            if (index == 0 || index == 1) {
+          if (patchOnPresetList) {
+            // Pendant l'appui physique sur A, ne laisse pas la meme
+            // direction tomber jusqu'a patchApplyDelta() (qui editerait
+            // par erreur un parametre du bas alors que le focus est ici).
+            if (!btnState[0] && patchPresetEditing && (index == 0 || index == 1)) {
               const uint16_t count = az2::enginePatchCount(trackEngine[t]);
               if (count > 0) {
                 const int direction = index == 0 ? -1 : 1;
@@ -5285,13 +5292,15 @@ void handleTeensyLine(const String &line) {
                 snprintf(msg, sizeof(msg), "PATCH:%u:%u", t, next);
                 sendToTeensy(msg);
               }
-            } else if (index == 3) {
+            } else if (!btnState[0] && !patchPresetEditing && (index == 1 || index == 3)) {
               patchOnPresetList = false;
+              patchPresetEditing = false;
               drawPatchList();
               redrawPatchLogicalRow(t, static_cast<uint8_t>(selectedPatchRow));
               updatePatchEncoderHints();
-            } else if (index == 2) {
+            } else if (!btnState[0] && !patchPresetEditing && (index == 0 || index == 2)) {
               patchOnPresetList = false;
+              patchPresetEditing = false;
               patchOnTrackRow = true;
               drawPatchList();
               drawPatchTrackRow();
@@ -5321,6 +5330,7 @@ void handleTeensyLine(const String &line) {
             } else if (index == 1) {  // BAS -- entre dans la grille au focus
               patchOnTrackRow = false;
               patchOnPresetList = true;
+              patchPresetEditing = false;
               drawPatchTrackRow();
               drawPatchList();
             }
@@ -5577,6 +5587,15 @@ void handleTeensyLine(const String &line) {
         patchTrack = selectedEngineTrack;
         scopeHasData = false;
         goTo(Screen::Patch);
+      }
+      // Page PATCH : meme philosophie que les autres cadres de reglage.
+      // La croix seule navigue entre les zones ; A verrouille/deverrouille
+      // l'edition du cadre de presets. Le liseré jaune confirme le mode
+      // edition, puis HAUT/BAS appliquent CLOUD/AIR/etc. Un second A rend
+      // la croix a la navigation normale vers les parametres du bas.
+      if (pressed && letter == 'A' && currentScreen == Screen::Patch && patchOnPresetList) {
+        patchPresetEditing = !patchPresetEditing;
+        drawPatchList();
       }
       // Bouton RETOUR : C (2026-09-19, "le bouton retour on le met sur
       // c c'est plus cool moins tendance a appuyer dessus" -- deplace
@@ -7174,6 +7193,7 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       patchScroll = 0;
       patchOnTrackRow = true;
       patchOnPresetList = false;
+      patchPresetEditing = false;
       char msg[12];
       snprintf(msg, sizeof(msg), "SCOPE:%d", patchTrack);
       sendToTeensy(msg);
@@ -7185,6 +7205,7 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       if (patchHit >= 0) {
         patchOnPresetList = true;
         patchOnTrackRow = false;
+        patchPresetEditing = false;
         char msg[16];
         snprintf(msg, sizeof(msg), "PATCH:%u:%u", t, static_cast<unsigned>(patchHit));
         sendToTeensy(msg);
@@ -7196,6 +7217,7 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
         const bool leavingTrackRow = patchOnTrackRow;
         patchOnTrackRow = false;
         patchOnPresetList = false;
+        patchPresetEditing = false;
         drawPatchList();
         if (leavingTrackRow) {
           drawPatchTrackRow();

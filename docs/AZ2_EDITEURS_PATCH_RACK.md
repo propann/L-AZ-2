@@ -235,9 +235,11 @@ la SD du Teensy, transférés par UART puis conservés dans la PSRAM du S3.
 ## Correctif sélection et oscilloscope — 23 septembre 2026
 
 - La liste placée à droite de l'oscilloscope possède désormais un vrai focus
-  croix : la page PATCH s'ouvre dessus, HAUT/BAS sélectionnent le preset
-  (CLOUD, AIR, ORGAN, etc.), DROITE ouvre la grille de paramètres et GAUCHE
-  remonte au choix de piste. Le tactile conserve la sélection directe.
+  croix conforme aux autres fenêtres : la page PATCH s'ouvre dessus, A entre
+  dans l'édition (liseré jaune), HAUT/BAS sélectionnent alors le preset
+  (CLOUD, AIR, ORGAN, etc.) et un second A ressort de l'édition. Hors édition,
+  BAS/DROITE descend dans la grille de paramètres et HAUT/GAUCHE remonte au
+  choix de piste. Le tactile conserve la sélection directe.
 - Le scope des pistes GRANULAR/SPECTRAL est branché sur `rackAudioIn` au lieu
   de `trackFx[]`. Les moteurs externes entrent directement dans le mixeur de
   sortie et ne traversent pas la chaîne audio interne par piste ; l'ancien
