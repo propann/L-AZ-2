@@ -32,8 +32,17 @@ rapides, diode antiparallèle sur la LED et aucune masse MIDI reliée directemen
 à la masse logique. Les valeurs finales et le numéro des broches DIN seront
 vérifiés avant soudure.
 
-Le port UART Teensy n'est pas encore choisi. Serial7 reste réservé au rack et
-ne doit pas être pris automatiquement pour le MIDI DIN.
+Le port est désormais figé : **Serial8 RX pin 34** à 31 250 bit/s reçoit la
+sortie du 6N138. Serial7 reste réservé au rack. La pin 35 / TX8 reste libre
+pour un éventuel MIDI OUT futur.
+
+Le firmware Teensy prend en charge le running status, Note On/Off et vélocité.
+Les canaux MIDI 1 à 8 pilotent respectivement les pistes 1 à 8, donc aussi les
+moteurs GRANULAR/SPECTRAL lorsqu'ils sont affectés à ces pistes. Les autres
+canaux pilotent la voix live. CC120/CC123 et System Reset déclenchent PANIC ;
+Start/Stop commandent le séquenceur. La clock 0xF8 est reconnue sans casser le
+parseur mais l'asservissement 24 PPQN tempo+phase reste à valider avant
+activation.
 
 ## 3. Moteurs préparés séparément
 
@@ -75,7 +84,7 @@ final. Les deux moteurs devront suivre l'horloge audio du Teensy.
 4. WROOM vers S3 avec les deux DSP réunis : **validé le 22 septembre 2026** ;
 5. S3 agrégateur pendant 30 minutes sans erreur : **à prolonger** ;
 6. entrée I2S et contrôle dans un firmware Teensy de laboratoire ;
-7. MIDI DIN 6N138 sur un banc séparé ;
+7. MIDI DIN 6N138 : firmware Serial8 prêt, banc électrique et clock 24 PPQN à valider ;
 8. fusion production seulement après chaque validation.
 
 Le firmware Teensy de production ne doit pas être modifié pendant les étapes

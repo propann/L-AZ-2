@@ -192,6 +192,15 @@ Critère : silence numérique propre et aucune dérive pendant une heure.
 - fallback clair lorsqu'un module requis est absent ;
 - matrice de compatibilité par firmware de module.
 
+### Phase 7 — MIDI DIN du maître
+
+- 6N138 vers Serial8 RX pin 34, 31 250 bit/s ;
+- canaux 1–8 vers pistes 1–8, vélocité et running status ;
+- CC120/123, Start, Stop et PANIC ;
+- validation électrique du 6N138 puis test de stabilité ;
+- asservissement MIDI Clock 24 PPQN seulement après mesure du tempo et de la
+  phase sur banc.
+
 ## 7. Ordre des moteurs candidats
 
 1. FM2 léger : validation du contrat et de la latence.

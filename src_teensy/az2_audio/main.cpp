@@ -3347,6 +3347,92 @@ void updateMidiIn() {
   }
 }
 
+// MIDI DIN IN isole par 6N138 -> Serial8 RX pin 34, 31250 bit/s.
+// Les canaux 1..8 pilotent directement les pistes 1..8 : le meme chemin
+// trackNoteOn/Off route donc aussi correctement GRANULAR et SPECTRAL vers le
+// rack. Les autres canaux conservent la voix live, comme le MIDI USB actuel.
+// Ce petit parseur supporte le running status et laisse passer les messages
+// temps reel sans casser un message canal en cours.
+struct MidiDinParser {
+  uint8_t runningStatus = 0;
+  uint8_t data[2] = {};
+  uint8_t count = 0;
+  uint8_t needed = 0;
+};
+MidiDinParser midiDin;
+
+uint8_t midiChannelDataBytes(uint8_t status) {
+  const uint8_t command = status & 0xF0;
+  return (command == 0xC0 || command == 0xD0) ? 1 : 2;
+}
+
+void handleMidiDinChannel(uint8_t status, uint8_t data1, uint8_t data2) {
+  const uint8_t command = status & 0xF0;
+  const uint8_t channel = status & 0x0F;  // 0..15 = canaux MIDI 1..16
+  const bool routedTrack = channel < kTrackCount;
+  if (command == 0x90 && data2 > 0) {
+    if (routedTrack) trackNoteOn(channel, data1, data2);
+    else liveVoice.keydown(data1, data2);
+  } else if (command == 0x80 || (command == 0x90 && data2 == 0)) {
+    if (routedTrack) trackNoteOff(channel, data1);
+    else liveVoice.keyup(data1);
+  } else if (command == 0xB0 && (data1 == 120 || data1 == 123)) {
+    // CC120 All Sound Off / CC123 All Notes Off : securite globale, y
+    // compris moteurs externes, afin qu'aucune note ne reste accrochee.
+#ifdef AZ2_EXTERNAL_RACK
+    Serial7.println("RACK:PANIC");
+#endif
+    panicAllAudio();
+  }
+}
+
+void handleMidiDinRealtime(uint8_t value) {
+  if (value == 0xFA) {          // Start
+    startSequencer();
+    announceStatus(az2::kStatusPlaying);
+  } else if (value == 0xFC) {   // Stop
+    stopSequencer();
+    liveVoice.notesOff();
+    announceStatus(az2::kStatusStopped);
+  } else if (value == 0xFF) {   // System Reset
+#ifdef AZ2_EXTERNAL_RACK
+    Serial7.println("RACK:PANIC");
+#endif
+    panicAllAudio();
+    announceStatus(az2::kStatusStopped);
+  }
+  // 0xF8 Clock est volontairement ignore tant que l'asservissement 24 PPQN
+  // (tempo + phase) n'est pas valide sur banc. Le parser reste synchronise.
+}
+
+void updateMidiDin() {
+  while (Serial8.available() > 0) {
+    const uint8_t value = static_cast<uint8_t>(Serial8.read());
+    if (value >= 0xF8) {
+      handleMidiDinRealtime(value);
+      continue;
+    }
+    if (value & 0x80) {
+      if ((value & 0xF0) == 0xF0) {
+        midiDin.runningStatus = 0;  // message system commun non pris en charge
+        midiDin.count = 0;
+        continue;
+      }
+      midiDin.runningStatus = value;
+      midiDin.needed = midiChannelDataBytes(value);
+      midiDin.count = 0;
+      continue;
+    }
+    if (midiDin.runningStatus == 0 || midiDin.needed == 0) continue;
+    midiDin.data[midiDin.count++] = value & 0x7F;
+    if (midiDin.count >= midiDin.needed) {
+      handleMidiDinChannel(midiDin.runningStatus, midiDin.data[0],
+                           midiDin.needed > 1 ? midiDin.data[1] : 0);
+      midiDin.count = 0;  // running status : le prochain groupe reutilise le statut
+    }
+  }
+}
+
 void handleMacroCommand(const String &line) {
   const int firstColon = line.indexOf(':');
   const int secondColon = line.indexOf(':', firstColon + 1);
@@ -4402,6 +4488,7 @@ void setup() {
   static uint8_t serial1RxBuf[2048];
   Serial1.addMemoryForRead(serial1RxBuf, sizeof(serial1RxBuf));
   Serial1.begin(az2::kControlBaud);
+  Serial8.begin(31250);  // MIDI DIN IN : RX8 pin 34 depuis la sortie du 6N138
 #ifdef AZ2_EXTERNAL_RACK
   Serial7.begin(115200);  // pins 28 RX7 / 29 TX7 vers le S3, contrôle seulement
 #endif
@@ -4567,6 +4654,7 @@ void loop() {
 #endif
   reportGbAudioHealth();
   updateMidiIn();
+  updateMidiDin();
   feedGbAudioQueue();
   updateScope();
   updateSequencer();

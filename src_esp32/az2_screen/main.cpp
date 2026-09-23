@@ -2257,6 +2257,7 @@ uint8_t scopeSamples[az2::kScopeSamplesPerPacket] = {};
 uint8_t scopeRenderedSamples[az2::kScopeSamplesPerPacket] = {};
 bool scopeHasData = false;
 bool scopeRendered = false;
+bool patchUiNeedsRedraw = false;
 
 constexpr int16_t kPatchTrackRowY = 66;
 constexpr int16_t kPatchScopeTop = 96;
@@ -6192,7 +6193,7 @@ void handleTeensyLine(const String &line) {
         } else if (currentScreen == Screen::Sequencer && track == selectedSeqTrack && !screensaverActive) {
           drawTrkSidePanel();
         } else if (currentScreen == Screen::Patch && track == patchTrack && !screensaverActive) {
-          drawPatchPage();
+          patchUiNeedsRedraw = true;
         }
       }
     }
@@ -6487,6 +6488,12 @@ static_assert(az2::kScopeSamplesPerPacket <= 255, "longueur scope tient sur 1 oc
 // commentaire ScopeRxState) -- pose juste un flag ici, le dessin reel se
 // fait une fois par tour de loop().
 bool scopeNeedsRedraw = false;
+
+// Un echo PATCH peut modifier jusqu'a 18 valeurs. Le redessin complet depuis
+// handleTeensyLine() bloquait la vidange UART et retardait BTN:A:UP/NAV:, ce
+// qui donnait l'impression qu'un bouton restait bloque puis repartait.
+// `patchUiNeedsRedraw` est declare avec l'etat PATCH plus haut ; les echos sont
+// consolides et dessines une seule fois depuis loop().
 
 // Paquet binaire recu du Teensy (voir kScopePacketMagic dans
 // AZ2_Protocol.h) -- copie les echantillons, le dessin se fait plus tard
@@ -7406,6 +7413,16 @@ void loop() {
   const bool gbGameActive = (currentScreen == Screen::Retro && gbIsLoaded());
 
   readTeensyStatus();
+  if (!gbGameActive && patchUiNeedsRedraw) {
+    patchUiNeedsRedraw = false;
+    if (currentScreen == Screen::Patch && !screensaverActive) {
+      // Le moteur, le cadre du scope et la piste n'ont pas change : ne
+      // rafraichir que les deux zones affectees par le nouveau preset.
+      drawPatchList();
+      drawPatchWindow();
+      updatePatchEncoderHints();
+    }
+  }
   if (!gbGameActive && samplerNeedsRedraw && currentScreen == Screen::Sampler && !screensaverActive) {
     samplerNeedsRedraw = false;
     drawSamplerPage();

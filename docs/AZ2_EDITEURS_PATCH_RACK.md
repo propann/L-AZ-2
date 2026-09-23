@@ -245,3 +245,15 @@ la SD du Teensy, transférés par UART puis conservés dans la PSRAM du S3.
   sortie et ne traversent pas la chaîne audio interne par piste ; l'ancien
   branchement ne pouvait donc afficher qu'une ligne plate.
 - Firmware écran et firmware Teensy rack compilés puis flashés sur le matériel.
+
+## Réactivité des commandes — 23 septembre 2026
+
+Cause du bouton qui semblait fonctionner une fois puis rester inactif avant de
+repartir : l'écho `PATCH:` déclenchait `drawPatchPage()` directement pendant
+la vidange de l'UART écran. Le rendu complet retardait les messages suivants,
+notamment `BTN:A:UP`, et laissait temporairement l'interface croire que A était
+encore maintenu. Le debounce Teensy de 15 ms n'était pas en cause.
+
+Le rendu des échos PATCH est maintenant différé dans `loop()`, consolidé une
+seule fois, et limité à la liste de presets, la grille de paramètres et les
+indications des encodeurs. La lecture série finit donc avant le dessin.
