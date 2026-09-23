@@ -6,14 +6,16 @@
 
 ## Construire un instrument
 
-AZ-2 réunit une groovebox, un tracker huit pistes et sept moteurs de synthèse/lecture. Des prototypes Game Boy / Game Boy Color sont présents dans le dépôt, mais **aucun émulateur n'est actuellement fonctionnel et validé sur la machine**. La capture du son d'un jeu reste donc une infrastructure expérimentale, pas une fonction livrée. AZ-2 conserve **deux cartes**, sans multiplexeur ni rack ESP supplémentaire : le rack appartient au projet AZ-3.
+AZ-2 réunit une groovebox, un tracker huit pistes et neuf moteurs audio. Des prototypes Game Boy / Game Boy Color sont présents dans le dépôt, mais **aucun émulateur n'est actuellement fonctionnel et validé sur la machine**. Le prototype actif utilise le Teensy, l'ESP32-S3 écran, le S3 granulaire et le WROOM spectral.
 
 | Carte | Rôle | Stockage |
 | --- | --- | --- |
 | Teensy 4.1 | Timing du tracker, moteurs audio, MIDI, enregistrement WAV, lecture de samples, sortie I²S vers PCM5102A | Sa propre SD pour les captures ; PSRAM pour le sample dynamique |
 | ESP32-S3 VIEWE UEDX48480040E-WB | Écran tactile 480×480, menus et prototypes GB/GBC non validés | Sa propre SD pour les données d'interface et les essais ROM |
+| ESP32-S3 N16R8 | GRANULAR, PSRAM et agrégation audio | Samples reçus depuis la SD du Teensy |
+| ESP-WROOM-32D | SPECTRAL | Aucun stockage local requis |
 
-Les commandes et l'audio Game Boy circulent sur un UART partagé à **921600 bauds**. Le contrat commun est défini dans `lib/AZ2_Protocol/AZ2_Protocol.h` : **modifier les deux firmwares et leurs tests ensemble**. Le mode de production reste **V1, PCM8 mono 14 kHz** ; le pilote V2 stéréo est présent, mais désactivé.
+Les commandes écran circulent sur l'UART Teensy/écran à **921600 bauds** ; le rack audio possède ses liaisons UART/I2S dédiées. Le contrat commun est défini dans `lib/AZ2_Protocol/AZ2_Protocol.h` : modifier et vérifier tous les firmwares concernés ensemble.
 
 ## Installation et mise à jour
 

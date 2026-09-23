@@ -6,12 +6,14 @@
 
 ## Build an instrument
 
-AZ-2 combines a groovebox, an eight-track tracker and seven synthesis/sample engines. Game Boy / Game Boy Color prototypes are present in the repository, but **no emulator is currently functional and validated on the device**. Game-audio capture is therefore experimental infrastructure, not a delivered feature. AZ-2 uses **two boards**, without a multiplexer or an extra ESP rack; the rack belongs to the separate AZ-3 project.
+AZ-2 combines a groovebox, an eight-track tracker and nine audio engines. Game Boy / Game Boy Color prototypes are present in the repository, but **no emulator is currently functional and validated on the device**. The active prototype uses a Teensy, the display ESP32-S3, a granular ESP32-S3 and a spectral ESP-WROOM-32D.
 
 | Board | Responsibilities | Storage |
 | --- | --- | --- |
 | Teensy 4.1 | Tracker timing, audio engines, MIDI, WAV recording, sample playback, I²S output to the PCM5102A DAC | Its own SD card for recordings; PSRAM for the dynamic sample |
 | ESP32-S3 VIEWE UEDX48480040E-WB | 480×480 touch display, menus and unvalidated GB/GBC prototypes | Its own SD card for UI data and ROM experiments |
+| ESP32-S3 N16R8 | GRANULAR, PSRAM and audio aggregation | Samples transferred from the Teensy SD card |
+| ESP-WROOM-32D | SPECTRAL | No local storage required |
 
 Commands and Game Boy audio travel over a shared **921600-baud UART** link. The common contract lives in `lib/AZ2_Protocol/AZ2_Protocol.h`: **update both firmwares and their tests together**. The production audio path is still **V1, 14 kHz mono PCM8**. The stereo V2 pilot exists but is disabled.
 
@@ -50,7 +52,7 @@ Build both binaries from the **same Git commit**. Do not update only one board a
 | Music workflow | Shared GB Capture patch, WAV-to-PSRAM loading, source-rate-aware playback and boot-time reload | [Sampler integration](https://github.com/propann/L-AZ-2/commit/2aa8fbfc99d2483be684f5009462c3f760410ee7); physical audio/SD validation pending |
 | Checks | Dynamic patch test, Teensy and ESP32-S3 firmware builds, native shared-protocol tests against the same revision | [Successful CI run](https://github.com/propann/L-AZ-2/actions/runs/35455889760) for `2ea9e03285814f4ebcb6844b7758ccf5f931891d`; **not a hardware test** |
 
-More detailed documentation is available in the [GB/LSDJ roadmap (French)](../AZ2_GB_ROADMAP_IMPLEMENTATION.md), [V2 audio protocol (French)](../AZ2_PROTOCOL_AUDIO_V2.md), [sampler documentation (French)](../AZ2_SAMPLEUR.md) and [user manual (French)](../AZ2_MANUEL_UTILISATEUR.md). Some older planning documents mention abandoned hardware. Use the current wiring guide, `platformio.ini` and this overview when working on the active two-board configuration.
+More detailed documentation is available in the [current verified state (French)](../AZ2_ETAT_ACTUEL.md), [GB/LSDJ roadmap (French)](../AZ2_GB_ROADMAP_IMPLEMENTATION.md), [sampler documentation (French)](../AZ2_SAMPLEUR.md) and [user manual (French)](../AZ2_MANUEL_UTILISATEUR.md). Older planning documents may describe obsolete hardware.
 
 ## Remaining work
 

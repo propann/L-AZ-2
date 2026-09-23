@@ -6,12 +6,14 @@
 
 ## Construir un instrumento
 
-AZ-2 combina una groovebox, un tracker de ocho pistas y siete motores de síntesis/reproducción. El repositorio contiene prototipos de Game Boy / Game Boy Color, pero **actualmente no hay ningún emulador funcional y validado en la máquina**. La captura del audio de juegos es, por tanto, infraestructura experimental y no una función entregada. AZ-2 utiliza **dos placas**, sin multiplexor ni rack de ESP adicional; ese rack pertenece al proyecto independiente AZ-3.
+AZ-2 combina una groovebox, un tracker de ocho pistas y nueve motores de audio. El repositorio contiene prototipos de Game Boy / Game Boy Color, pero **actualmente no hay ningún emulador funcional y validado en la máquina**. El prototipo activo utiliza Teensy, el ESP32-S3 de pantalla, un ESP32-S3 granular y un ESP-WROOM-32D espectral.
 
 | Placa | Funciones | Almacenamiento |
 | --- | --- | --- |
 | Teensy 4.1 | Temporización del tracker, motores de audio, MIDI, grabación WAV, reproducción de samples y salida I²S al DAC PCM5102A | Su propia tarjeta SD para grabaciones; PSRAM para el sample dinámico |
 | ESP32-S3 VIEWE UEDX48480040E-WB | Pantalla táctil 480×480, menús y prototipos GB/GBC sin validar | Su propia tarjeta SD para datos de interfaz y pruebas de ROM |
+| ESP32-S3 N16R8 | GRANULAR, PSRAM y agregación de audio | Samples transferidos desde la SD del Teensy |
+| ESP-WROOM-32D | SPECTRAL | No necesita almacenamiento local |
 
 Los comandos y el audio Game Boy comparten un enlace **UART a 921600 baudios**. El contrato común se define en `lib/AZ2_Protocol/AZ2_Protocol.h`: **actualiza ambos firmwares y sus pruebas juntos**. La ruta de audio de producción sigue siendo **V1, PCM8 mono a 14 kHz**. El piloto V2 estéreo está implementado, pero desactivado.
 
@@ -50,7 +52,7 @@ Compila los dos binarios desde el **mismo commit de Git**. No actualices una sol
 | Flujo musical | Patch compartido GB Capture, carga WAV → PSRAM, reproducción a la frecuencia original y recarga al arrancar | [Integración del sampler](https://github.com/propann/L-AZ-2/commit/2aa8fbfc99d2483be684f5009462c3f760410ee7); falta validar audio/SD en el dispositivo |
 | Verificación | Prueba del patch dinámico, compilación de Teensy y ESP32-S3 y pruebas nativas del protocolo compartido sobre la misma revisión | [Ejecución CI correcta](https://github.com/propann/L-AZ-2/actions/runs/35455889760) para `2ea9e03285814f4ebcb6844b7758ccf5f931891d`; **no es una prueba física** |
 
-La información técnica detallada está en la [hoja de ruta GB/LSDJ (francés)](../AZ2_GB_ROADMAP_IMPLEMENTATION.md), el [protocolo de audio V2 (francés)](../AZ2_PROTOCOL_AUDIO_V2.md), la [documentación del sampler (francés)](../AZ2_SAMPLEUR.md) y el [manual de usuario (francés)](../AZ2_MANUEL_UTILISATEUR.md). Algunos documentos antiguos de planificación mencionan hardware descartado. Para la configuración actual de dos placas, usa la guía de cableado vigente, `platformio.ini` y este resumen.
+La información técnica actual está en el [estado verificado (francés)](../AZ2_ETAT_ACTUEL.md), la [hoja de ruta GB/LSDJ](../AZ2_GB_ROADMAP_IMPLEMENTATION.md), la [documentación del sampler](../AZ2_SAMPLEUR.md) y el [manual](../AZ2_MANUEL_UTILISATEUR.md). Los documentos antiguos pueden describir hardware obsoleto.
 
 ## Trabajo pendiente
 

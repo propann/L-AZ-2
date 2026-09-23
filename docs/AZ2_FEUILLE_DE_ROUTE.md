@@ -562,9 +562,12 @@ Critère de sortie : moteur polyphonique jouable, sans dérive d’horloge, avec
 
 Le premier flash reste réalisé par le programmateur ou USB/SWD. La machine prend ensuite en charge les mises à jour AZ-BUS.
 
-## Phase 9 active AZ-2 — émulation GB/GBC V2
+## Phase 9 séparée — émulation GB/GBC expérimentale
 
-L’émulateur existe et une ROM fonctionne, mais la cible produit est désormais plus stricte : cadence logique officielle, son continu, vidéo stable, sauvegardes sûres et menu complet.
+Des cœurs et des briques de frontend existent, mais **aucun émulateur GB/GBC
+n'est actuellement fonctionnel et validé de bout en bout sur la machine**.
+Cette phase reste séparée du chantier audio : aucune ROM ne doit être annoncée
+jouable avant validation conjointe vidéo, commandes, audio et sauvegarde.
 
 ### Lot 9.1 — instrumentation et vitesse
 

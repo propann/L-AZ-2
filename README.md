@@ -6,7 +6,7 @@
 
 **🌐 Documentation : [Français](docs/i18n/README.fr.md) · [English](docs/i18n/README.en.md) · [Español](docs/i18n/README.es.md)**
 
-**Une groovebox DIY à deux cerveaux : tracker 8 pistes et sept moteurs audio. Un chantier d'émulation GB/GBC est présent dans le code, mais aucun émulateur n'est actuellement fonctionnel et validé sur la machine.**
+**Une groovebox DIY à quatre cartes programmables : tracker 8 pistes et neuf moteurs audio. Un chantier d'émulation GB/GBC est présent dans le code, mais aucun émulateur n'est actuellement fonctionnel et validé sur la machine.**
 
 [![CI](https://github.com/propann/L-AZ-2/actions/workflows/ci.yml/badge.svg)](https://github.com/propann/L-AZ-2/actions/workflows/ci.yml)
 ![Statut](https://img.shields.io/badge/status-prototype%20alpha-f59e0b)
@@ -24,11 +24,11 @@
 | 🎛️ Créer | 🎮 Jouer | 🎚️ Transformer |
 | :-- | :-- | :-- |
 | Tracker 8 pistes, patterns, song, swing, effets par pas, mute/solo | Prototype d'émulation GB/GBC non fonctionnel à ce jour | Mixage via Teensy et DAC I²S, sampleur one-shot et infrastructure expérimentale de capture |
-| Dexed FM · ePiano · Braids · Karplus · Analog · Sampler · Drum | Navigateur de ROM sur carte SD, sauvegarde cartouche | Sept moteurs audio au choix par piste |
+| Dexed · ePiano · Braids · Karplus · Analog · Sampler · Drum · Granular · Spectral | Prototypes de navigateur et de cœurs, non validés comme émulateur | Neuf moteurs audio au choix par piste |
 
 **Intention produit :** composer au tracker, jouer à la Game Boy et faire dialoguer le son chiptune avec les synthétiseurs de la machine. La capture WAV est présente et le dernier enregistrement Game Boy peut désormais être chargé en PSRAM comme patch dynamique **SAMPLER / GB Capture** ; la gestion d'une vraie bibliothèque multi-captures reste à développer.
 
-## Deux firmwares, un seul instrument
+## Quatre firmwares, un seul instrument
 
 ```text
       CROIX / A B C D / ENCODEURS
@@ -39,13 +39,15 @@
    │ Tracker, synthés, mixage     │   commandes + audio GB │ Écran tactile 480×480, SD    │
    │ Sampleur, MIDI, DAC I²S      │                        │ Interface + prototypes GB  │
    └───────────────┬──────────────┘                        └──────────────────────────────┘
+                   │         I2S/UART         GRANULAR S3 + SPECTRAL WROOM
+                   ├────────────────────────► rack de moteurs externes
                    ▼
              PCM5102A → AUDIO OUT
 ```
 
-**Règle fondamentale : les deux firmwares sont liés par `lib/AZ2_Protocol/AZ2_Protocol.h`.** Modifier une commande, un débit, une longueur de paquet ou un format audio exige de vérifier les deux extrémités dans le même changement. Ne flashez pas un seul firmware après une modification incompatible du protocole.
+**Règle fondamentale : les quatre firmwares sont liés par `lib/AZ2_Protocol/AZ2_Protocol.h`.** Modifier une commande, un débit, une longueur de paquet ou un format audio exige de vérifier toutes les extrémités concernées dans le même changement.
 
-L'AZ-2 actuelle conserve deux cartes, sans multiplexeur ni rack multi-ESP. Les cartouches de moteurs et modules supplémentaires sont réservés au projet AZ-3.
+Le prototype actuel utilise le Teensy, l'ESP32-S3 écran, le S3 granulaire et le WROOM spectral. Le Teensy reste maître du temps, de l'I2S, du mixage et du DAC.
 
 ## Démarrer
 
@@ -56,8 +58,9 @@ git clone https://github.com/propann/L-AZ-2.git
 cd L-AZ-2
 python -m pip install platformio==6.1.19
 
-# Compiler impérativement les DEUX firmwares avant de flasher :
-pio run -e master_teensy -e screen_esp
+# Compiler les quatre firmwares du prototype rack actif :
+pio run -e master_teensy_rack_lab -e screen_esp \
+  -e engine_rack_granular_s3_teensy_slave -e engine_rack_spectral_esp32
 
 # Tests natifs du protocole partagé :
 pio test -e native
@@ -69,7 +72,7 @@ pio run -e screen_esp -t upload
 
 Le matériel Teensy et l'écran ESP32 disposent de configurations de compilation distinctes dans `platformio.ini`. Les ROM commerciales, les banques de samples et les sauvegardes personnelles ne sont pas incluses dans ce dépôt.
 
-**Avant le premier flash :** lire le [guide d'installation et de sécurité](docs/AZ2_DEMARRAGE.md). Préserver vos fichiers `.sav`, projets et patches SD ; éviter une mise à jour partielle des deux firmwares.
+**Avant le premier flash :** lire le [guide d'installation et de sécurité](docs/AZ2_DEMARRAGE.md). Préserver vos fichiers `.sav`, projets et patches SD ; identifier chaque carte avant tout téléversement.
 
 ## Game Boy & LSDJ
 
@@ -100,8 +103,9 @@ Les cases d'implémentation et les tests d'acceptation figurent dans la [roadmap
 
 | Commencer par… | Pour… |
 | :-- | :-- |
+| [État actuel vérifié](docs/AZ2_ETAT_ACTUEL.md) | Source de vérité : matériel actif, neuf moteurs, rack, MIDI et statut exact GB/GBC |
 | [Reproduire AZ-2](docs/AZ2_REPRODUCTION.md) | Liste des pièces, câblage, cartes SD, compilation et contrôle final |
-| [Guide en français](docs/i18n/README.fr.md) · [English guide](docs/i18n/README.en.md) · [Guía en español](docs/i18n/README.es.md) | Découvrir le projet, compiler les deux firmwares, comprendre les fonctions livrées et leurs limites |
+| [Guide en français](docs/i18n/README.fr.md) · [English guide](docs/i18n/README.en.md) · [Guía en español](docs/i18n/README.es.md) | Découvrir le projet, compiler les firmwares, comprendre les fonctions livrées et leurs limites |
 | [Manuel d'utilisation](docs/AZ2_MANUEL_UTILISATEUR.md) | Jouer avec la machine : pages, contrôles, sauvegarde, premier beat |
 | [Premier démarrage](docs/AZ2_DEMARRAGE.md) | Préparer les deux cartes, les SD et les compilations |
 | [Architecture double firmware](docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md) | Comprendre les responsabilités de chaque cerveau |
