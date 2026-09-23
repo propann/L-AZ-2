@@ -1,5 +1,8 @@
 # AZ-2 — état actuel vérifié au 23 septembre 2026
 
+La liste ordonnée des prochains travaux est tenue dans la section
+« Plan actif — 23 septembre 2026 » de `AZ2_FEUILLE_DE_ROUTE.md`.
+
 Ce document est la source de vérité courte du projet actif. Les audits plus
 anciens décrivent leur révision et ne doivent pas servir à annoncer l'état
 présent.

@@ -2,6 +2,50 @@
 
 Objectif: transformer AZ-2 en groovebox autonome Teensy + ESP32, avec une base propre avant d'empiler les fonctions.
 
+## Plan actif — 23 septembre 2026
+
+Cette section est la feuille de route de référence. Les phases plus bas sont
+conservées comme historique du projet : certaines décisions ont été dépassées
+par le prototype réellement câblé. L'état matériel et logiciel courant est
+résumé dans `AZ2_ETAT_ACTUEL.md`.
+
+### Point de départ figé
+
+- quatre cartes : Teensy 4.1 maître, ESP32-S3 écran, ESP32-S3 granulaire et
+  ESP-WROOM-32D spectral ;
+- neuf moteurs visibles dans les mêmes pages MOTEURS et PATCH ;
+- audio externe renvoyé au Teensy, puis mixé vers son PCM5102A ;
+- entrée MIDI DIN prévue sur `Serial8`, RX Teensy 34, via 6N138 ;
+- tests natifs : 21/21, contrat partagé et exemples de projets valides ;
+- émulation GB/GBC non fonctionnelle et non validée de bout en bout.
+
+Règle de stabilisation : ne pas ajouter un dixième moteur avant la validation
+audio prolongée des neuf moteurs et du rack actuel.
+
+### Ordre de travail
+
+| Ordre | Lot | Travail restant | Critère de sortie |
+|---:|---|---|---|
+| 1 | Commandes et interface | Tester toutes les pages, les croix, A/B/C/D et les trois encodeurs ; répéter les changements moteur/patch sans blocage ni double action | 10 min de navigation continue, aucune commande perdue ou bloquée, retour visuel immédiat |
+| 2 | Rack GRANULAR + SPECTRAL | Tester séparément puis ensemble notes, arrêt, PANIC, huit presets et tous les paramètres ; vérifier redémarrage/déconnexion d'un ESP | 30 à 60 min sans blocage ; `short_rx=0`, `short_tx=0`, niveaux propres et moteurs locaux toujours utilisables |
+| 3 | Niveaux et qualité sonore | Équilibrer le gain des deux moteurs externes, supprimer souffle/bip résiduel et créer des patches de référence réellement musicaux | niveau comparable aux moteurs locaux, silence propre à l'arrêt, aucune saturation audible |
+| 4 | Samples du granulaire | Dans la page PATCH existante, choisir un WAV de la SD Teensy, afficher nom/taille/durée/occupation/transfert/erreur et permettre annulation/rechargement | sélection et transfert fiables ; chemin du sample et paramètres restaurés avec le projet |
+| 5 | MIDI DIN | Câbler puis qualifier le 6N138 sur RX34 : canaux 1–8, vélocité, note-off, running status, CC120/123 et PANIC | jeu de 30 min sans note bloquée ; le MIDI n'altère ni boutons ni séquenceur |
+| 6 | Horloge MIDI | Après validation électrique du lot 5, convertir l'horloge 24 PPQN en tempo/transport propre | démarrage, arrêt et tempo externe stables, sans dérive mesurable sur 10 min |
+| 7 | Fiabilité globale | Tester sauvegarde/chargement et coupure pendant écriture, puis séquenceur + neuf moteurs sous charge | 20 cycles de sauvegarde/chargement sans corruption et stress de 30 min sans gel |
+| 8 | Dette technique et CI | Faire compiler en CI les quatre firmwares de production ; garder les contrôles 9 moteurs ; découper progressivement les gros `main.cpp` | chaque PR compile Teensy, écran, granulaire et spectral et exécute les tests natifs |
+| 9 | Émulation GB/GBC | Reprendre dans un chantier séparé seulement après stabilisation audio ; ne publier aucune promesse avant test réel | matrice d'au moins dix ROMs homebrew légales : image, commandes, audio, sauvegarde/RTC si utilisés, puis session de 30 min |
+
+### Points issus des audits
+
+Déjà corrigés : propriété piste/moteur, capacité d'affichage de neuf moteurs,
+contrôle des bornes des projets, mode sampler one-shot/gate, tests natifs et
+ancien code de page Rack retiré. Restent ouverts : CI limitée à deux firmwares,
+qualification matérielle prolongée, paramètres musicaux supplémentaires de
+Karplus, sur-allocation éventuelle des instances audio et découpage des gros
+fichiers. L'optimisation mémoire ne sera faite qu'après mesure, pour ne pas
+casser une chaîne audio aujourd'hui fonctionnelle.
+
 ## Phase 0 - Fondations
 
 Statut: en cours.

@@ -1,6 +1,10 @@
 # AZ-2 — Feuille de route du rack audio physique
 
-**Statut :** étude validée, aucune modification du câblage de production.
+**Statut au 23 septembre 2026 :** architecture intégrée au prototype. Le
+Teensy reçoit le mix GRANULAR + SPECTRAL du S3 agrégateur et conserve le mixage
+final vers le PCM5102A. Le brochage réel est figé dans `AZ2_RACK_PINOUT.md`.
+La qualification longue durée reste à faire ; ce document conserve aussi les
+étapes d'étude antérieures pour expliquer les choix.
 
 ## 1. Base de départ à préserver
 
