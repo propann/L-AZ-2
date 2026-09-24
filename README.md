@@ -19,6 +19,14 @@
 
 > **AZ-2 est un projet de construction et de recherche, pas un produit fini.** Les fonctions listées comme intégrées existent dans le code ; leur validation sur le matériel réel dépend des essais documentés. Les captures d'écran et visuels de concept ne sont pas des preuves de fonctionnalité.
 
+## Pourquoi AZ-2 ?
+
+> **Un instrument que l'on peut jouer, démonter, comprendre et réinventer.**
+
+AZ-2 réunit tracker, synthèse, sampling et expérimentation Game Boy/GBC dans une machine physique volontairement bricolable. Le prototype LEGO/Dremel n'est pas maquillé en produit fini : il sert à tester vite, mesurer sur le vrai matériel et garder la construction accessible.
+
+**Build it · Modify it · Measure it · Share it**
+
 ## La machine
 
 | 🎛️ Créer | 🎮 Jouer | 🎚️ Transformer |
@@ -116,6 +124,12 @@ Les cases d'implémentation et les tests d'acceptation figurent dans la [roadmap
 | [Validation GB/LSDJ](docs/AZ2_GB_VALIDATION.md) | Tester cadence, sauvegardes, jeux et capture sur le prototype |
 | [Roadmap générale](docs/AZ2_FEUILLE_DE_ROUTE.md) | Tracker, moteurs, interface et produit |
 | [Licences et composants tiers](docs/AZ2_LICENCES.md) | Vérifier provenance et obligations avant redistribution |
+
+## Construisez votre AZ-2
+
+Le projet est ouvert aux variantes : contrôleurs alternatifs, nouveaux moteurs, modules ESP, surfaces de jeu et boîtiers. Les propositions commencent dans le [Community Hardware Lab](docs/community/HARDWARE_LAB.md), avec schéma, firmware et mesures quand un prototype existe.
+
+La référence reste volontairement claire : une idée est **EXPERIMENTAL**, une fonction prévue est **ROADMAP**, et seules les fonctions réellement présentes sont **CURRENT**. Cette règle permet d'ouvrir très largement le projet sans transformer les idées en promesses.
 
 ## Contribuer
 
