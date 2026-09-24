@@ -34,7 +34,8 @@ La documentation distingue trois niveaux pour éviter toute ambiguïté :
 
 ## Architecture future
 
-- [Rack 4 slots de moteurs ESP](../rack/AZ2_RACK_MOTEURS_ESP.md) — **ROADMAP**
+- [Rack ESP : prototype 2 modules, extension possible à 4](../rack/AZ2_RACK_MOTEURS_ESP.md) — **ROADMAP**
+- [Community Hardware Lab](../community/HARDWARE_LAB.md) — **EXPERIMENTAL**
 - Flash des cartouches depuis l'écran — **ROADMAP**, décrit dans la page rack
 - Extension MIDI — **ROADMAP**
 
