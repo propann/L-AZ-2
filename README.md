@@ -6,14 +6,14 @@
 
 **🌐 Documentation : [Français](docs/i18n/README.fr.md) · [English](docs/i18n/README.en.md) · [Español](docs/i18n/README.es.md)**
 
-**Groovebox DIY multiprocesseur : tracker 8 pistes, synthèse, sampling et Game Boy / Game Boy Color intégrée — avec un rack 4 cartouches moteur en préparation.**
+**Groovebox DIY multiprocesseur ouverte : tracker 8 pistes, synthèse, sampling et Game Boy / Game Boy Color intégrée — conçue pour être construite, modifiée et réinventée.**
 
 [![CI](https://github.com/propann/L-AZ-2/actions/workflows/ci.yml/badge.svg)](https://github.com/propann/L-AZ-2/actions/workflows/ci.yml)
 ![Statut](https://img.shields.io/badge/status-prototype%20alpha-f59e0b)
 ![Hardware](https://img.shields.io/badge/hardware-Teensy%204.1%20%2B%20ESP32--S3-16a085)
 ![Licence](https://img.shields.io/badge/licence-GPL--3.0-64748b)
 
-[Découvrir la machine](#la-machine) · [Manuel](docs/AZ2_MANUEL_UTILISATEUR.md) · [Écrans](docs/user/SCREENS.md) · [Démarrer](#démarrer) · [Architecture actuelle](#architecture-actuelle) · [Rack moteur](docs/rack/AZ2_RACK_MOTEURS_ESP.md) · [Documentation](docs/user/README.md)
+[Découvrir](#la-machine) · [Manuel](docs/AZ2_MANUEL_UTILISATEUR.md) · [Écrans](docs/user/SCREENS.md) · [Démarrer](#démarrer) · [Architecture](#architecture-actuelle) · [Rack](docs/rack/AZ2_RACK_MOTEURS_ESP.md) · [Community Lab](docs/community/HARDWARE_LAB.md) · [Docs](docs/user/README.md)
 
 </div>
 
@@ -45,7 +45,7 @@
 
 **Règle fondamentale : les deux firmwares sont liés par `lib/AZ2_Protocol/AZ2_Protocol.h`.** Modifier une commande, un débit, une longueur de paquet ou un format audio exige de vérifier les deux extrémités dans le même changement. Ne flashez pas un seul firmware après une modification incompatible du protocole.
 
-**CURRENT :** le prototype fonctionnel repose aujourd'hui sur ces deux firmwares principaux. **ROADMAP :** AZ-2 doit ensuite recevoir un [rack physique de 4 emplacements](docs/rack/AZ2_RACK_MOTEURS_ESP.md) pour mini-ESP enfichables, avec **un gros moteur audio par ESP**. Le flash des cartouches depuis l'écran est également prévu, mais n'est pas encore livré. Cette distinction CURRENT/ROADMAP évite de présenter l'architecture future comme déjà validée.
+**CURRENT :** le firmware principal repose aujourd'hui sur Teensy 4.1 + ESP32-S3 ; le travail matériel utilise aussi un ESP32-WROOM-32 DevKit comme module de prototypage. **ROADMAP :** le rack commence par **2 modules ESP**. La machine sera ensuite stress-testée et mesurée avant toute décision de passer à 4 emplacements. Flash depuis l'écran, jack MIDI et miniaturisation viennent plus tard. Voir le [document rack](docs/rack/AZ2_RACK_MOTEURS_ESP.md).
 
 ## Démarrer
 
@@ -104,7 +104,8 @@ Les cases d'implémentation et les tests d'acceptation figurent dans la [roadmap
 | [Manuel d'utilisation](docs/AZ2_MANUEL_UTILISATEUR.md) | Jouer avec la machine : pages, contrôles, sauvegarde, premier beat |
 | [Premier démarrage](docs/AZ2_DEMARRAGE.md) | Préparer les deux cartes, les SD et les compilations |
 | [Architecture firmware actuelle](docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md) | Comprendre les responsabilités du prototype actuel |
-| [Rack 4 slots de moteurs ESP](docs/rack/AZ2_RACK_MOTEURS_ESP.md) | **ROADMAP** : cartouches mini-ESP, un gros moteur par module, flash futur depuis l'écran |
+| [Rack de moteurs ESP](docs/rack/AZ2_RACK_MOTEURS_ESP.md) | **ROADMAP** : 2 modules d'abord, stress-test, puis extension éventuelle à 4 ; flash futur depuis l'écran |
+| [Community Hardware Lab](docs/community/HARDWARE_LAB.md) | **EXPERIMENTAL** : contrôleurs alternatifs, Pico, LMN-3, modules et propositions communautaires |
 | [Galerie des écrans](docs/user/SCREENS.md) | Référence visuelle du prototype et règles pour les captures propres |
 | [Index documentation](docs/user/README.md) | Navigation CURRENT / ROADMAP / HISTORY |
 | [Câblage maître](docs/AZ2_CABLAGE_MASTER.md) | Relier commandes, Teensy, écran et DAC |
