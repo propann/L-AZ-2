@@ -81,28 +81,55 @@ Prototyper l'adaptateur Peanut-GB sur une branche dédiée (ex.
 Mario Land, LSDJ) et le même protocole (60 s en régime stable, `core_avg_us`/
 `display_avg_us`/`audio_avg_us`/`missed`).
 
-## 6. Comparaison A/B sur matériel réel : Peanut-GB confirme le gain
+## 6. Comparaison A/B sur matériel réel : premier essai, PAS comparable
 
 Prototype construit sur `research/peanut-gb-prototype` (nouveau backend
-`gb_emulator_peanut.cpp`, même interface publique que `gb_emulator.cpp`, voir le
-commit de cette branche pour le détail du portage) et flashé sur le même ESP32-S3,
-même méthodologie, même ROM (*Zelda: Link's Awakening*) :
+`gb_emulator_peanut.cpp`, même interface publique que `gb_emulator.cpp`) et flashé
+sur le même ESP32-S3, même ROM (*Zelda: Link's Awakening*), mais `frame_skip` était
+encore a `true` côté Peanut-GB (valeur par defaut portee depuis gb_emulator.cpp)
+alors que la mesure Walnut-CGB du §1 avait ete faite avec `frame_skip=false` --
+**comparaison pas equitable**, le "core_avg_us ~15-20k, jusqu'a 2x plus rapide"
+observe ici melangeait deux modes de rendu differents (un rendu sur deux vs un
+rendu complet). Chiffres corriges en §7 ci-dessous, meme reglage des deux cotes.
 
-| Champ | Walnut-CGB (§1) | Peanut-GB (ce prototype) |
+## 7. Comparaison A/B corrigee (frame_skip=false des deux cotes)
+
+`gb.direct.frame_skip` repasse a `false` dans `gb_emulator_peanut.cpp`, meme ROM,
+regime stable :
+
+| Champ | Walnut-CGB (§1, frame_skip=false) | Peanut-GB (frame_skip=false) |
 |---|---|---|
-| `core_avg_us` | ~37 000 µs | **~15 000-20 000 µs** (jusqu'a ~15 000 sur le premier chargement) |
-| `frame_us_avg` | ~38 700 µs | **~17 000-22 000 µs** |
-| fps estimé | ~21-22 | **~37-57** (variable entre deux chargements de la meme ROM, ecart pas encore explique -- possible fragmentation PSRAM au rechargement, a investiguer) |
-| `display_avg_us` | ~16 500 µs | ~16 400 µs (quasi identique -- meme ecran, meme pipeline de blit) |
-| frames manquées | ~20-24 en continu | ~12-15 |
+| `core_avg_us` | ~37 000 µs | ~31 300 µs |
+| `frame_us_avg` | ~38 700 µs | ~33 200 µs |
+| fps estimé | ~21-22 | ~24,5-27 |
+| `display_avg_us` | ~16 500 µs | ~16 450 µs (quasi identique -- meme ecran, meme pipeline de blit) |
+| frames manquées | ~20-24 en continu | ~19-23 |
 
-`display_avg_us` quasi identique entre les deux cœurs confirme que l'ecart vient
-bien du **cœur lui-même** (CPU+PPU), pas d'un autre facteur commun (ecran, audio,
-UART) -- `core_avg_us` de Peanut-GB tourne a **45-55% du coût de Walnut-CGB**. Le
-premier chargement a meme frôlé le budget temps reel (~17 000µs vs 16 743µs
-cible). Ceci **confirme sur materiel reel** l'hypothese posee en §3-4 : le cœur
-etait bien le goulet, et un cœur plus leger le resout mesurablement.
+Gain reel mais modeste en comparaison equitable : **~15% de reduction sur
+`core_avg_us`, ~15% de fps en plus** -- PAS le x2 annonce en §6 (artefact d'une
+comparaison a reglages differents). `display_avg_us` identique confirme a nouveau
+que le cœur est bien la source de l'ecart, pas un autre facteur commun.
+
+Point important pour la suite ("le mettre en plein regime", 2026-09-24, apres-midi) :
+`display_avg_us` (~16 450 µs) represente maintenant **environ la moitie** du temps
+de frame total -- toute optimisation supplementaire vers le plein regime devra donc
+aussi s'attaquer au pipeline d'affichage (blit vers le panneau RGB, `blit_scale_us`/
+`blit_copy_us`/`blit_flush_us`), pas seulement continuer a alleger le cœur.
 
 Pas encore fait : LSDJ/compatibilite cartouche non testee sur ce prototype,
 Tetris/Super Mario Land non testes (Zelda seulement pour l'instant), l'ecart de
-vitesse entre deux chargements successifs de la meme ROM n'est pas explique.
+vitesse observe en §6 entre deux chargements successifs de la meme ROM (sous
+frame_skip=true) n'est pas explique -- moins pertinent maintenant que la mesure de
+reference se fait a frame_skip=false.
+
+## 8. Sur le retrait de Walnut-CGB
+
+Demande le 2026-09-24 (apres-midi) : "si c'est le nouvel emulateur on peut
+officiellement degager l'autre". **Pas encore** -- les garde-fous de migration
+poses en §4 (et dans `docs/AZ2_ETUDE_EMULATEUR_DMG_2026-09-24.md`) ne sont pas
+remplis : une seule ROM testee (Zelda), LSDJ jamais essaye sur Peanut-GB,
+sauvegarde/RTC portes mais jamais reellement exerces (pas de vrai cycle
+sauvegarde-coupure-rechargement teste), le gain de vitesse est reel mais modeste
+(~15%, voir §7) donc pas evident tant que le pipeline d'affichage n'est pas aussi
+retravaille. Walnut-CGB reste le cœur de production tant que cette validation
+croisee n'est pas faite.

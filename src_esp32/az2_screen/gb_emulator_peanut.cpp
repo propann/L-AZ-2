@@ -847,12 +847,15 @@ bool gbLoadRom(const char *filename) {
   gb_init_lcd(&gb, lcdDrawLine);
   minigb_apu_audio_init(&apuCtx);
   gb.direct.joypad = 0xFF;  // rien de presse (voir gbSetButton() -- 0=presse, 1=relache)
-  // Meme intention que gb_emulator.cpp : un rendu LCD sur deux pour rester
-  // fluide. A REPASSER A false pour une mesure GB:PERF comparable une fois
-  // ce prototype capable de tourner sur materiel (voir
-  // docs/AZ2_MESURE_EMULATEUR_GB_2026-09-24.md, etape 5 "comparer avec la
-  // meme telemetrie").
-  gb.direct.frame_skip = true;
+  // DESACTIVE le 2026-09-24 pour mesurer le vrai debit plein regime (voir
+  // docs/AZ2_MESURE_EMULATEUR_GB_2026-09-24.md §6) -- meme demarche que
+  // pour Walnut-CGB dans gb_emulator.cpp : avec frame_skip=true, core_avg_us
+  // etait deja tombe a ~45-55% du cout Walnut, mais on veut savoir a quel
+  // point Peanut-GB approche le budget reel 16743us/frame avec un rendu
+  // COMPLET (pas un sur deux). A remettre a `true` si ce prototype devient
+  // un jour la reference (pour l'instant reste sur la branche prototype,
+  // aucun impact production).
+  gb.direct.frame_skip = false;
 
   gb_get_rom_name(&gb, romTitle);
   romLoaded = true;
