@@ -6,18 +6,26 @@
 
 **🌐 Documentation : [Français](docs/i18n/README.fr.md) · [English](docs/i18n/README.en.md) · [Español](docs/i18n/README.es.md)**
 
-**Une groovebox DIY à deux cerveaux : tracker 8 pistes, six moteurs audio et Game Boy / Game Boy Color intégrée.**
+**Groovebox DIY multiprocesseur ouverte : tracker 8 pistes, synthèse, sampling et Game Boy / Game Boy Color intégrée — conçue pour être construite, modifiée et réinventée.**
 
 [![CI](https://github.com/propann/L-AZ-2/actions/workflows/ci.yml/badge.svg)](https://github.com/propann/L-AZ-2/actions/workflows/ci.yml)
 ![Statut](https://img.shields.io/badge/status-prototype%20alpha-f59e0b)
 ![Hardware](https://img.shields.io/badge/hardware-Teensy%204.1%20%2B%20ESP32--S3-16a085)
 ![Licence](https://img.shields.io/badge/licence-GPL--3.0-64748b)
 
-[Découvrir la machine](#la-machine) · [Manuel d'utilisation](docs/AZ2_MANUEL_UTILISATEUR.md) · [Démarrer](#démarrer) · [Architecture](#deux-firmwares-un-seul-instrument) · [Game Boy & LSDJ](#game-boy--lsdj) · [Feuille de route](#feuille-de-route) · [Documentation](#documentation)
+[Découvrir](#la-machine) · [Manuel](docs/AZ2_MANUEL_UTILISATEUR.md) · [Écrans](docs/user/SCREENS.md) · [Démarrer](#démarrer) · [Architecture](#architecture-actuelle) · [Rack](docs/rack/AZ2_RACK_MOTEURS_ESP.md) · [Community Lab](docs/community/HARDWARE_LAB.md) · [Docs](docs/user/README.md)
 
 </div>
 
 > **AZ-2 est un projet de construction et de recherche, pas un produit fini.** Les fonctions listées comme intégrées existent dans le code ; leur validation sur le matériel réel dépend des essais documentés. Les captures d'écran et visuels de concept ne sont pas des preuves de fonctionnalité.
+
+## Pourquoi AZ-2 ?
+
+> **Un instrument que l'on peut jouer, démonter, comprendre et réinventer.**
+
+AZ-2 réunit tracker, synthèse, sampling et expérimentation Game Boy/GBC dans une machine physique volontairement bricolable. Le prototype LEGO/Dremel n'est pas maquillé en produit fini : il sert à tester vite, mesurer sur le vrai matériel et garder la construction accessible.
+
+**Build it · Modify it · Measure it · Share it**
 
 ## La machine
 
@@ -28,7 +36,7 @@
 
 **Intention produit :** composer au tracker, jouer à la Game Boy et faire dialoguer le son chiptune avec les synthétiseurs de la machine. La capture WAV est présente et le dernier enregistrement Game Boy peut désormais être chargé en PSRAM comme patch dynamique **SAMPLER / GB Capture** ; la gestion d'une vraie bibliothèque multi-captures reste à développer.
 
-## Deux firmwares, un seul instrument
+## Architecture actuelle
 
 ```text
       CROIX / A B C D / ENCODEURS
@@ -45,7 +53,7 @@
 
 **Règle fondamentale : les deux firmwares sont liés par `lib/AZ2_Protocol/AZ2_Protocol.h`.** Modifier une commande, un débit, une longueur de paquet ou un format audio exige de vérifier les deux extrémités dans le même changement. Ne flashez pas un seul firmware après une modification incompatible du protocole.
 
-L'AZ-2 actuelle conserve deux cartes, sans multiplexeur ni rack multi-ESP. Les cartouches de moteurs et modules supplémentaires sont réservés au projet AZ-3.
+**CURRENT :** le firmware principal repose aujourd'hui sur Teensy 4.1 + ESP32-S3 ; le travail matériel utilise aussi un ESP32-WROOM-32 DevKit comme module de prototypage. **ROADMAP :** le rack commence par **2 modules ESP**. La machine sera ensuite stress-testée et mesurée avant toute décision de passer à 4 emplacements. Flash depuis l'écran, jack MIDI et miniaturisation viennent plus tard. Voir le [document rack](docs/rack/AZ2_RACK_MOTEURS_ESP.md).
 
 ## Démarrer
 
@@ -103,7 +111,11 @@ Les cases d'implémentation et les tests d'acceptation figurent dans la [roadmap
 | [Guide en français](docs/i18n/README.fr.md) · [English guide](docs/i18n/README.en.md) · [Guía en español](docs/i18n/README.es.md) | Découvrir le projet, compiler les deux firmwares, comprendre les fonctions livrées et leurs limites |
 | [Manuel d'utilisation](docs/AZ2_MANUEL_UTILISATEUR.md) | Jouer avec la machine : pages, contrôles, sauvegarde, premier beat |
 | [Premier démarrage](docs/AZ2_DEMARRAGE.md) | Préparer les deux cartes, les SD et les compilations |
-| [Architecture double firmware](docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md) | Comprendre les responsabilités de chaque cerveau |
+| [Architecture firmware actuelle](docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md) | Comprendre les responsabilités du prototype actuel |
+| [Rack de moteurs ESP](docs/rack/AZ2_RACK_MOTEURS_ESP.md) | **ROADMAP** : 2 modules d'abord, stress-test, puis extension éventuelle à 4 ; flash futur depuis l'écran |
+| [Community Hardware Lab](docs/community/HARDWARE_LAB.md) | **EXPERIMENTAL** : contrôleurs alternatifs, Pico, LMN-3, modules et propositions communautaires |
+| [Galerie des écrans](docs/user/SCREENS.md) | Référence visuelle du prototype et règles pour les captures propres |
+| [Index documentation](docs/user/README.md) | Navigation CURRENT / ROADMAP / HISTORY |
 | [Câblage maître](docs/AZ2_CABLAGE_MASTER.md) | Relier commandes, Teensy, écran et DAC |
 | [État des lieux](docs/AZ2_ETAT_DES_LIEUX.md) | Séparer observations matérielles et code théorique |
 | [Travail livré / journal trilingue](docs/i18n/README.fr.md#travail-réalisé-et-traçabilité--19-septembre-2026) | RTC MBC3, transport V2 stéréo, capture → sampleur et preuve CI |
@@ -112,6 +124,12 @@ Les cases d'implémentation et les tests d'acceptation figurent dans la [roadmap
 | [Validation GB/LSDJ](docs/AZ2_GB_VALIDATION.md) | Tester cadence, sauvegardes, jeux et capture sur le prototype |
 | [Roadmap générale](docs/AZ2_FEUILLE_DE_ROUTE.md) | Tracker, moteurs, interface et produit |
 | [Licences et composants tiers](docs/AZ2_LICENCES.md) | Vérifier provenance et obligations avant redistribution |
+
+## Construisez votre AZ-2
+
+Le projet est ouvert aux variantes : contrôleurs alternatifs, nouveaux moteurs, modules ESP, surfaces de jeu et boîtiers. Les propositions commencent dans le [Community Hardware Lab](docs/community/HARDWARE_LAB.md), avec schéma, firmware et mesures quand un prototype existe.
+
+La référence reste volontairement claire : une idée est **EXPERIMENTAL**, une fonction prévue est **ROADMAP**, et seules les fonctions réellement présentes sont **CURRENT**. Cette règle permet d'ouvrir très largement le projet sans transformer les idées en promesses.
 
 ## Contribuer
 
