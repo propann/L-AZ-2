@@ -6,14 +6,14 @@
 
 **🌐 Documentation : [Français](docs/i18n/README.fr.md) · [English](docs/i18n/README.en.md) · [Español](docs/i18n/README.es.md)**
 
-**Une groovebox DIY à deux cerveaux : tracker 8 pistes, six moteurs audio et Game Boy / Game Boy Color intégrée.**
+**Groovebox DIY multiprocesseur : tracker 8 pistes, synthèse, sampling et Game Boy / Game Boy Color intégrée — avec un rack 4 cartouches moteur en préparation.**
 
 [![CI](https://github.com/propann/L-AZ-2/actions/workflows/ci.yml/badge.svg)](https://github.com/propann/L-AZ-2/actions/workflows/ci.yml)
 ![Statut](https://img.shields.io/badge/status-prototype%20alpha-f59e0b)
 ![Hardware](https://img.shields.io/badge/hardware-Teensy%204.1%20%2B%20ESP32--S3-16a085)
 ![Licence](https://img.shields.io/badge/licence-GPL--3.0-64748b)
 
-[Découvrir la machine](#la-machine) · [Manuel d'utilisation](docs/AZ2_MANUEL_UTILISATEUR.md) · [Démarrer](#démarrer) · [Architecture](#deux-firmwares-un-seul-instrument) · [Game Boy & LSDJ](#game-boy--lsdj) · [Feuille de route](#feuille-de-route) · [Documentation](#documentation)
+[Découvrir la machine](#la-machine) · [Manuel](docs/AZ2_MANUEL_UTILISATEUR.md) · [Écrans](docs/user/SCREENS.md) · [Démarrer](#démarrer) · [Architecture actuelle](#architecture-actuelle) · [Rack moteur](docs/rack/AZ2_RACK_MOTEURS_ESP.md) · [Documentation](docs/user/README.md)
 
 </div>
 
@@ -28,7 +28,7 @@
 
 **Intention produit :** composer au tracker, jouer à la Game Boy et faire dialoguer le son chiptune avec les synthétiseurs de la machine. La capture WAV est présente et le dernier enregistrement Game Boy peut désormais être chargé en PSRAM comme patch dynamique **SAMPLER / GB Capture** ; la gestion d'une vraie bibliothèque multi-captures reste à développer.
 
-## Deux firmwares, un seul instrument
+## Architecture actuelle
 
 ```text
       CROIX / A B C D / ENCODEURS
@@ -45,7 +45,7 @@
 
 **Règle fondamentale : les deux firmwares sont liés par `lib/AZ2_Protocol/AZ2_Protocol.h`.** Modifier une commande, un débit, une longueur de paquet ou un format audio exige de vérifier les deux extrémités dans le même changement. Ne flashez pas un seul firmware après une modification incompatible du protocole.
 
-L'AZ-2 actuelle conserve deux cartes, sans multiplexeur ni rack multi-ESP. Les cartouches de moteurs et modules supplémentaires sont réservés au projet AZ-3.
+**CURRENT :** le prototype fonctionnel repose aujourd'hui sur ces deux firmwares principaux. **ROADMAP :** AZ-2 doit ensuite recevoir un [rack physique de 4 emplacements](docs/rack/AZ2_RACK_MOTEURS_ESP.md) pour mini-ESP enfichables, avec **un gros moteur audio par ESP**. Le flash des cartouches depuis l'écran est également prévu, mais n'est pas encore livré. Cette distinction CURRENT/ROADMAP évite de présenter l'architecture future comme déjà validée.
 
 ## Démarrer
 
@@ -103,7 +103,10 @@ Les cases d'implémentation et les tests d'acceptation figurent dans la [roadmap
 | [Guide en français](docs/i18n/README.fr.md) · [English guide](docs/i18n/README.en.md) · [Guía en español](docs/i18n/README.es.md) | Découvrir le projet, compiler les deux firmwares, comprendre les fonctions livrées et leurs limites |
 | [Manuel d'utilisation](docs/AZ2_MANUEL_UTILISATEUR.md) | Jouer avec la machine : pages, contrôles, sauvegarde, premier beat |
 | [Premier démarrage](docs/AZ2_DEMARRAGE.md) | Préparer les deux cartes, les SD et les compilations |
-| [Architecture double firmware](docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md) | Comprendre les responsabilités de chaque cerveau |
+| [Architecture firmware actuelle](docs/AZ2_ARCHITECTURE_FIRMWARE_DOUBLE.md) | Comprendre les responsabilités du prototype actuel |
+| [Rack 4 slots de moteurs ESP](docs/rack/AZ2_RACK_MOTEURS_ESP.md) | **ROADMAP** : cartouches mini-ESP, un gros moteur par module, flash futur depuis l'écran |
+| [Galerie des écrans](docs/user/SCREENS.md) | Référence visuelle du prototype et règles pour les captures propres |
+| [Index documentation](docs/user/README.md) | Navigation CURRENT / ROADMAP / HISTORY |
 | [Câblage maître](docs/AZ2_CABLAGE_MASTER.md) | Relier commandes, Teensy, écran et DAC |
 | [État des lieux](docs/AZ2_ETAT_DES_LIEUX.md) | Séparer observations matérielles et code théorique |
 | [Travail livré / journal trilingue](docs/i18n/README.fr.md#travail-réalisé-et-traçabilité--19-septembre-2026) | RTC MBC3, transport V2 stéréo, capture → sampleur et preuve CI |
