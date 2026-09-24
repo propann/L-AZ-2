@@ -17,7 +17,7 @@ Zones examinées en priorité :
 
 ## Résumé
 
-Le projet a atteint un vrai stade de prototype logiciel cohérent : architecture double firmware claire, séparation ESP32-S3 / Teensy, protocole partagé, CI, tracker 8 pistes, six moteurs audio, sampleur, projet/song/mixer, interface tactile, émulation GB/GBC et chaîne de capture audio.
+Le projet a atteint un vrai stade de prototype logiciel cohérent. **CURRENT :** le prototype repose sur ESP32-S3 + Teensy 4.1, avec protocole partagé, CI, tracker 8 pistes, six moteurs audio, sampleur, projet/song/mixer, interface tactile, émulation GB/GBC et chaîne de capture audio. **ROADMAP AZ-2 :** un rack physique de quatre emplacements pour mini-ESP, avec un gros moteur audio par cartouche, puis flash des cartouches depuis l'écran. Cette extension n'est pas encore présentée comme livrée.
 
 Le risque principal n'est plus l'absence de fonctions. Il est désormais la **concentration de trop de responsabilités dans quelques fichiers géants**, surtout les deux `main.cpp`. La suite logique est donc de stabiliser et découper, pas de continuer à empiler des fonctions dans les mêmes unités.
 
@@ -31,6 +31,10 @@ La séparation est saine :
 - protocole commun dans `lib/AZ2_Protocol/AZ2_Protocol.h`.
 
 C'est une bonne base pour garder l'audio temps réel hors de la charge graphique.
+
+### Architecture cible du rack (ROADMAP)
+
+Le projet ne doit plus documenter le rack comme une idée réservée à AZ-3. La cible AZ-2 est un backplane **4 slots**, chaque mini-ESP étant consacré à **un seul gros moteur**. La conception doit prévoir identification/version/capacités par cartouche, protocole commun, mesures CPU/RAM/latence, erreurs isolées par slot et, à terme, mise à jour du firmware depuis l'écran. Voir `docs/rack/AZ2_RACK_MOTEURS_ESP.md`.
 
 ### 2. CI utile et ciblée
 
