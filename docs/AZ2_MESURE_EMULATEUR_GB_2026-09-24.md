@@ -80,3 +80,29 @@ Prototyper l'adaptateur Peanut-GB sur une branche dédiée (ex.
 `GB:PERF` pour une comparaison directe A/B sur les mêmes ROMs (Tetris DMG, Super
 Mario Land, LSDJ) et le même protocole (60 s en régime stable, `core_avg_us`/
 `display_avg_us`/`audio_avg_us`/`missed`).
+
+## 6. Comparaison A/B sur matériel réel : Peanut-GB confirme le gain
+
+Prototype construit sur `research/peanut-gb-prototype` (nouveau backend
+`gb_emulator_peanut.cpp`, même interface publique que `gb_emulator.cpp`, voir le
+commit de cette branche pour le détail du portage) et flashé sur le même ESP32-S3,
+même méthodologie, même ROM (*Zelda: Link's Awakening*) :
+
+| Champ | Walnut-CGB (§1) | Peanut-GB (ce prototype) |
+|---|---|---|
+| `core_avg_us` | ~37 000 µs | **~15 000-20 000 µs** (jusqu'a ~15 000 sur le premier chargement) |
+| `frame_us_avg` | ~38 700 µs | **~17 000-22 000 µs** |
+| fps estimé | ~21-22 | **~37-57** (variable entre deux chargements de la meme ROM, ecart pas encore explique -- possible fragmentation PSRAM au rechargement, a investiguer) |
+| `display_avg_us` | ~16 500 µs | ~16 400 µs (quasi identique -- meme ecran, meme pipeline de blit) |
+| frames manquées | ~20-24 en continu | ~12-15 |
+
+`display_avg_us` quasi identique entre les deux cœurs confirme que l'ecart vient
+bien du **cœur lui-même** (CPU+PPU), pas d'un autre facteur commun (ecran, audio,
+UART) -- `core_avg_us` de Peanut-GB tourne a **45-55% du coût de Walnut-CGB**. Le
+premier chargement a meme frôlé le budget temps reel (~17 000µs vs 16 743µs
+cible). Ceci **confirme sur materiel reel** l'hypothese posee en §3-4 : le cœur
+etait bien le goulet, et un cœur plus leger le resout mesurablement.
+
+Pas encore fait : LSDJ/compatibilite cartouche non testee sur ce prototype,
+Tetris/Super Mario Land non testes (Zelda seulement pour l'instant), l'ecart de
+vitesse entre deux chargements successifs de la meme ROM n'est pas explique.
