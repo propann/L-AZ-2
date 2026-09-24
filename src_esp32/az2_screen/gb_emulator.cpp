@@ -943,9 +943,17 @@ bool gbLoadRom(const char *filename) {
   // frame. Un mode economie pourra etre ajoute plus tard, mais ne doit pas
   // etre le comportement par defaut d'une machine visant l'emulation native.
   // Le cœur continue d'exécuter chaque frame et de produire l'audio, mais
-  // saute un rendu LCD sur deux : le panneau RGB/PSRAM reste le goulet
-  // mesuré. L'image reste ainsi fluide autour de 30 Hz tandis que la logique
-  // du jeu conserve sa cadence proche de 59,7 Hz.
+  // saute un rendu LCD sur deux -- l'image reste ainsi fluide autour de
+  // 30 Hz tandis que la logique du jeu conserve sa cadence proche de
+  // 59,7 Hz. Passe brievement a `false` le 2026-09-24 pour mesurer en
+  // direct sur materiel reel via GB:PERF (voir
+  // docs/AZ2_MESURE_EMULATEUR_GB_2026-09-24.md) : le vrai goulet est le
+  // COEUR (core_avg_us ~37000us, CPU+PPU interne), PAS le panneau RGB/
+  // PSRAM comme l'affirmait sans preuve l'ancienne version de ce
+  // commentaire (display_avg_us ~16500us, net secondaire). Remis a `true`
+  // une fois la mesure faite -- desactiver le frame-skip degradait
+  // l'affichage (~21fps mesures) sans aucun benefice tant qu'un coeur plus
+  // rapide (etude Peanut-GB en cours) n'est pas integre.
   gb.direct.frame_skip = true;
 
   gb_get_rom_name(&gb, romTitle);
