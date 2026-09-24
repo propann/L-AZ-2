@@ -159,3 +159,27 @@ code, `display_avg_us` (~16 450µs, environ la moitie du temps de frame total) :
 
 A faire avec validation materielle prudente (pas en fin de session tardive) avant
 tout changement, puisque ce code sert la production.
+
+## 10. Test de stabilite : 2 minutes de vraie partie, aucun plantage
+
+Une confusion en cours de session a fait croire a un plantage systematique du
+prototype (l'utilisateur mettait la carte en mode BOOT avant chaque lecture
+serie, pensant que c'etait necessaire -- le mode BOOT coupe le programme en
+cours, ce qui ressemblait a un crash). Clarifie : le mode BOOT ne sert QUE pour
+flasher un nouveau firmware, jamais pour une simple lecture serie.
+
+Capture de 120 secondes en parallele d'une vraie partie (boutons physiques
+reels, `TEENSY:NAV:`/`TEENSY:BTN:` visibles tout du long dans le log) : **aucune
+ligne d'erreur, aucun "Guru Meditation", aucun redemarrage** sur toute la
+fenetre. Telemetrie stable jusqu'au bout :
+
+| Champ | Valeur (gameplay reel, 120s) |
+|---|---|
+| `fps_x100` | ~2900-3000 (≈29-30 fps) |
+| `core_avg_us` | ~26 000-27 000 µs |
+| `missed` | ~20, stable |
+
+Meilleur que la mesure de reference du §7 (probablement une scene de jeu moins
+chargee en PPU que celle testee alors, pas une regression). Premiere validation
+de stabilite du prototype sous usage reel -- reste a couvrir : LSDJ, plusieurs
+ROM differentes, un cycle complet sauvegarde/coupure/rechargement.
