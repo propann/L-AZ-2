@@ -133,3 +133,29 @@ sauvegarde-coupure-rechargement teste), le gain de vitesse est reel mais modeste
 (~15%, voir §7) donc pas evident tant que le pipeline d'affichage n'est pas aussi
 retravaille. Walnut-CGB reste le cœur de production tant que cette validation
 croisee n'est pas faite.
+
+## 9. Piste concrete pour le pipeline d'affichage (pas encore touchee)
+
+`gbBlitLine()` (`src_esp32/az2_screen/main.cpp`, ~ligne 7207) est **partagee entre
+les deux cœurs** (production Walnut-CGB ET le prototype Peanut-GB) -- pas touchee
+ici par prudence (pas de validation materielle prudente possible a cette heure sur
+du code qui affecte aussi la production). Deux pistes identifiees par lecture de
+code, `display_avg_us` (~16 450µs, environ la moitie du temps de frame total) :
+
+- **`blit_copy_us` (~8 700µs, le plus gros poste)** : la copie se fait ligne par
+  ligne (18 bandes de 8 lignes source × jusqu'a 24 lignes de sortie), un `memcpy`
+  separe par ligne a cause du flip 180° (`dstY = kScreenSize-1-(y+srcY)`, les
+  lignes destination ne sont pas contigues dans le meme ordre que la source) --
+  structurel, pas un oubli, mais peut-etre un candidat pour le PPA (Pixel
+  Processing Accelerator) de l'ESP32-S3 si disponible, qui sait faire une rotation
+  materielle sans passer par des memcpy CPU un par un.
+- **`blit_flush_us` (~7 700µs)** : `esp_cache_msync()` est appele **18 fois par
+  frame** (une fois par bande de 8 lignes source, voir `if (bandComplete)`).
+  Regrouper en un seul flush pour toute la frame (accumuler les bandes, flush une
+  fois a la fin) reduirait le cout FIXE par appel (meme volume total de donnees a
+  synchroniser, moins d'appels) -- piste la plus simple/sure des deux a essayer en
+  premier.
+- `blit_scale_us` (~1 500µs) deja bon, pas prioritaire.
+
+A faire avec validation materielle prudente (pas en fin de session tardive) avant
+tout changement, puisque ce code sert la production.
