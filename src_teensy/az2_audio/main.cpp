@@ -1141,7 +1141,20 @@ void serviceGranularSampleTransfer() {
 }
 
 void serviceRackReplies() {
-  while (Serial7.available()) {
+  // Borne le nombre d'octets draines par appel (2026-09-24, meme bug que
+  // le MIDI DIN du 2026-09-23 : depuis que master_teensy_rack_lab est le
+  // firmware de PRODUCTION, Serial7 est toujours initialise meme quand le
+  // module rack physique n'est pas branche -- RX7 flotte alors et peut
+  // capter du bruit electrique lu comme un flux quasi continu d'octets
+  // parasites. Un "while (Serial7.available())" sans limite pouvait
+  // monopoliser loop() en usage normal (rack debranche), signale comme
+  // "il joue seul, un bip, sans raison" -- pas confirme comme LA cause
+  // (aucune commande NOTE/PAD/CLOCK visible dans la capture qui a chope
+  // l'incident), mais le meme defaut structurel merite d'etre corrige
+  // proactivement.
+  uint8_t drained = 0;
+  while (Serial7.available() && drained < 64) {
+    ++drained;
     const char c = static_cast<char>(Serial7.read());
     if (c == '\r') continue;
     if (c == '\n') {

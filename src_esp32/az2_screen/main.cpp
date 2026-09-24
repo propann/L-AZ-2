@@ -1985,6 +1985,13 @@ bool patchOnTrackRow = false;
 // (indifferemment lequel -- pas 2 parametres distincts par encodeur ici).
 bool patchOnScopeRow = false;
 uint8_t patchScopeAdsrPoint = 0;  // 0=ATTACK 1=DECAY 2=SUSTAIN 3=RELEASE
+// Meme principe que patchScopeAdsrPoint, pour l'encodeur 2 (2026-09-24,
+// "on va refaire leur config globale ... sur le 2 et 3 encodeur") :
+// dedie CUTOFF/RESONANCE en permanence sur la page PATCH, cliquer son
+// bouton-poussoir bascule l'un vers l'autre. Remplace l'ancien systeme
+// par ligne (patchEncoderLogicalRow()) pour cet encodeur -- toujours
+// utilisable pour VOLUME/SLOT/extra via A maintenu + croix.
+uint8_t patchScopeFilterPoint = 0;  // 0=CUTOFF 1=RESONANCE
 // Focus de la liste de presets placee a droite de l'oscilloscope. Cette
 // liste etait tactile uniquement : avec la croix il etait impossible de
 // choisir CLOUD/AIR/etc. La page PATCH s'ouvre maintenant sur cette liste ;
@@ -2002,12 +2009,27 @@ bool patchPresetEditing = false;  // A bascule navigation <-> modification du ca
 // sur la page PATCH (patchTrack). Mises a jour par les echos FILT:/
 // ENV: du Teensy (voir handleTeensyLine()), pas seulement par les
 // boutons -/+ de cette page.
-uint8_t trackCutoff[kSeqTrackCount];
-uint8_t trackReso[kSeqTrackCount];
-uint8_t trackAttack[kSeqTrackCount];
-uint8_t trackDecay[kSeqTrackCount];
-uint8_t trackSustain[kSeqTrackCount];
-uint8_t trackRelease[kSeqTrackCount];
+// Valeurs par defaut NON NULLES (2026-09-24, "on ne voit pas l'ADSR" --
+// la courbe ecrasee/invisible sur l'oscilloscope venait de la, pas d'un
+// bug de rendu) : le Teensy n'a JAMAIS memorise ces reglages nulle part
+// (FILT:/ENV: appliquent directement l'AudioFilterStateVariable/
+// AudioEffectEnvelope sans garder la valeur brute 0-127 recue) --
+// announceHello() ne peut donc pas les rappeler a la connexion comme il
+// le fait pour ENGINE:/PATCH:/SMODE:. L'ECRAN est en pratique la seule
+// source de verite pour ces 6 valeurs ; les laisser a 0 par defaut (C++
+// zero-initialise les tableaux globaux) rendait l'ancien affichage
+// texte juste trompeur (montrait "000"), mais rendait la NOUVELLE
+// courbe ADSR litteralement ecrasee sur elle-meme (voir
+// drawPatchScopeAdsrOverlay(), segW(0) = largeur minimale). Choisies
+// pour donner un son et une courbe raisonnables des le premier contact ;
+// poussees au Teensy a chaque ouverture de PATCH (voir goTo()) pour que
+// le son reel corresponde enfin a ce qui est affiche.
+uint8_t trackCutoff[kSeqTrackCount] = {127, 127, 127, 127, 127, 127, 127, 127};  // 127 = 15000Hz (voir handleFiltCommand())
+uint8_t trackReso[kSeqTrackCount] = {};                                          // 0 = resonance minimale (0.7)
+uint8_t trackAttack[kSeqTrackCount] = {10, 10, 10, 10, 10, 10, 10, 10};
+uint8_t trackDecay[kSeqTrackCount] = {25, 25, 25, 25, 25, 25, 25, 25};
+uint8_t trackSustain[kSeqTrackCount] = {90, 90, 90, 90, 90, 90, 90, 90};
+uint8_t trackRelease[kSeqTrackCount] = {40, 40, 40, 40, 40, 40, 40, 40};
 // Reglages propres au moteur DEXED (DXP:, voir handleDexedParamCommand()
 // cote Teensy) -- demande 2026-09-16 ("il faut des reglages, on a pas de
 // reglages dans la fenetre dexed du tracker") : l'ADSR generique
@@ -2059,18 +2081,28 @@ void loadRackPresetValues(uint8_t track, uint8_t patch) {
 const char *const kPatchLabels[6] = {"CUTOFF", "RESONANCE", "ATTACK", "DECAY", "SUSTAIN", "RELEASE"};
 const char *const kPatchLabelsDexed[6] = {"CUTOFF", "RESONANCE", "ALGO (DX7)", "FEEDBACK", "--", "--"};
 
-// Lignes 2-5 de la page PATCH dependent du moteur de la piste : ADSR
-// generique pour tout le monde SAUF Dexed (rows 4-5 sans effet chez lui,
-// voir le commentaire au-dessus de trackAlgo[]). Ne concerne QUE les 6
-// lignes fixes (0-5) -- "row < 6" ajoute avec les lignes extra
-// (2026-09-18) : sans lui, "row >= 4" desactiverait a tort TOUTES les
-// lignes extra de DEXED (6 et plus), qui n'ont rien a voir avec ce cas
-// Dexed-ADSR precis. Les appelants ne doivent d'ailleurs appeler ceci
-// que pour row < 6 (voir patchExtraCount()/patchVolRow() pour le reste
-// de la page) -- le clamp reste par securite si jamais appele hors de
-// ce domaine.
+// Lignes 2-5 de la page PATCH : ADSR generique, SAUF pour les pistes rack
+// (ce sont de vrais parametres GRANULAR/SPECTRAL distincts, voir
+// isRackTrack()/rackParamName(), rien a voir avec l'ADSR) et Dexed (ALGO/
+// FEEDBACK en 2-3, rows 4-5 deja sans effet chez lui). Retirees d'ici le
+// 2026-09-24 ("ça enleve 4 boutons de la page patch [...] les boutons
+// encodeur pour regler l'ADSR") : l'ADSR se regle desormais UNIQUEMENT
+// via l'oscilloscope (patchOnScopeRow, encodeurs 2/3) -- ces 4 lignes
+// fixes encombraient la navigation croix pour rien une fois ce chemin en
+// place. patchStepVisual()/patchStepLogical() sautent deja les lignes
+// inactives (meme mecanisme que Dexed 4-5 avant ce changement), donc BAS
+// depuis RESONANCE (ligne 1) va desormais direct aux lignes extra/VOLUME/
+// SLOT, plus besoin de traverser 4 lignes mortes pour "descendre
+// facilement". Ne concerne QUE les 6 lignes fixes (0-5) -- "row < 6"
+// ajoute avec les lignes extra (2026-09-18) : sans lui, ce test
+// desactiverait a tort TOUTES les lignes extra (6 et plus). Les appelants
+// ne doivent d'ailleurs appeler ceci que pour row < 6 (voir
+// patchExtraCount()/patchVolRow() pour le reste de la page) -- le clamp
+// reste par securite si jamais appele hors de ce domaine.
 bool patchRowActive(uint8_t track, uint8_t row) {
-  return !(trackEngine[track] == az2::kEngineDexed && row >= 4 && row < 6);
+  if (isRackTrack(track)) return true;
+  if (trackEngine[track] == az2::kEngineDexed) return !(row >= 4 && row < 6);
+  return row < 2;
 }
 
 const char *patchRowLabel(uint8_t track, uint8_t row) {
@@ -2140,6 +2172,36 @@ uint8_t patchVolRow(uint8_t track) { return static_cast<uint8_t>(6 + patchExtraC
 uint8_t patchSlotRow(uint8_t track) { return static_cast<uint8_t>(patchVolRow(track) + 1); }
 uint8_t patchTotalRows(uint8_t track) { return static_cast<uint8_t>(patchSlotRow(track) + 1); }
 
+// Liste ORDONNEE des lignes logiques "gardees" -- actives dans 0-5 (voir
+// patchRowActive(), l'ADSR n'y figure plus pour la plupart des moteurs
+// depuis le 2026-09-24), toutes les lignes extra (6..volRow-1, toujours
+// gardees), puis VOLUME (volRow). SLOT n'y figure jamais : elle reste
+// TOUJOURS seule sur sa propre ligne visuelle juste apres, geree a part
+// par les appelants (meme convention qu'avant ce changement). Utilisee
+// par patchVisualRow()/patchIsRightCol() (position avant/apres) ET par
+// drawPatchWindow() (l'inverse -- quelles lignes vont dans tel numero de
+// ligne visuelle) : centralise ici pour que les deux sens restent
+// coherents, plutot que deux implementations paralleles qui pourraient
+// diverger.
+constexpr uint8_t kPatchMaxKeptRows = 24;  // 6 fixes + 17 extra (DEXED, le pire cas) + volume, marge incluse
+uint8_t patchKeptRows(uint8_t track, uint8_t (&out)[kPatchMaxKeptRows]) {
+  const uint8_t volRow = patchVolRow(track);
+  uint8_t count = 0;
+  for (uint8_t r = 0; r <= volRow && count < kPatchMaxKeptRows; ++r) {
+    if (r < 6 && !patchRowActive(track, r)) continue;
+    out[count++] = r;
+  }
+  return count;
+}
+int8_t patchKeptIndexOf(uint8_t track, uint8_t logicalRow) {
+  uint8_t kept[kPatchMaxKeptRows];
+  const uint8_t count = patchKeptRows(track, kept);
+  for (uint8_t i = 0; i < count; ++i) {
+    if (kept[i] == logicalRow) return static_cast<int8_t>(i);
+  }
+  return -1;
+}
+
 // 2 parametres par ligne VISUELLE (2026-09-19, "mettre 2 reglage par
 // ligne pour gagner de la place") -- tous les parametres "simples"
 // (0..patchVolRow(track) inclus, donc VOLUME participe aussi a la
@@ -2149,22 +2211,31 @@ uint8_t patchTotalRows(uint8_t track) { return static_cast<uint8_t>(patchSlotRow
 // 6..volRow-1 extra, volRow=volume, slotRow=slot) -- seule la
 // POSITION A L'ECRAN change ici, pas la numerotation logique (utilisee
 // par selectedPatchRow/patchScroll, la navigation croix reste
-// coherente sans etre reecrite en profondeur).
+// coherente sans etre reecrite en profondeur). Compacte les lignes
+// INACTIVES (2026-09-24) : leur position dans kept[] est ce qui compte,
+// pas leur numero logique brut.
 int16_t patchVisualRow(uint8_t track, uint8_t logicalRow) {
   const uint8_t volRow = patchVolRow(track);
   if (logicalRow <= volRow) {
-    return static_cast<int16_t>(logicalRow / 2);
+    const int8_t idx = patchKeptIndexOf(track, logicalRow);
+    return static_cast<int16_t>((idx < 0 ? 0 : idx) / 2);
   }
-  return static_cast<int16_t>((volRow + 2) / 2);  // = ceil((volRow+1)/2), la ligne SLOT juste apres les paires
+  uint8_t kept[kPatchMaxKeptRows];
+  const uint8_t count = patchKeptRows(track, kept);
+  return static_cast<int16_t>((count + 1) / 2);  // SLOT juste apres les paires
 }
 uint8_t patchTotalVisualRows(uint8_t track) {
-  const uint8_t volRow = patchVolRow(track);
-  return static_cast<uint8_t>((volRow + 2) / 2 + 1);
+  uint8_t kept[kPatchMaxKeptRows];
+  const uint8_t count = patchKeptRows(track, kept);
+  return static_cast<uint8_t>((count + 1) / 2 + 1);
 }
-// true = colonne DROITE (logicalRow impair), false = GAUCHE -- sans
-// objet pour la ligne SLOT (toujours pleine largeur, jamais appele
+// true = colonne DROITE (position impaire dans kept[]), false = GAUCHE --
+// sans objet pour la ligne SLOT (toujours pleine largeur, jamais appele
 // pour elle).
-bool patchIsRightCol(uint8_t logicalRow) { return (logicalRow % 2) == 1; }
+bool patchIsRightCol(uint8_t track, uint8_t logicalRow) {
+  const int8_t idx = patchKeptIndexOf(track, logicalRow);
+  return idx >= 0 && (idx % 2) == 1;
+}
 
 // Deplacement HAUT/BAS (2026-09-19, suite du chantier "2 reglages par
 // ligne") : monte/descend d'une ligne VISUELLE en gardant la meme
@@ -2178,32 +2249,29 @@ int8_t patchStepVisual(uint8_t track, int8_t row, int8_t dir) {
   const uint8_t volRow = patchVolRow(track);
   const uint8_t slotRow = patchSlotRow(track);
   const int16_t slotVisual = patchVisualRow(track, slotRow);
-  const bool wasRight = (row <= static_cast<int8_t>(volRow)) && patchIsRightCol(static_cast<uint8_t>(row));
+  const bool wasRight = (row <= static_cast<int8_t>(volRow)) && patchIsRightCol(track, static_cast<uint8_t>(row));
   int16_t visualRow = patchVisualRow(track, static_cast<uint8_t>(row));
-  for (;;) {
-    visualRow = static_cast<int16_t>(visualRow + dir);
-    if (visualRow < 0) {
-      return -1;
-    }
-    if (visualRow > slotVisual) {
-      return row;
-    }
-    int8_t candidate;
-    if (visualRow == slotVisual) {
-      candidate = static_cast<int8_t>(slotRow);
-    } else {
-      const int8_t left = static_cast<int8_t>(visualRow * 2);
-      const int8_t right = static_cast<int8_t>(visualRow * 2 + 1);
-      candidate = (wasRight && right <= static_cast<int8_t>(volRow)) ? right : left;
-    }
-    if (candidate == static_cast<int8_t>(slotRow) || candidate >= 6 ||
-        patchRowActive(track, static_cast<uint8_t>(candidate))) {
-      return candidate;
-    }
-    // Ligne inactive : continue de chercher dans la meme direction
-    // plutot que de s'arreter dessus (meme esprit que la boucle
-    // GAUCHE/DROITE ci-dessous).
+  visualRow = static_cast<int16_t>(visualRow + dir);
+  if (visualRow < 0) {
+    return -1;
   }
+  if (visualRow > slotVisual) {
+    return row;  // BAS depuis SLOT : ne bouge pas (voir patchOnScopeRow, l'appelant gere l'entree dans le focus oscilloscope)
+  }
+  if (visualRow == slotVisual) {
+    return static_cast<int8_t>(slotRow);
+  }
+  // kept[] (voir patchKeptRows()) ne contient QUE des lignes actives par
+  // construction -- plus besoin de boucler pour sauter les lignes
+  // inactives (2026-09-24, ancien commentaire "ligne inactive, continue
+  // de chercher" : le filtrage se fait maintenant en amont, dans
+  // patchKeptRows()/patchRowActive(), pas ici).
+  uint8_t kept[kPatchMaxKeptRows];
+  const uint8_t keptCount = patchKeptRows(track, kept);
+  const uint8_t leftIdx = static_cast<uint8_t>(visualRow * 2);
+  const uint8_t rightIdx = static_cast<uint8_t>(leftIdx + 1);
+  const uint8_t idx = (wasRight && rightIdx < keptCount) ? rightIdx : leftIdx;
+  return idx < keptCount ? static_cast<int8_t>(kept[idx]) : row;
 }
 
 // Deplacement GAUCHE/DROITE (2026-09-19, "la droite gauche [doit]
@@ -2605,11 +2673,20 @@ void drawPatchScopeAdsrOverlay() {
     }
   }
 
-  const uint16_t color = patchOnScopeRow ? RGB565_WHITE : dimColor(patchAccent(t), 2);
-  gfx->drawLine(x0, baseY, x1, peakY, color);
-  gfx->drawLine(x1, peakY, x2, susY, color);
-  gfx->drawLine(x2, susY, x3, susY, color);
-  gfx->drawLine(x3, susY, x4, baseY, color);
+  // Rouge vif fixe (2026-09-24, "on ne voit pas l'ADSR ... on fait une
+  // ligne rouge avec des points petits bleus pour materialiser l'ADSR") :
+  // avant, la ligne changeait de couleur/intensite selon le focus
+  // (blanc vif si patchOnScopeRow, sinon la couleur du moteur assombrie
+  // aux 3/4 -- bien trop discret sur un petit ecran a cote d'un trace
+  // audio lumineux). Desormais TOUJOURS la meme couleur bien visible,
+  // focus ou pas -- la courbe est un repere permanent, pas juste un
+  // etat d'edition.
+  constexpr uint16_t kAdsrLineColor = RGB565(255, 40, 40);
+  constexpr uint16_t kAdsrDotColor = RGB565(70, 140, 255);
+  gfx->drawLine(x0, baseY, x1, peakY, kAdsrLineColor);
+  gfx->drawLine(x1, peakY, x2, susY, kAdsrLineColor);
+  gfx->drawLine(x2, susY, x3, susY, kAdsrLineColor);
+  gfx->drawLine(x3, susY, x4, baseY, kAdsrLineColor);
   prevLineX[0] = x0; prevLineY[0] = baseY;
   prevLineX[1] = x1; prevLineY[1] = peakY;
   prevLineX[2] = x2; prevLineY[2] = susY;
@@ -2617,27 +2694,27 @@ void drawPatchScopeAdsrOverlay() {
   prevLineX[4] = x4; prevLineY[4] = baseY;
   prevLineValid = true;
 
-  // "Une petite boule sur les points" (2026-09-23, suite) : un marqueur
-  // par point ADSR (fin d'attaque/chute/maintien/relachement) -- le point
-  // actuellement selectionne (patchScopeAdsrPoint, voir le clic
-  // d'encodeur dans handleTeensyLine()) ressort en plein, les 3 autres
-  // restent creux. Seulement visible avec le focus sur l'oscilloscope :
-  // sans ca, la courbe seule suffit (pas de points a choisir).
-  if (patchOnScopeRow) {
+  // "Une petite boule sur les points" : un marqueur bleu par point ADSR
+  // (fin d'attaque/chute/maintien/relachement), TOUJOURS affiche (meme
+  // raison que la ligne ci-dessus -- materialiser l'ADSR en permanence,
+  // pas seulement en focus). Le point actuellement selectionne
+  // (patchScopeAdsrPoint, voir le clic d'encodeur dans
+  // handleTeensyLine()) ressort en plus gros/blanc UNIQUEMENT quand on
+  // est en train de l'editer (patchOnScopeRow), pour montrer lequel des
+  // 4 bouge avec les encodeurs.
+  {
     const int16_t px[4] = {x1, x2, x3, x4};
     const int16_t py[4] = {peakY, susY, susY, baseY};
     for (uint8_t i = 0; i < 4; ++i) {
       if (i == patchScopeAdsrPoint) {
         gfx->fillCircle(px[i], py[i], 4, RGB565_WHITE);
       } else {
-        gfx->drawCircle(px[i], py[i], 3, dimColor(RGB565_WHITE, 1));
+        gfx->fillCircle(px[i], py[i], 3, kAdsrDotColor);
       }
       prevDotX[i] = px[i];
       prevDotY[i] = py[i];
     }
     prevDotsValid = true;
-  } else {
-    prevDotsValid = false;
   }
   // Bordure toujours redessinee dans la couleur courante (position FIXE --
   // un simple contour ecrase l'ancien sans besoin de l'effacer d'abord,
@@ -2681,7 +2758,7 @@ bool patchRowVisible(uint8_t logicalRow, int16_t &y, int16_t &x, int16_t &w) {
     return true;
   }
   const int16_t halfW = static_cast<int16_t>((kScreenSize - 2 * kMargin - kPatchColGap) / 2);
-  x = patchIsRightCol(logicalRow) ? static_cast<int16_t>(kMargin + halfW + kPatchColGap) : kMargin;
+  x = patchIsRightCol(track, logicalRow) ? static_cast<int16_t>(kMargin + halfW + kPatchColGap) : kMargin;
   w = halfW;
   return true;
 }
@@ -3298,6 +3375,13 @@ void drawPatchWindow() {
   const uint8_t slotRow = patchSlotRow(t);
   const uint8_t totalVisual = patchTotalVisualRows(t);
   const uint8_t slotVisual = static_cast<uint8_t>(patchVisualRow(t, slotRow));
+  // kept[] (voir patchKeptRows()) donne le sens INVERSE de patchVisualRow()
+  // -- quelles lignes logiques vont dans telle ligne visuelle -- une fois
+  // les lignes ADSR inactives compactees hors de la mise en page
+  // (2026-09-24) : "visualRow*2/+1" ne pointe plus vers les bonnes lignes
+  // logiques des que des lignes ont ete sautees en amont.
+  uint8_t kept[kPatchMaxKeptRows];
+  const uint8_t keptCount = patchKeptRows(t, kept);
   for (uint8_t slot = 0; slot < kPatchVisibleRows; ++slot) {
     const uint8_t visualRow = static_cast<uint8_t>(patchScroll + slot);
     const int16_t y = static_cast<int16_t>(kPatchRowTop + slot * kPatchRowH);
@@ -3309,14 +3393,15 @@ void drawPatchWindow() {
       drawPatchSlotRow();
       continue;
     }
-    const uint8_t left = static_cast<uint8_t>(visualRow * 2U);
-    const uint8_t right = static_cast<uint8_t>(left + 1U);
-    const uint8_t rows[2] = {left, right};
-    for (const uint8_t logicalRow : rows) {
-      if (logicalRow > volRow) continue;
-      if (logicalRow < 6) drawPatchRow(logicalRow);
+    const uint8_t leftIdx = static_cast<uint8_t>(visualRow * 2U);
+    const uint8_t rightIdx = static_cast<uint8_t>(leftIdx + 1U);
+    const int16_t rows[2] = {leftIdx < keptCount ? static_cast<int16_t>(kept[leftIdx]) : static_cast<int16_t>(-1),
+                             rightIdx < keptCount ? static_cast<int16_t>(kept[rightIdx]) : static_cast<int16_t>(-1)};
+    for (const int16_t logicalRow : rows) {
+      if (logicalRow < 0 || logicalRow > volRow) continue;
+      if (logicalRow < 6) drawPatchRow(static_cast<uint8_t>(logicalRow));
       else if (logicalRow == volRow) drawVolRow();
-      else drawPatchExtraRow(logicalRow);
+      else drawPatchExtraRow(static_cast<uint8_t>(logicalRow));
     }
   }
 
@@ -3358,18 +3443,23 @@ void redrawPatchLogicalRow(uint8_t track, uint8_t row) {
 // actuelle (ex: encodeur 2 sur SLOT, ou sur une ligne dont la colonne
 // droite n'existe pas).
 int8_t patchEncoderLogicalRow(uint8_t t, uint8_t slot) {
-  const uint8_t volRow = patchVolRow(t);
   const uint8_t slotRow = patchSlotRow(t);
   const int16_t visualRow = patchVisualRow(t, static_cast<uint8_t>(selectedPatchRow));
   if (visualRow == patchVisualRow(t, slotRow)) {
     return (slot == 0) ? static_cast<int8_t>(slotRow) : -1;
   }
-  const int8_t left = static_cast<int8_t>(visualRow * 2);
-  const int8_t right = static_cast<int8_t>(visualRow * 2 + 1);
+  // kept[] (voir patchKeptRows()) : meme raison que drawPatchWindow(),
+  // "visualRow*2/+1" ne pointe plus vers les bonnes lignes logiques une
+  // fois les lignes ADSR inactives compactees hors de la mise en page
+  // (2026-09-24).
+  uint8_t kept[kPatchMaxKeptRows];
+  const uint8_t keptCount = patchKeptRows(t, kept);
+  const uint8_t leftIdx = static_cast<uint8_t>(visualRow * 2);
+  const uint8_t rightIdx = static_cast<uint8_t>(leftIdx + 1);
   if (slot == 0) {
-    return left;
+    return leftIdx < keptCount ? static_cast<int8_t>(kept[leftIdx]) : -1;
   }
-  return (right <= static_cast<int8_t>(volRow)) ? right : -1;
+  return rightIdx < keptCount ? static_cast<int8_t>(kept[rightIdx]) : -1;
 }
 
 const char *patchEncoderLabel(uint8_t t, uint8_t slot) {
@@ -3392,14 +3482,15 @@ const char *patchEncoderLabel(uint8_t t, uint8_t slot) {
 }
 
 void updatePatchEncoderHints() {
-  if (patchOnScopeRow) {
-    static const char *const kAdsrPointNames[4] = {"ATTACK", "DECAY", "SUSTAIN", "RELEASE"};
-    const char *label = kAdsrPointNames[patchScopeAdsrPoint];
-    drawEncoderHints(label, label);
-    return;
-  }
+  // Encodeurs 2/3 dedies EN PERMANENCE sur cette page (2026-09-24, voir
+  // le gestionnaire POT:) -- CUTOFF/RESONANCE et ADSR, independamment de
+  // la ligne selectionnee par la croix. Pistes rack exclues pour
+  // l'encodeur 2 (garde l'ancien systeme par ligne, voir isRackTrack()).
+  static const char *const kFilterPointNames[2] = {"CUTOFF", "RESONANCE"};
+  static const char *const kAdsrPointNames[4] = {"ATTACK", "DECAY", "SUSTAIN", "RELEASE"};
   const uint8_t t = static_cast<uint8_t>(patchTrack);
-  drawEncoderHints(patchEncoderLabel(t, 0), patchEncoderLabel(t, 1));
+  const char *label0 = isRackTrack(t) ? patchEncoderLabel(t, 0) : kFilterPointNames[patchScopeFilterPoint];
+  drawEncoderHints(label0, kAdsrPointNames[patchScopeAdsrPoint]);
 }
 
 void drawPatchPage() {
@@ -5150,7 +5241,13 @@ void goTo(Screen s) {
     patchPresetEditing = false;
     patchOnScopeRow = false;  // voir patchOnScopeRow -- jamais focus en entrant sur la page
     patchScopeAdsrPoint = 0;
+    patchScopeFilterPoint = 0;
     queryPatchExtra(static_cast<uint8_t>(patchTrack));
+    // Le Teensy ne memorise pas ces 6 valeurs (voir le commentaire pres de
+    // leur declaration) -- sans cet envoi, le son reel restait sur son
+    // defaut de boot (setup()) alors que l'ecran affichait autre chose.
+    sendPatchFilt();
+    sendPatchEnv();
   } else if (currentScreen == Screen::Patch) {
     sendToTeensy("SCOPE:OFF");
   }
@@ -5658,6 +5755,11 @@ void handleTeensyLine(const String &line) {
               snprintf(msg, sizeof(msg), "SCOPE:%d", patchTrack);
               sendToTeensy(msg);
               queryPatchExtra(static_cast<uint8_t>(patchTrack));
+              // Meme raison qu'a l'entree sur la page (voir goTo()) : le
+              // Teensy ne memorise pas FILT/ENV, chaque piste doit repousser
+              // les siens en changeant de piste ici.
+              sendPatchFilt();
+              sendPatchEnv();
               drawPatchPage();
             } else if (index == 1) {  // BAS -- entre dans la grille au focus
               patchOnTrackRow = false;
@@ -6084,7 +6186,14 @@ void handleTeensyLine(const String &line) {
         if (currentScreen == Screen::Controls && !screensaverActive) {
           drawPotBar(index);
         }
-        if (!screensaverActive) {
+        // Toast retire pour les encodeurs 2/3 sur la page PATCH (2026-09-24,
+        // "il y a une barre en haut de l'ecran, il faut retirer... sur le 2
+        // et 3 encodeur") : desormais dedies CUTOFF/RESONANCE et ADSR avec
+        // leur propre retour visuel permanent (courbe sur l'oscilloscope,
+        // indices en bas d'ecran) -- le toast faisait doublon et cachait
+        // une partie de l'ecran par-dessus.
+        const bool suppressToast = currentScreen == Screen::Patch && (index == 1 || index == 2);
+        if (!screensaverActive && !suppressToast) {
           drawPotToast(index);
         }
       }
@@ -6119,14 +6228,16 @@ void handleTeensyLine(const String &line) {
               drawMixerTrack(t);
             }
           }
-        } else if (currentScreen == Screen::Patch && patchOnScopeRow) {
-          // Focus oscilloscope (voir patchOnScopeRow) : UN SEUL point ADSR
-          // actif a la fois (patchScopeAdsrPoint, avance par clic
-          // d'encodeur ou GAUCHE/DROITE) -- tourner N'IMPORTE LEQUEL des 2
-          // encodeurs regle ce point, meme reglage sous-jacent que les
-          // lignes 2-5 fixes, juste un autre chemin pour y arriver
-          // ("passer par l'onde affichee pour regler les patch").
-          (void)slot;
+        } else if (currentScreen == Screen::Patch && slot == 1) {
+          // Encodeur 3 (2026-09-24, "il faut que l'encodeur le controle,
+          // l'encodeur 3 ... et l'encodeur pour la valeur") : DEDIE a
+          // l'ADSR sur la page PATCH, EN PERMANENCE -- plus besoin
+          // d'entrer un focus particulier (voir patchOnScopeRow, la
+          // courbe est de toute facon toujours affichee maintenant). Un
+          // seul point actif a la fois (patchScopeAdsrPoint, avance par
+          // clic du bouton-poussoir de CET encodeur, voir
+          // handleTeensyLine() "ENCSW:"), le meme reglage sous-jacent que
+          // les anciennes lignes 2-5 fixes.
           const uint8_t t = static_cast<uint8_t>(patchTrack);
           uint8_t *const points[4] = {&trackAttack[t], &trackDecay[t], &trackSustain[t], &trackRelease[t]};
           *points[patchScopeAdsrPoint] = value;
@@ -6135,44 +6246,42 @@ void handleTeensyLine(const String &line) {
             drawPatchScope();
           }
         } else if (currentScreen == Screen::Patch) {
+          // Encodeur 2 (2026-09-24, meme redesign qu'encodeur 3 ci-dessus) :
+          // dedie CUTOFF/RESONANCE en permanence, remplace l'ancien systeme
+          // par ligne (patchEncoderLogicalRow(), qui atterrissait sur
+          // n'importe quelle ligne selectionnee -- "ça bouge le cutoff,
+          // faut retirer ce truc"). VOLUME/SLOT/lignes extra restent
+          // reglables via A maintenu + croix (patchApplyDelta()), juste
+          // plus par encodeur.
           const uint8_t t = static_cast<uint8_t>(patchTrack);
-          const int8_t row = patchEncoderLogicalRow(t, slot);
-          if (row >= 0) {
-            const uint8_t volRow = patchVolRow(t);
-            const uint8_t slotRow = patchSlotRow(t);
-            if (static_cast<uint8_t>(row) == volRow) {
-              trackVolume[t] = value;
-              sendPatchVol();
-              if (!screensaverActive) {
-                drawVolRow();
-              }
-            } else if (static_cast<uint8_t>(row) == slotRow) {
-              patchSlot = static_cast<uint8_t>((static_cast<uint32_t>(value) * kPatchSlotCount) / 128);
-              if (!screensaverActive) {
-                drawPatchSlotRow();
-              }
-            } else if (row < 6 && patchRowActive(t, static_cast<uint8_t>(row))) {
+          if (isRackTrack(t)) {
+            // Pistes rack (GRANULAR/SPECTRAL) : lignes 0-5 sont de vrais
+            // parametres distincts, pas CUTOFF/RESONANCE (voir
+            // patchRowActive()) -- garde l'ancien systeme par ligne pour
+            // elles, non concernees par ce redesign.
+            const int8_t row = patchEncoderLogicalRow(t, slot);
+            if (row >= 0 && row < 6) {
               const uint8_t maxVal = patchRowMax(t, static_cast<uint8_t>(row));
               uint8_t &param = patchParamRef(t, static_cast<uint8_t>(row));
               param = static_cast<uint8_t>((static_cast<uint32_t>(value) * maxVal) / 127);
-              if (row < 2) {
-                sendPatchFilt();
-              } else if (trackEngine[t] == az2::kEngineDexed) {
-                sendPatchDxp(static_cast<uint8_t>(row - 2));
-              } else {
-                sendPatchEnv();
+              if (isRackOwner(t)) {
+                char msg[48];
+                snprintf(msg, sizeof(msg), "RACK_PARAM:%s:%d:%d",
+                         az2::kRackEngineNames[rackEngineForTrack(t)], row, param);
+                sendToTeensy(msg);
               }
               if (!screensaverActive) {
                 drawPatchRow(static_cast<uint8_t>(row));
               }
-            } else if (row >= 6) {
-              const uint8_t extraIdx = static_cast<uint8_t>(row - 6);
-              const uint8_t maxVal = patchExtraMax(t, extraIdx);
-              patchExtraVal[t][extraIdx] = static_cast<uint8_t>((static_cast<uint32_t>(value) * maxVal) / 127);
-              sendPatchExtra(t, extraIdx);
-              if (!screensaverActive) {
-                drawPatchExtraRow(static_cast<uint8_t>(row));
             }
+          } else {
+            uint8_t *const points[2] = {&trackCutoff[t], &trackReso[t]};
+            *points[patchScopeFilterPoint] = value;
+            sendPatchFilt();
+            if (!screensaverActive) {
+              redrawPatchLogicalRow(t, patchScopeFilterPoint);
+            }
+          }
         } else if (currentScreen == Screen::Engines && !screensaverActive) {
           const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
           if (engineParamBank == 0) {
@@ -6195,8 +6304,6 @@ void handleTeensyLine(const String &line) {
             sendToTeensy(msg);
           }
           drawEngVisualizer();
-        }
-          }
         }
       }
     }
@@ -6262,10 +6369,20 @@ void handleTeensyLine(const String &line) {
           engineParamBank = static_cast<uint8_t>(engineParamBank ^ 1U);
           drawEngVisualizer();
         }
-        if (currentScreen == Screen::Patch && patchOnScopeRow && (index == 1 || index == 2) && pressed) {
-          // Clic du bouton-poussoir d'un des 2 encodeurs contextuels :
-          // avance au point ADSR suivant (2026-09-23, "en cliquant sur le
-          // bouton de l'encodeur on passe au suivant").
+        if (currentScreen == Screen::Patch && index == 1 && pressed && !isRackTrack(static_cast<uint8_t>(patchTrack))) {
+          // Clic du bouton-poussoir de l'encodeur 2, DEDIE a CUTOFF/
+          // RESONANCE en permanence sur cette page (2026-09-24, voir le
+          // commentaire pres du gestionnaire POT: ci-dessus) : bascule
+          // l'un vers l'autre. Pistes rack exclues (garde l'ancien systeme
+          // par ligne, voir isRackTrack() dans le gestionnaire POT:).
+          patchScopeFilterPoint = static_cast<uint8_t>(patchScopeFilterPoint ^ 1U);
+          updatePatchEncoderHints();
+        }
+        if (currentScreen == Screen::Patch && index == 2 && pressed) {
+          // Clic du bouton-poussoir de l'encodeur 3, DEDIE a l'ADSR en
+          // permanence sur cette page (2026-09-24, voir le commentaire pres
+          // du "slot == 1" dans le gestionnaire POT: ci-dessus) : avance au
+          // point suivant ATTACK->DECAY->SUSTAIN->RELEASE->ATTACK...
           patchScopeAdsrPoint = static_cast<uint8_t>((patchScopeAdsrPoint + 1) % 4);
           drawPatchScope();
           updatePatchEncoderHints();
@@ -6615,9 +6732,17 @@ void handleTeensyLine(const String &line) {
         trackSustain[track] = s;
         trackRelease[track] = r;
         if (currentScreen == Screen::Patch && track == patchTrack && !screensaverActive) {
+          // Lignes 2-5 desormais inactives (donc absentes de la mise en
+          // page, voir patchRowActive()/patchKeptRows()) pour tout moteur
+          // sauf DEXED -- les redessiner inconditionnellement ici
+          // dessinait au mauvais endroit (2026-09-24, patchVisualRow()
+          // retombe sur 0 pour une ligne absente de kept[]). L'ADSR vit
+          // maintenant sur l'oscilloscope (drawPatchScope()) pour ces
+          // moteurs-la.
           for (uint8_t row = 2; row < 6; ++row) {
-            drawPatchRow(row);
+            if (patchRowActive(track, row)) drawPatchRow(row);
           }
+          drawPatchScope();
         } else if (currentScreen == Screen::Sequencer && track == selectedSeqTrack && !screensaverActive) {
           drawTrkSidePanel();
         }
@@ -7603,6 +7728,8 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       snprintf(msg, sizeof(msg), "SCOPE:%d", patchTrack);
       sendToTeensy(msg);
       queryPatchExtra(static_cast<uint8_t>(patchTrack));
+      sendPatchFilt();
+      sendPatchEnv();
       drawPatchPage();
     } else {
       const int16_t patchHit = hitTestPatchList(x, y);
