@@ -1972,6 +1972,19 @@ int8_t patchTrack = 0;
 // car utilise des la definition de cette fonction, plus bas dans ce
 // meme bloc.
 bool patchOnTrackRow = false;
+// Focus sur l'oscilloscope (2026-09-23, "je suis coince dans les patch,
+// je peux pas descendre ... passer par l'onde affichee pour regler les
+// patch") : atteint en appuyant BAS depuis la ligne SLOT (jusque-la la
+// derniere ligne, BAS n'y faisait rien -- voir patchStepVisual()).
+// UN SEUL point ADSR actif a la fois (2026-09-23, suite -- "une petite
+// boule sur les points, en cliquant sur le bouton de l'encodeur on passe
+// au suivant") : cliquer le bouton-poussoir d'un des 2 encodeurs 2/3 (ou
+// GAUCHE/DROITE, meme effet, plus accessible) avance/recule dans
+// ATTACK->DECAY->SUSTAIN->RELEASE->ATTACK... ; tourner N'IMPORTE LEQUEL
+// des 2 encodeurs regle la valeur du point actuellement selectionne
+// (indifferemment lequel -- pas 2 parametres distincts par encodeur ici).
+bool patchOnScopeRow = false;
+uint8_t patchScopeAdsrPoint = 0;  // 0=ATTACK 1=DECAY 2=SUSTAIN 3=RELEASE
 // Focus de la liste de presets placee a droite de l'oscilloscope. Cette
 // liste etait tactile uniquement : avec la croix il etait impossible de
 // choisir CLOUD/AIR/etc. La page PATCH s'ouvre maintenant sur cette liste ;
@@ -2474,6 +2487,8 @@ int16_t hitTestPatchList(int16_t x, int16_t y) {
              : -1;
 }
 
+void drawPatchScopeAdsrOverlay();  // definie plus bas, utilisee ici
+
 // N'efface/redessine QUE l'interieur (pas le cadre, voir drawPatchPage()
 // qui le dessine une seule fois en entrant sur la page) -- appelee a
 // chaque paquet SCOPE recu (~15/s, voir kScopeSendIntervalMs cote
@@ -2508,6 +2523,13 @@ void drawPatchScope() {
     gfx->setTextColor(kDim);
     gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(kPatchScopeTop + kPatchScopeH / 2 - 4));
     gfx->print("(silence -- B pour tester)");
+    // BUG trouve en relisant (2026-09-23) : ce retour anticipe sautait
+    // drawPatchScopeAdsrOverlay() plus bas -- en silence (l'etat par
+    // defaut en arrivant sur la page, avant tout appui B), le focus
+    // oscilloscope/ADSR (patchOnScopeRow) etait invisible : ni cadre, ni
+    // courbe, ni points, alors meme que BAS venait d'y entrer. Il faut
+    // l'overlay ici aussi.
+    drawPatchScopeAdsrOverlay();
     return;
   }
   int16_t prevX = pointX(0), prevY = pointY(scopeSamples[0]);
@@ -2523,6 +2545,105 @@ void drawPatchScope() {
     scopeRenderedSamples[i] = scopeSamples[i];
   }
   scopeRendered = true;
+  drawPatchScopeAdsrOverlay();
+}
+
+// Courbe ADSR schematique superposee a l'oscilloscope (2026-09-23) --
+// redessinee a CHAQUE rafraichissement du scope (pas une seule fois),
+// sinon le trace-erase-redraw de la forme d'onde ci-dessus l'efface
+// petit a petit. 4 segments de largeur nominale egale (attaque/chute/
+// maintien fixe/relachement), la largeur des 3 segments temporels
+// (pas le maintien, qui est un NIVEAU pas une duree) est modulee par le
+// reglage 0-127 correspondant -- schematique, pas une reproduction
+// exacte de la courbe de AudioEffectEnvelope, mais bouge visiblement a
+// chaque tour d'encodeur, ce qui est le but ("on doit pouvoir la
+// regler avec les encodeurs").
+void drawPatchScopeAdsrOverlay() {
+  // Position/visibilite memorisees de l'appel precedent, pour EFFACER
+  // avant de redessiner -- sinon tourner un encodeur (qui bouge la ligne
+  // a chaque appel) ou sortir du focus (qui fait disparaitre les points)
+  // laisse une trainee : rien d'autre n'efface ces pixels-la (l'effacement
+  // de la trace audio plus haut ne connait que scopeRenderedSamples).
+  // Meme principe que scopeRendered/scopeRenderedSamples juste au-dessus.
+  static bool prevLineValid = false;
+  static int16_t prevLineX[5] = {};
+  static int16_t prevLineY[5] = {};
+  static bool prevDotsValid = false;
+  static int16_t prevDotX[4] = {};
+  static int16_t prevDotY[4] = {};
+
+  const uint8_t t = static_cast<uint8_t>(patchTrack);
+  const int16_t w = static_cast<int16_t>(kPatchScopeW - 2);
+  const int16_t top = static_cast<int16_t>(kPatchScopeTop + 1);
+  const int16_t h = static_cast<int16_t>(kPatchScopeH - 2);
+  const int16_t x0 = kMargin;
+  auto segW = [w](uint8_t val127) -> int16_t {
+    const float frac = 0.2f + 0.8f * (static_cast<float>(val127) / 127.0f);
+    return static_cast<int16_t>((static_cast<float>(w) / 4.0f) * frac);
+  };
+  const int16_t aW = segW(trackAttack[t]);
+  const int16_t dW = segW(trackDecay[t]);
+  const int16_t rW = segW(trackRelease[t]);
+  const int16_t sW = static_cast<int16_t>(w / 4);  // maintien : largeur fixe, c'est un niveau pas une duree
+  const int16_t susY = static_cast<int16_t>(top + h - (static_cast<int32_t>(trackSustain[t]) * h) / 127);
+  const int16_t baseY = static_cast<int16_t>(top + h);
+  const int16_t peakY = top;
+  const int16_t x1 = static_cast<int16_t>(x0 + aW);
+  const int16_t x2 = static_cast<int16_t>(x1 + dW);
+  const int16_t x3 = static_cast<int16_t>(x2 + sW);
+  const int16_t x4 = static_cast<int16_t>(x3 + rW);
+
+  if (prevLineValid) {
+    gfx->drawLine(prevLineX[0], prevLineY[0], prevLineX[1], prevLineY[1], RGB565_BLACK);
+    gfx->drawLine(prevLineX[1], prevLineY[1], prevLineX[2], prevLineY[2], RGB565_BLACK);
+    gfx->drawLine(prevLineX[2], prevLineY[2], prevLineX[3], prevLineY[3], RGB565_BLACK);
+    gfx->drawLine(prevLineX[3], prevLineY[3], prevLineX[4], prevLineY[4], RGB565_BLACK);
+  }
+  if (prevDotsValid) {
+    for (uint8_t i = 0; i < 4; ++i) {
+      gfx->fillCircle(prevDotX[i], prevDotY[i], 4, RGB565_BLACK);  // rayon 4 : couvre le plein (4) ET le creux (3)
+    }
+  }
+
+  const uint16_t color = patchOnScopeRow ? RGB565_WHITE : dimColor(patchAccent(t), 2);
+  gfx->drawLine(x0, baseY, x1, peakY, color);
+  gfx->drawLine(x1, peakY, x2, susY, color);
+  gfx->drawLine(x2, susY, x3, susY, color);
+  gfx->drawLine(x3, susY, x4, baseY, color);
+  prevLineX[0] = x0; prevLineY[0] = baseY;
+  prevLineX[1] = x1; prevLineY[1] = peakY;
+  prevLineX[2] = x2; prevLineY[2] = susY;
+  prevLineX[3] = x3; prevLineY[3] = susY;
+  prevLineX[4] = x4; prevLineY[4] = baseY;
+  prevLineValid = true;
+
+  // "Une petite boule sur les points" (2026-09-23, suite) : un marqueur
+  // par point ADSR (fin d'attaque/chute/maintien/relachement) -- le point
+  // actuellement selectionne (patchScopeAdsrPoint, voir le clic
+  // d'encodeur dans handleTeensyLine()) ressort en plein, les 3 autres
+  // restent creux. Seulement visible avec le focus sur l'oscilloscope :
+  // sans ca, la courbe seule suffit (pas de points a choisir).
+  if (patchOnScopeRow) {
+    const int16_t px[4] = {x1, x2, x3, x4};
+    const int16_t py[4] = {peakY, susY, susY, baseY};
+    for (uint8_t i = 0; i < 4; ++i) {
+      if (i == patchScopeAdsrPoint) {
+        gfx->fillCircle(px[i], py[i], 4, RGB565_WHITE);
+      } else {
+        gfx->drawCircle(px[i], py[i], 3, dimColor(RGB565_WHITE, 1));
+      }
+      prevDotX[i] = px[i];
+      prevDotY[i] = py[i];
+    }
+    prevDotsValid = true;
+  } else {
+    prevDotsValid = false;
+  }
+  // Bordure toujours redessinee dans la couleur courante (position FIXE --
+  // un simple contour ecrase l'ancien sans besoin de l'effacer d'abord,
+  // contrairement a la ligne/aux points qui bougent).
+  gfx->drawRect(kMargin, kPatchScopeTop, kPatchScopeW, kPatchScopeH,
+                patchOnScopeRow ? RGB565_WHITE : patchAccent(t));
 }
 
 // Nombre de lignes VISUELLES affichees a l'ecran en meme temps --
@@ -3271,6 +3392,12 @@ const char *patchEncoderLabel(uint8_t t, uint8_t slot) {
 }
 
 void updatePatchEncoderHints() {
+  if (patchOnScopeRow) {
+    static const char *const kAdsrPointNames[4] = {"ATTACK", "DECAY", "SUSTAIN", "RELEASE"};
+    const char *label = kAdsrPointNames[patchScopeAdsrPoint];
+    drawEncoderHints(label, label);
+    return;
+  }
   const uint8_t t = static_cast<uint8_t>(patchTrack);
   drawEncoderHints(patchEncoderLabel(t, 0), patchEncoderLabel(t, 1));
 }
@@ -5021,6 +5148,8 @@ void goTo(Screen s) {
     patchOnTrackRow = false;  // atterrit dans la grille de parametres, pas sur la ligne PISTE
     patchOnPresetList = true; // A puis HAUT/BAS modifient le preset affiche a cote de l'onde
     patchPresetEditing = false;
+    patchOnScopeRow = false;  // voir patchOnScopeRow -- jamais focus en entrant sur la page
+    patchScopeAdsrPoint = 0;
     queryPatchExtra(static_cast<uint8_t>(patchTrack));
   } else if (currentScreen == Screen::Patch) {
     sendToTeensy("SCOPE:OFF");
@@ -5464,7 +5593,24 @@ void handleTeensyLine(const String &line) {
           const uint8_t t = static_cast<uint8_t>(patchTrack);
           const uint8_t total = patchTotalRows(t);
           const uint8_t slotRow = patchSlotRow(t);
-          if (patchOnPresetList) {
+          if (patchOnScopeRow) {
+            // Focus sur l'oscilloscope (voir patchOnScopeRow plus haut) :
+            // HAUT ressort vers SLOT, GAUCHE/DROITE avance/recule le point
+            // ADSR selectionne (meme effet que le clic d'un des 2
+            // encodeurs, voir handleTeensyLine() "ENCSW:"), BAS ne fait
+            // rien (deja tout en bas).
+            if (index == 0) {
+              patchOnScopeRow = false;
+              selectedPatchRow = static_cast<int8_t>(slotRow);
+              drawPatchScope();
+              redrawPatchLogicalRow(t, slotRow);
+              updatePatchEncoderHints();
+            } else if (index == 2 || index == 3) {
+              patchScopeAdsrPoint = static_cast<uint8_t>((patchScopeAdsrPoint + (index == 3 ? 1 : 3)) % 4);
+              drawPatchScope();
+              updatePatchEncoderHints();
+            }
+          } else if (patchOnPresetList) {
             // Pendant l'appui physique sur A, ne laisse pas la meme
             // direction tomber jusqu'a patchApplyDelta() (qui editerait
             // par erreur un parametre du bas alors que le focus est ici).
@@ -5552,6 +5698,15 @@ void handleTeensyLine(const String &line) {
               patchOnTrackRow = true;
               drawPatchTrackRow();
               redrawPatchLogicalRow(t, static_cast<uint8_t>(prevRow));
+            } else if (next == prevRow && index == 1 && prevRow == static_cast<int8_t>(slotRow)) {
+              // BAS depuis SLOT (derniere ligne, patchStepVisual() ne
+              // bouge pas) -- entre dans le focus oscilloscope/ADSR (voir
+              // patchOnScopeRow plus haut, "je suis coince ... je peux
+              // pas descendre").
+              patchOnScopeRow = true;
+              redrawPatchLogicalRow(t, static_cast<uint8_t>(prevRow));
+              drawPatchScope();
+              updatePatchEncoderHints();
             } else if (next != prevRow) {
               selectedPatchRow = next;
               bool scrolled = false;
@@ -5964,6 +6119,21 @@ void handleTeensyLine(const String &line) {
               drawMixerTrack(t);
             }
           }
+        } else if (currentScreen == Screen::Patch && patchOnScopeRow) {
+          // Focus oscilloscope (voir patchOnScopeRow) : UN SEUL point ADSR
+          // actif a la fois (patchScopeAdsrPoint, avance par clic
+          // d'encodeur ou GAUCHE/DROITE) -- tourner N'IMPORTE LEQUEL des 2
+          // encodeurs regle ce point, meme reglage sous-jacent que les
+          // lignes 2-5 fixes, juste un autre chemin pour y arriver
+          // ("passer par l'onde affichee pour regler les patch").
+          (void)slot;
+          const uint8_t t = static_cast<uint8_t>(patchTrack);
+          uint8_t *const points[4] = {&trackAttack[t], &trackDecay[t], &trackSustain[t], &trackRelease[t]};
+          *points[patchScopeAdsrPoint] = value;
+          sendPatchEnv();
+          if (!screensaverActive) {
+            drawPatchScope();
+          }
         } else if (currentScreen == Screen::Patch) {
           const uint8_t t = static_cast<uint8_t>(patchTrack);
           const int8_t row = patchEncoderLogicalRow(t, slot);
@@ -6091,6 +6261,14 @@ void handleTeensyLine(const String &line) {
         if (currentScreen == Screen::Engines && index == 1 && pressed) {
           engineParamBank = static_cast<uint8_t>(engineParamBank ^ 1U);
           drawEngVisualizer();
+        }
+        if (currentScreen == Screen::Patch && patchOnScopeRow && (index == 1 || index == 2) && pressed) {
+          // Clic du bouton-poussoir d'un des 2 encodeurs contextuels :
+          // avance au point ADSR suivant (2026-09-23, "en cliquant sur le
+          // bouton de l'encodeur on passe au suivant").
+          patchScopeAdsrPoint = static_cast<uint8_t>((patchScopeAdsrPoint + 1) % 4);
+          drawPatchScope();
+          updatePatchEncoderHints();
         }
       }
     }
@@ -7674,7 +7852,22 @@ void loop() {
       lastTouchX[slot] = touches[slot].x;
       lastTouchY[slot] = touches[slot].y;
     }
-    const bool active = rawActive && (wasActive[slot] || pendingActive[slot]);
+    // Debounce SYMETRIQUE dans les deux sens (2026-09-24) : `active` ne
+    // change que si LA MEME lecture brute est confirmee par 2 tours de
+    // boucle consecutifs. Avant, une seule lecture rawActive=false
+    // suffisait a couper le toucher instantanement (aucun debounce a la
+    // relache, contrairement a l'armement qui en exigeait deja 2) -- un
+    // simple bruit du capteur pendant un doigt pose sans bouger etait
+    // donc lu comme un relache-puis-repose, redeclenchant
+    // handleTouchDown() (donc une NOUVELLE note) en plein milieu d'un
+    // appui continu. Signale comme "l'ANALOG a des sautes d'humeur, le
+    // note change sans raison" -- capture serie a l'appui : NOTE:/STEP:
+    // renvoyes en rafale toutes les ~100-200ms pendant un pad tenu sans
+    // interruption.
+    bool active = wasActive[slot];
+    if (rawActive != active && rawActive == pendingActive[slot]) {
+      active = rawActive;
+    }
     pendingActive[slot] = rawActive;
 
     if (active && !wasActive[slot]) {
