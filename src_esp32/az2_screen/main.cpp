@@ -4599,7 +4599,7 @@ void drawEmuPickerPage() {
   drawSubHeader("EMULATEURS", kPalette[2]);
   drawEmuCard(0, kEmuCardGbY, "Peanut-GB DMG - 59,7fps X3 valide", "JOUER >", kPalette[2], true);
   drawEmuCard(1, kEmuCardGbcY, "Walnut-CGB - valide 59,7fps, firmware labo separe", "VALIDE (labo)",
-              kWarnAmber, false);
+              kPalette[1], true);
   drawEmuCard(2, kEmuCardNesY, "6502 - etude faite (Anemoia-ESP32, GPLv3)", "PROCHAINEMENT", kFaint,
               false);
   drawEmuCard(3, kEmuCardNeoY, "TLCS-900H - a etudier plus tard", "PROCHAINEMENT", kFaint, false);
@@ -9549,6 +9549,20 @@ void loop() {
 #ifdef AZ2_NES_ENABLED
   if (currentScreen == Screen::NesRetro && nesIsLoaded() && !screensaverActive) {
     nesRunFrame();
+    static uint32_t lastNesPerfMs = 0;
+    const uint32_t nesNowMs = millis();
+    if (nesNowMs - lastNesPerfMs >= 1000) {
+      const NesRuntimeStats nesPerf = nesRuntimeStats();
+      Serial.print("NES:PERF:fps_x10=");
+      Serial.print(nesPerf.fpsX10);
+      Serial.print(":core_avg_us=");
+      Serial.print(nesPerf.avgCoreUs);
+      Serial.print(":core_max_us=");
+      Serial.print(nesPerf.maxCoreUs);
+      Serial.print(":frames=");
+      Serial.println(nesPerf.totalFrames);
+      lastNesPerfMs = nesNowMs;
+    }
   }
 #endif
 
