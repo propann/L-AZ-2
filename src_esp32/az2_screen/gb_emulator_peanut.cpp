@@ -976,6 +976,12 @@ void gbRunFrame() {
   // est une optimisation propre a Walnut-CGB, voir le commentaire
   // d'en-tete du fichier).
   gb_run_frame(&gb);
+  // Filet de securite double-coeur (voir le commentaire pres de
+  // gGbBandCheckedOut dans main.cpp) : recupere un buffer de bande laisse
+  // "sorti" par un blanking LCD qui a saute la fin de bande cette frame.
+  // No-op (et meme absent) si AZ2_GB_DUAL_CORE_BLIT n'est pas defini.
+  extern void gbBlitEndOfFrame();
+  gbBlitEndOfFrame();
   const uint32_t coreUs = micros() - workStartUs;
   extern volatile uint32_t gGbDisplayLastUs;
   const uint32_t displayUs = gGbDisplayLastUs;

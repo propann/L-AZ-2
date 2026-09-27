@@ -39,6 +39,11 @@
 #ifdef AZ2_DIRECT_PANEL
 #include "AZ2_RGB_Direct.h"
 #endif
+#ifdef AZ2_GB_DUAL_CORE_BLIT
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
+#endif
 
 void drawGbViewportFrame();
 void flushUiCanvas();
@@ -284,7 +289,7 @@ bool inBox(int16_t x, int16_t y, int16_t bx, int16_t by, int16_t bw, int16_t bh)
 // ---------------------------------------------------------------------
 // Etat partage entre les pages / le lien Teensy
 // ---------------------------------------------------------------------
-enum class Screen : uint8_t { Menu, Controls, Audio, Sampler, Sequencer, Engines, Retro, Config, Links, About, Patch, Song, Project, Mixer, StepSeq };
+enum class Screen : uint8_t { Menu, Controls, Audio, Sampler, Sequencer, Engines, Retro, Config, Links, About, Patch, Song, Project, Mixer, StepSeq, EmuPicker };
 Screen currentScreen = Screen::Menu;
 // "Retour" (2026-09-19, "il faut pas que ca revienne aux menu general
 // il faut que ca revienne d'un etage seulement") -- UN SEUL niveau
@@ -320,6 +325,34 @@ void sendToTeensy(const String &message) {
 // ---------------------------------------------------------------------
 constexpr int16_t kMargin = 24;
 constexpr int16_t kStatusY = kScreenSize - 30;
+
+// Boutons AFFICHAGE (X2/X3) de la page JEUX -- voir hitTest assorti dans
+// handleTouchDown() (Screen::Retro && !gbIsLoaded()) et kRomRowTop plus bas,
+// decale pour laisser la place a ces boutons agrandis.
+constexpr int16_t kScaleBtnY = 64;
+constexpr int16_t kScaleBtnW = 150;
+constexpr int16_t kScaleBtnH = 34;
+constexpr int16_t kScaleBtnX2 = 120;
+constexpr int16_t kScaleBtnX3 = 306;
+
+// Page EMULATEURS (Screen::EmuPicker, 2026-09-27) : choix du moteur avant
+// d'entrer dans Screen::Retro. 3 cartes : GAME BOY (Peanut-GB, valide pleine
+// vitesse, seule cible reellement jouable sur CE firmware), GBC (Walnut-CGB
+// + meme decoupage double coeur, encore instable -- bug de blocage au
+// demarrage non resolu, voir docs) et NES (pas commence). GBC/NES ne
+// peuvent pas etre compiles dans le MEME firmware que Peanut-GB (collision
+// de symboles, gb_emulator.cpp vs gb_emulator_peanut.cpp) -- boutons actifs
+// (tactile + croix/A), mais qui affichent honnetement leur etat au lieu de
+// pretendre lancer un jeu, voir emuPickerActivate().
+constexpr int16_t kEmuCardX = kMargin;
+constexpr int16_t kEmuCardW = kScreenSize - 2 * kMargin;
+constexpr int16_t kEmuCardH = 110;
+constexpr int16_t kEmuCardGap = 14;
+constexpr int16_t kEmuCardGbY = 76;
+constexpr int16_t kEmuCardGbcY = kEmuCardGbY + kEmuCardH + kEmuCardGap;
+constexpr int16_t kEmuCardNesY = kEmuCardGbcY + kEmuCardH + kEmuCardGap;
+constexpr uint8_t kEmuCardCount = 3;
+int8_t emuPickerSelected = 0;
 
 // Exclue de la page SEQUENCEUR depuis le 2026-09-19 ("on peut enlever
 // la ligne du bas tensy en vert gagner de la place pour des bouton de
@@ -422,7 +455,7 @@ constexpr MenuItem kMenuItems[] = {
     {"SONG", "chaine les patterns", Screen::Song, MenuCat::Musique},
     {"PROJETS", "liste, charger et sauver", Screen::Project, MenuCat::Musique},
     {"AUDIO", "jouer le Teensy depuis l'ecran", Screen::Audio, MenuCat::Musique},
-    {"JEUX", "Game Boy (ROM sur carte SD)", Screen::Retro, MenuCat::Jeux},
+    {"JEUX", "choisir un emulateur", Screen::EmuPicker, MenuCat::Jeux},
     {"CONFIGURATION", "ecran de veille, reglages", Screen::Config, MenuCat::Config},
     {"CONTROLES", "croix + boutons + potards (Teensy)", Screen::Controls, MenuCat::Config},
     {"LIENS SERIE", "journal ESP32 / Teensy", Screen::Links, MenuCat::Doc},
@@ -4244,7 +4277,10 @@ bool gbCheatMenuOpen = false;
 int8_t gbSettingsSelectedRow = 0;
 int8_t gbCheatSelectedRow = 0;
 
-constexpr int16_t kRomRowTop = 90;
+// [2026-09-27] 90 -> 104 : laisse la place aux boutons AFFICHAGE agrandis
+// (kScaleBtnY=64 + kScaleBtnH=34 = 98, +6px de marge comme ailleurs dans
+// cette page, ex. kRomRowH-6).
+constexpr int16_t kRomRowTop = 104;
 constexpr int16_t kRomRowH = 40;
 // Pagination (demande 2026-09-17, "met en plus des trucs cool ... genre
 // 20 30") -- avant, toutes les ROM trouvees etaient dessinees a la
@@ -4495,6 +4531,94 @@ void drawGbSettingsMenu() {
 #endif
 }
 
+// [2026-09-27] Ecran intermediaire entre le menu et Screen::Retro : choix du
+// moteur d'emulation. 3 cartes, statut honnete plutot que promettre un jeu
+// qui ne demarre pas :
+//   0 = GAME BOY (Peanut-GB) : seule cible reellement jouable sur CE
+//       firmware, X3 a 59,76fps valide sur materiel (voir AZ2_ETAT_ACTUEL.md).
+//   1 = GAME BOY COLOR (Walnut-CGB) : meme decoupage double coeur teste,
+//       mais bug de blocage au demarrage pas encore resolu -- build de labo
+//       separee (collision de symboles avec Peanut-GB, pas compilable dans
+//       le meme firmware).
+//   2 = NES : pas encore commence.
+// kEmuCardTitles/kEmuCardReady utilises par emuPickerActivate() -- garder
+// les 2 tableaux et drawEmuPickerPage() synchronises si l'ordre change.
+constexpr const char *kEmuCardTitles[kEmuCardCount] = {"GAME BOY", "GAME BOY COLOR", "NES"};
+
+// Couleur "en cours" (ni pret/vert ni desactive/gris) -- meme convention
+// RGB565() que kDim/kFaint plus haut dans ce fichier.
+constexpr uint16_t kWarnAmber = RGB565(255, 170, 0);
+
+void drawEmuCard(uint8_t index, int16_t y, const char *sub1, const char *sub2, const char *cta,
+                  uint16_t accent, bool filled) {
+  const bool selected = (emuPickerSelected == index);
+  if (filled) {
+    gfx->fillRoundRect(kEmuCardX, y, kEmuCardW, kEmuCardH, 10, accent);
+    gfx->setTextColor(RGB565_BLACK);
+  } else {
+    gfx->fillRoundRect(kEmuCardX, y, kEmuCardW, kEmuCardH, 10, RGB565_BLACK);
+    gfx->setTextColor(accent);
+  }
+  gfx->drawRoundRect(kEmuCardX, y, kEmuCardW, kEmuCardH, 10, accent);
+  if (selected) {
+    // Curseur croix/A : cadre exterieur supplementaire, visible sans tactile.
+    gfx->drawRoundRect(static_cast<int16_t>(kEmuCardX - 3), static_cast<int16_t>(y - 3),
+                        static_cast<int16_t>(kEmuCardW + 6), static_cast<int16_t>(kEmuCardH + 6), 12,
+                        RGB565_WHITE);
+  }
+  gfx->setTextSize(2);
+  gfx->setCursor(static_cast<int16_t>(kEmuCardX + 20), static_cast<int16_t>(y + 14));
+  gfx->print(kEmuCardTitles[index]);
+  gfx->setTextSize(1);
+  gfx->setCursor(static_cast<int16_t>(kEmuCardX + 20), static_cast<int16_t>(y + 44));
+  gfx->print(sub1);
+  gfx->setCursor(static_cast<int16_t>(kEmuCardX + 20), static_cast<int16_t>(y + 58));
+  gfx->print(sub2);
+  gfx->setTextSize(2);
+  gfx->setCursor(static_cast<int16_t>(kEmuCardX + 20), static_cast<int16_t>(y + 80));
+  gfx->print(cta);
+}
+
+void drawEmuPickerPage() {
+  drawSubHeader("EMULATEURS", kPalette[2]);
+  drawEmuCard(0, kEmuCardGbY, "Peanut-GB DMG - coeur sur l'autre processeur",
+              "X3 a 59,7 fps - X2 plein debit garanti", "JOUER >", kPalette[2], true);
+  drawEmuCard(1, kEmuCardGbcY, "Walnut-CGB + meme decoupage double coeur",
+              "Bug de blocage au demarrage -- en cours", "EN COURS", kWarnAmber, false);
+  drawEmuCard(2, kEmuCardNesY, "6502 + PPU/APU differents de la Game Boy", "Pas encore commence",
+              "PROCHAINEMENT", kFaint, false);
+}
+
+// Active la carte selectionnee (tap ou croix+A). GAME BOY (index 0) lance
+// toujours reellement un jeu. GAME BOY COLOR (index 1) fait pareil UNIQUEMENT
+// sur un firmware qui compile Walnut-CGB (AZ2_GB_CORE_PEANUT absent, voir
+// screen_esp_walnut_gbc_core_task) -- meme Screen::Retro/liste de ROM que
+// GAME BOY sur CE build precis : Walnut-CGB detecte lui-meme DMG vs GBC
+// depuis l'entete de chaque ROM (walnut_cgb.h, gb->cgb.cgbMode), les 2
+// cartes n'y sont qu'une distinction visuelle. Sur le firmware stable
+// (Peanut-GB, DMG-only), la carte GBC reste un message honnete -- pas
+// compilable dans le meme binaire que Peanut-GB (collision de symboles).
+void emuPickerActivate(uint8_t index) {
+  emuPickerSelected = static_cast<int8_t>(index);
+  if (index == 0) {
+    goTo(Screen::Retro);
+    return;
+  }
+#ifndef AZ2_GB_CORE_PEANUT
+  if (index == 1) {
+    goTo(Screen::Retro);
+    return;
+  }
+#endif
+  const char *msg = (index == 1) ? "GBC : bug de blocage au demarrage, en cours de correction"
+                                  : "NES : pas encore commence";
+  gfx->fillRect(0, 0, kScreenSize, 22, RGB565_BLACK);
+  gfx->setTextSize(1);
+  gfx->setTextColor(index == 1 ? kWarnAmber : kDim);
+  gfx->setCursor(kMargin, 5);
+  gfx->print(msg);
+}
+
 void drawRetroPage() {
   if (gbIsLoaded()) {
     // Le rendu du jeu lui-meme vient de gbBlitLine(), appelee par
@@ -4523,21 +4647,27 @@ void drawRetroPage() {
     // Choix du rendu avant le lancement : 2× garde le plein débit, 3×
     // remplit la largeur de l'écran. Le choix reste actif pour la ROM
     // suivante jusqu'à ce que l'utilisateur le change.
+    // [2026-09-27] Agrandis (demande utilisateur, "un peu petits") : 110x24
+    // -> 150x34, texte taille 2 au lieu de 1. Voir hitTest assorti plus bas
+    // (Screen::Retro && !gbIsLoaded()) et kRomRowTop decale de 90 a 104 pour
+    // laisser la place sans chevaucher la liste de ROM.
     gfx->setTextSize(1);
     gfx->setTextColor(kDim);
-    gfx->setCursor(kMargin, 70);
+    gfx->setCursor(kMargin, 76);
     gfx->print("AFFICHAGE");
     const bool scale2 = gbDisplayScale == 2;
-    gfx->fillRect(120, 64, 110, 24, scale2 ? kPalette[1] : RGB565_BLACK);
-    gfx->drawRect(120, 64, 110, 24, kPalette[1]);
+    gfx->fillRect(kScaleBtnX2, kScaleBtnY, kScaleBtnW, kScaleBtnH, scale2 ? kPalette[1] : RGB565_BLACK);
+    gfx->drawRect(kScaleBtnX2, kScaleBtnY, kScaleBtnW, kScaleBtnH, kPalette[1]);
+    gfx->setTextSize(2);
     gfx->setTextColor(scale2 ? RGB565_BLACK : RGB565_WHITE);
-    gfx->setCursor(138, 72);
+    gfx->setCursor(kScaleBtnX2 + 27, kScaleBtnY + 9);
     gfx->print("X2 60FPS");
-    gfx->fillRect(244, 64, 110, 24, scale2 ? RGB565_BLACK : kPalette[1]);
-    gfx->drawRect(244, 64, 110, 24, kPalette[1]);
+    gfx->fillRect(kScaleBtnX3, kScaleBtnY, kScaleBtnW, kScaleBtnH, scale2 ? RGB565_BLACK : kPalette[1]);
+    gfx->drawRect(kScaleBtnX3, kScaleBtnY, kScaleBtnW, kScaleBtnH, kPalette[1]);
     gfx->setTextColor(scale2 ? RGB565_WHITE : RGB565_BLACK);
-    gfx->setCursor(262, 72);
+    gfx->setCursor(kScaleBtnX3 + 27, kScaleBtnY + 9);
     gfx->print("X3 ECRAN");
+    gfx->setTextSize(1);
     if (gbRomScroll > 0 && gbRomScroll >= gbRomCount) {
       gbRomScroll = 0;  // securite si la liste a change depuis (rescan)
     }
@@ -5598,6 +5728,7 @@ void drawScreen(Screen s) {
     case Screen::Sampler: drawSamplerPage(); break;
     case Screen::Sequencer: drawSequencerPage(); break;
     case Screen::Engines: drawEnginesPage(); break;
+    case Screen::EmuPicker: drawEmuPickerPage(); break;
     case Screen::Retro: drawRetroPage(); break;
     case Screen::Config: drawConfigPage(); break;
     case Screen::Links: drawLinksPage(); break;
@@ -5655,6 +5786,9 @@ void goTo(Screen s) {
     gbRomCount = gbScanRoms(gbRomNames);
     gbRomScroll = 0;
     selectedRomIndex = 0;
+  }
+  if (s == Screen::EmuPicker) {
+    emuPickerSelected = 0;
   }
   if (s == Screen::Sampler) {
     snprintf(samplerFolder, sizeof(samplerFolder), "/samples");
@@ -5718,6 +5852,32 @@ void goTo(Screen s) {
 
   currentScreen = s;
   drawScreen(s);
+}
+
+// [2026-09-27] Ouvre une categorie du menu principal -- si elle ne contient
+// qu'UN SEUL item (ex. Jeux -> JEUX -> EmuPicker), saute directement sur sa
+// cible au lieu d'afficher une sous-liste a un seul choix (demande
+// utilisateur : "il faut enlever une etape ... le bouton JEUX va a la
+// fenetre d'emulateur direct"). Categories a plusieurs items (Musique,
+// Config, Doc) gardent la sous-liste normale.
+void enterMenuCategory(uint8_t catIndex) {
+  uint8_t items[kMenuItemCount];
+  const uint8_t count = categoryItems(static_cast<MenuCat>(catIndex), items);
+  if (count == 1) {
+    if (kMenuItems[items[0]].target == Screen::Audio) {
+      padTargetTrack = selectedSeqTrack;
+      padEditsStep = false;
+    }
+    // La sous-liste (1 seul item) est sautee : un "retour" doit remonter
+    // direct a la grille des 4 categories, pas y retomber -- menuReturnCategory
+    // a -1 (pas catIndex) pour que goTo(Screen::Menu) affiche menuCategory=-1.
+    menuReturnCategory = -1;
+    goTo(kMenuItems[items[0]].target);
+  } else {
+    menuCategory = static_cast<int8_t>(catIndex);
+    menuSelected = 0;
+    drawMenu();
+  }
 }
 
 // Valide la ligne selectionnee du menu reglages/triches (voir
@@ -6016,6 +6176,14 @@ void handleTeensyLine(const String &line) {
           else if (index == 1) configSelectedRow = (configSelectedRow + 1) % 4;
           else if (index == 2 || index == 3) configChangeRow(index == 2 ? -1 : 1);
           if (index == 0 || index == 1) drawConfigPage();
+        }
+        if (pressed && currentScreen == Screen::EmuPicker && (index == 0 || index == 1)) {
+          // HAUT/BAS seulement (croix GAUCHE/DROITE inutilisee, cartes
+          // empilees verticalement) -- meme convention que Config ci-dessus.
+          emuPickerSelected = static_cast<int8_t>(
+              index == 0 ? (emuPickerSelected + kEmuCardCount - 1) % kEmuCardCount
+                         : (emuPickerSelected + 1) % kEmuCardCount);
+          drawEmuPickerPage();
         }
         if (pressed && currentScreen == Screen::Menu) {
           if (menuCategory < 0) {
@@ -6621,11 +6789,12 @@ void handleTeensyLine(const String &line) {
       // la croix GAUCHE/DROITE choisit MOTEUR ou PATCH, HAUT/BAS change la
       // selection, et A ouvre ensuite le detail du patch. C est reserve a
       // PLAY/STOP ; D reste le FILL tant qu'il est maintenu.
+      if (pressed && letter == 'A' && currentScreen == Screen::EmuPicker) {
+        emuPickerActivate(static_cast<uint8_t>(emuPickerSelected));
+      }
       if (pressed && letter == 'A' && currentScreen == Screen::Menu) {
         if (menuCategory < 0) {
-          menuCategory = menuSelected;
-          menuSelected = 0;
-          drawMenu();
+          enterMenuCategory(static_cast<uint8_t>(menuSelected));
         } else {
           uint8_t items[kMenuItemCount];
           const uint8_t count = categoryItems(static_cast<MenuCat>(menuCategory), items);
@@ -6715,6 +6884,8 @@ void handleTeensyLine(const String &line) {
           goTo(patchReturnScreen);
         } else if (currentScreen == Screen::Engines) {
           goTo(enginesReturnScreen);
+        } else if (currentScreen == Screen::Retro) {
+          goTo(Screen::EmuPicker);
         } else if (menuReturnCategory >= 0) {
           goTo(Screen::Menu);
         } else {
@@ -7952,6 +8123,140 @@ void drawGbViewportFrame() {
 // lui-meme une limite native a ce style de rendu ligne par ligne
 // ("certaines animations ne s'affichent pas correctement, ex.
 // Prehistorik Man") -- accepte comme compromis connu, pas un bug AZ-2.
+
+#ifdef AZ2_GB_DUAL_CORE_BLIT
+// [2026-09-27] Copie+flush (~16,4ms, voir docs/AZ2_MESURE_EMULATEUR_GB_*)
+// deplaces sur une tache dediee au core 0 (libre : ce firmware n'utilise ni
+// WiFi ni BT) pendant que le coeur GB + la mise a l'echelle restent sur le
+// core 1 (le "loopTask" Arduino habituel). Double buffer + 2 files FreeRTOS
+// (la synchro elle-meme assure la visibilite memoire entre coeurs, pas
+// besoin de esp_cache_msync pour ca -- seulement pour la coherence avec le
+// DMA du panneau, deja fait cote consommateur). gbBandFreeQueue est
+// prerempli avec les 2 index au demarrage ; le producteur en prend un avant
+// de remplir une bande (bloque si les 2 sont encore chez le consommateur --
+// c'est le seul point de contre-pression, aucune donnee n'est ecrasee en
+// cours de lecture).
+struct GbBandJob {
+  uint16_t *buf;
+  int16_t y;
+  int16_t outputRows;
+  int16_t scaledW;
+  int16_t screenLeft;
+  bool lastOfFrame;
+};
+QueueHandle_t gbBandReadyQueue = nullptr;
+QueueHandle_t gbBandFreeQueue = nullptr;
+uint16_t gbBandBuf[2][kGbMaxScaledW * kGbMaxScaledRowsPerBand];
+// [2026-09-27] Bug reel trouve sur Walnut-CGB (GBC) : gb_run_frame_dualfetch()
+// saute __gb_draw_line()/gbBlitLine() entierement quand gb->lcd_blank est
+// vrai (walnut_cgb.h, "if(!gb->lcd_blank) __gb_draw_line(gb);") -- si le LCD
+// se coupe EN PLEIN MILIEU d'une bande (8 lignes), cette bande n'atteint
+// jamais bandComplete (sourceRowInBand==7 ni line==143 ne sont revus), donc
+// son buffer reste indefiniment "sorti" du pool. Apres 2 bandes abandonnees
+// (2 buffers), gbBandFreeQueue est vide et le PRODUCTEUR bloque a jamais au
+// prochain sourceRowInBand==0 (xQueueReceive portMAX_DELAY) -- gele loop()
+// entier (boutons, tactile, heartbeat serie inclus, confirme sur materiel).
+// currentBandBufIdx/checkedOut sortis de gbBlitLine() (etaient des static
+// locales) pour etre lisibles depuis gbBlitEndOfFrame(), appelee une fois
+// par frame par gbRunFrame() (gb_emulator.cpp ET gb_emulator_peanut.cpp),
+// DONC toujours executee meme si gbBlitLine() n'a pas tourne cette frame.
+// 0 (pas 0xFF) : index tableau valide des le premier appel, meme si aucun
+// xQueueReceive n'a encore reussi -- evite un acces hors bornes si jamais
+// gbBlitLine() lit gCurrentBandBufIdx avant sa premiere ecriture reelle.
+uint8_t gCurrentBandBufIdx = 0;
+bool gGbBandCheckedOut = false;
+
+// [2026-09-27] Toutes les attentes de ce pipeline (ici et dans gbBlitLine())
+// sont bornees, PAS portMAX_DELAY -- le blanking LCD mi-bande (voir plus
+// haut) n'a pas suffi a expliquer un blocage reproduit une 2e fois apres ce
+// premier correctif : cause exacte encore incertaine (peut-etre le
+// consommateur lui-meme qui cale sur ce coeur GBC). Plutot que de
+// continuer a deviner scenario par scenario, une attente bornee garantit
+// que loop() (tactile/boutons/heartbeat) ne peut plus JAMAIS se figer
+// indefiniment, quelle que soit la cause reelle -- au pire l'image GB se
+// degrade/gele, le reste de l'appareil reste reactif.
+constexpr TickType_t kGbBandWaitTicks = pdMS_TO_TICKS(50);
+
+// Rend au pool un buffer sorti mais jamais soumis cette frame (bande
+// abandonnee par un blanking LCD en cours de route) -- ne l'affiche pas
+// (donnees partielles), se contente de restaurer l'invariant du pool.
+// No-op si la derniere bande commencee a normalement atteint bandComplete.
+void gbBlitEndOfFrame() {
+  if (gGbBandCheckedOut) {
+    xQueueSend(gbBandFreeQueue, &gCurrentBandBufIdx, kGbBandWaitTicks);
+    gGbBandCheckedOut = false;
+  }
+}
+
+void gbBlitConsumerTask(void *) {
+  extern volatile uint32_t gGbDisplayLastUs;
+  extern volatile uint32_t gGbBlitScaleLastUs;
+  extern volatile uint32_t gGbBlitCopyLastUs;
+  extern volatile uint32_t gGbBlitFlushLastUs;
+  extern volatile bool gGbDisplayHappenedThisFrame;
+  static uint32_t consumerDisplayUs = 0;
+  static uint32_t consumerCopyUs = 0;
+  static uint32_t consumerFlushUs = 0;
+  GbBandJob job;
+  for (;;) {
+    if (xQueueReceive(gbBandReadyQueue, &job, portMAX_DELAY) != pdTRUE) continue;
+    const uint32_t drawStartUs = micros();
+    const uint32_t copyStartUs = micros();
+    uint16_t *framebuffer = gfx->getFramebuffer();
+    if (framebuffer != nullptr) {
+      for (int16_t srcY = 0; srcY < job.outputRows; ++srcY) {
+        const int16_t dstY = static_cast<int16_t>(kScreenSize - 1 - (job.y + srcY));
+        uint16_t *dst = framebuffer + dstY * kScreenSize + job.screenLeft;
+        const uint16_t *src = job.buf + srcY * job.scaledW;
+        memcpy(dst, src, job.scaledW * sizeof(uint16_t));
+      }
+    }
+    consumerCopyUs += micros() - copyStartUs;
+    const uint32_t flushStartUs = micros();
+    if (framebuffer != nullptr) {
+      const int16_t firstDstY = static_cast<int16_t>(kScreenSize - 1 - (job.y + job.outputRows - 1));
+      esp_cache_msync(framebuffer + firstDstY * kScreenSize,
+                      static_cast<size_t>(job.outputRows) * kScreenSize * sizeof(uint16_t),
+                      ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    }
+    consumerFlushUs += micros() - flushStartUs;
+    consumerDisplayUs += micros() - drawStartUs;
+    // Rendu du buffer APRES le flush : le producteur ne doit pas pouvoir le
+    // reecrire tant que le panneau n'a pas vu les donnees.
+    const uint8_t freedIndex = (job.buf == gbBandBuf[0]) ? 0 : 1;
+    xQueueSend(gbBandFreeQueue, &freedIndex, kGbBandWaitTicks);
+    if (job.lastOfFrame) {
+      gGbBlitCopyLastUs = consumerCopyUs;
+      gGbBlitFlushLastUs = consumerFlushUs;
+      gGbDisplayLastUs = gGbBlitScaleLastUs + consumerDisplayUs;
+      gGbDisplayHappenedThisFrame = true;
+      consumerDisplayUs = 0;
+      consumerCopyUs = 0;
+      consumerFlushUs = 0;
+    }
+  }
+}
+
+void gbBlitDualCoreInit() {
+  if (gbBandReadyQueue != nullptr) return;
+  gbBandReadyQueue = xQueueCreate(2, sizeof(GbBandJob));
+  gbBandFreeQueue = xQueueCreate(2, sizeof(uint8_t));
+  uint8_t idx0 = 0, idx1 = 1;
+  xQueueSend(gbBandFreeQueue, &idx0, 0);
+  xQueueSend(gbBandFreeQueue, &idx1, 0);
+  // [2026-09-27] 4096 -> 8192 par prudence : la carte a fige/perdu l'USB
+  // apres une session de jeu avec ce prototype, cause pas encore identifiee
+  // avec certitude -- pile un peu large ecarte cette hypothese a peu de
+  // frais avant de chercher ailleurs.
+  xTaskCreatePinnedToCore(gbBlitConsumerTask, "gbBlit", 8192, nullptr, 1, nullptr, 0);
+}
+#else
+// Stub : gbRunFrame() (gb_emulator.cpp ET gb_emulator_peanut.cpp) l'appelle
+// inconditionnellement une fois par frame, meme sur les firmwares qui ne
+// definissent pas AZ2_GB_DUAL_CORE_BLIT (pas de pool de buffers a liberer).
+void gbBlitEndOfFrame() {}
+#endif
+
 void gbBlitLine(int line, const uint16_t *row) {
   // [2026-09-25] Essaye a 16 (bandes deux fois plus grandes, 9 flushs/frame
   // au lieu de 18) pour reduire le cout esp_cache_msync() -- confirme
@@ -7964,12 +8269,30 @@ void gbBlitLine(int line, const uint16_t *row) {
   const int16_t scaledW = gbScaledW();
   const int16_t scaledTop = gbScreenTop();
   const int16_t screenLeft = gbScreenLeft();
+#ifndef AZ2_GB_DUAL_CORE_BLIT
   static uint16_t scaledBand[kGbMaxScaledW * kGbMaxScaledRowsPerBand];
-  static uint32_t displayFrameUs = 0;
-  static uint32_t scaleFrameUs = 0;
   static uint32_t copyFrameUs = 0;
   static uint32_t flushFrameUs = 0;
+#endif
+  static uint32_t displayFrameUs = 0;
+  static uint32_t scaleFrameUs = 0;
   const int16_t sourceRowInBand = static_cast<int16_t>(line % kGbSourceRowsPerBand);
+#ifdef AZ2_GB_DUAL_CORE_BLIT
+  if (sourceRowInBand == 0) {
+    // Nouvelle bande : recupere un buffer libre aupres du consommateur.
+    // Attente BORNEE (kGbBandWaitTicks, pas portMAX_DELAY) -- voir le
+    // commentaire pres de sa declaration : si le consommateur ne repond
+    // pas a temps (cause exacte encore incertaine sur le coeur GBC),
+    // continuer avec l'index precedent degrade juste cette bande au lieu
+    // de figer loop() entier. gGbBandCheckedOut=true tant que bandComplete
+    // n'a pas soumis cette bande -- voir gbBlitEndOfFrame() pour le filet
+    // de securite si un blanking LCD saute la fin de bande avant ca.
+    if (xQueueReceive(gbBandFreeQueue, &gCurrentBandBufIdx, kGbBandWaitTicks) == pdTRUE) {
+      gGbBandCheckedOut = true;
+    }
+  }
+  uint16_t *scaledBand = gbBandBuf[gCurrentBandBufIdx];
+#endif
   uint16_t *scaledRow = scaledBand + sourceRowInBand * scale * scaledW;
 
   const uint32_t scaleStartUs = micros();
@@ -8030,13 +8353,36 @@ void gbBlitLine(int line, const uint16_t *row) {
     const int16_t sourceBandStart = static_cast<int16_t>(line - sourceRowInBand);
     const int16_t sourceRows = static_cast<int16_t>(sourceRowInBand + 1);
     const int16_t y = static_cast<int16_t>(scaledTop + sourceBandStart * scale);
+    const int16_t outputRows = static_cast<int16_t>(sourceRows * scale);
+#ifdef AZ2_GB_DUAL_CORE_BLIT
+    // Copie+flush faits par gbBlitConsumerTask() sur le core 0 -- on empile
+    // juste le travail ici. currentBandBufIdx sera reacquis au debut de la
+    // prochaine bande (sourceRowInBand==0 plus haut), jamais reecrit avant
+    // que le consommateur ait rendu ce meme index via gbBandFreeQueue.
+    GbBandJob job{scaledBand, y, outputRows, scaledW, screenLeft, line == 143};
+    if (xQueueSend(gbBandReadyQueue, &job, kGbBandWaitTicks) == pdTRUE) {
+      gGbBandCheckedOut = false;
+    } else {
+      // Consommateur trop en retard pour accepter cette bande a temps :
+      // rendre le buffer directement (best effort, bande non affichee)
+      // plutot que de le laisser "sorti" jusqu'a gbBlitEndOfFrame() -- une
+      // bande suivante DANS LA MEME frame acquerrait sinon un nouvel index
+      // sans jamais rendre celui-ci (fuite silencieuse du pool).
+      xQueueSend(gbBandFreeQueue, &gCurrentBandBufIdx, kGbBandWaitTicks);
+      gGbBandCheckedOut = false;
+    }
+    if (line == 143) {
+      extern volatile uint32_t gGbBlitScaleLastUs;
+      gGbBlitScaleLastUs = scaleFrameUs;
+      scaleFrameUs = 0;
+    }
+#else
     const uint32_t drawStartUs = micros();
     // Le chemin générique Arduino_GFX refait les contrôles de clipping et la
     // rotation 180 degrés pour chaque bande. Le panneau RGB expose déjà son
     // framebuffer PSRAM : on écrit directement les lignes inversées, puis on
     // invalide uniquement leur plage de cache. Le rendu reste identique,
     // mais évite une copie intermédiaire et ses pics de latence.
-    const int16_t outputRows = static_cast<int16_t>(sourceRows * scale);
     const uint32_t copyStartUs = micros();
 #ifdef AZ2_DIRECT_PANEL
     directPanel.copyRotatedRgb565(scaledBand, screenLeft, y, scaledW, outputRows);
@@ -8090,6 +8436,7 @@ void gbBlitLine(int line, const uint16_t *row) {
       copyFrameUs = 0;
       flushFrameUs = 0;
     }
+#endif
   }
 }
 
@@ -8109,6 +8456,12 @@ void setup() {
   Serial.begin(230400);
   delay(300);
   Serial.println("AZ2:ROLE:ESP32_SCREEN_TEST");
+#ifdef AZ2_GB_DUAL_CORE_BLIT
+  // La tache peut demarrer avant gfx : elle reste bloquee sur
+  // gbBandReadyQueue (vide) jusqu'au premier gbBlitLine() d'une vraie
+  // partie, bien apres l'init ecran plus bas dans ce setup().
+  gbBlitDualCoreInit();
+#endif
   restoreSaverSettings();
 
   // Memes valeurs par defaut que seedDefaultNotes() cote Teensy (les 8
@@ -8202,14 +8555,13 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
   } else if (currentScreen != Screen::Menu && currentScreen != Screen::Audio && hitBack(x, y)) {
     if (currentScreen == Screen::Patch) goTo(patchReturnScreen);
     else if (currentScreen == Screen::Engines) goTo(enginesReturnScreen);
+    else if (currentScreen == Screen::Retro) goTo(Screen::EmuPicker);
     else goTo(Screen::Menu);
   } else if (currentScreen == Screen::Menu) {
     if (menuCategory < 0) {
       const int8_t hit = hitTestCategoryCard(x, y);
       if (hit >= 0) {
-        menuCategory = hit;
-        menuSelected = 0;
-        drawMenu();
+        enterMenuCategory(static_cast<uint8_t>(hit));
       }
     } else if (hitBack(x, y)) {
       // "< CATEGORIE" en haut a gauche (voir drawSubHeader) -> retour a
@@ -8652,14 +9004,26 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       snprintf(msg, sizeof(msg), "SWING:%d", swingValue);
       sendToTeensy(msg);
     }
+  } else if (currentScreen == Screen::EmuPicker) {
+    if (x >= kEmuCardX && x < kEmuCardX + kEmuCardW) {
+      if (y >= kEmuCardGbY && y < kEmuCardGbY + kEmuCardH) {
+        emuPickerActivate(0);
+      } else if (y >= kEmuCardGbcY && y < kEmuCardGbcY + kEmuCardH) {
+        emuPickerActivate(1);
+      } else if (y >= kEmuCardNesY && y < kEmuCardNesY + kEmuCardH) {
+        emuPickerActivate(2);
+      }
+    }
   } else if (currentScreen == Screen::Retro && !gbIsLoaded()) {
     if (gbRomCount > 0) {
-      if (y >= 64 && y < 90 && x >= 120 && x < 230) {
+      if (y >= kScaleBtnY && y < kScaleBtnY + kScaleBtnH && x >= kScaleBtnX2 &&
+          x < kScaleBtnX2 + kScaleBtnW) {
         gbDisplayScale = 2;
         drawRetroPage();
         return;
       }
-      if (y >= 64 && y < 90 && x >= 244 && x < 354) {
+      if (y >= kScaleBtnY && y < kScaleBtnY + kScaleBtnH && x >= kScaleBtnX3 &&
+          x < kScaleBtnX3 + kScaleBtnW) {
         gbDisplayScale = 3;
         drawRetroPage();
         return;
@@ -8734,7 +9098,12 @@ void loop() {
   const uint32_t now = millis();
   const bool gbGameActive = (currentScreen == Screen::Retro && gbIsLoaded());
 
-
+  // [2026-09-27] REVERT : readTeensyStatus() ne sert pas qu'a l'UI tracker --
+  // c'est le SEUL chemin par lequel les BTN:/NAV: du Teensy (croix, A/B,
+  // encodeurs -- les vraies commandes physiques du jeu, voir handleTeensyLine()
+  // "BTN:" ligne ~6490) arrivent jusqu'a l'emulateur GB. La gater derriere
+  // !gbGameActive a coupe les boutons pendant le jeu (confirme par test
+  // materiel). Remise en inconditionnel.
   readTeensyStatus();
   if (!gbGameActive && patchUiNeedsRedraw) {
     patchUiNeedsRedraw = false;
@@ -8922,42 +9291,35 @@ void loop() {
       const GbRuntimeStats runtime = gbRuntimeStats();
       const uint32_t cpuX100 = static_cast<uint32_t>(
           (static_cast<uint64_t>(frameAvgUs) * 10000ULL) / 16743ULL);
-      Serial.print("GB:PERF:fps_x100=");
-      Serial.print(fpsX100);
-      Serial.print(":frame_us_avg=");
-      Serial.print(frameAvgUs);
-      Serial.print(":frame_us_max=");
-      Serial.print(gbFrameTimeMaxUs);
-      Serial.print(":work_p99_us=");
-      Serial.print(runtime.p99WorkUs);
-      Serial.print(":core_avg_us=");
-      Serial.print(runtime.avgCoreUs);
-      Serial.print(":cpu_only_avg_us=");
-      Serial.print(runtime.avgCpuOnlyUs);
-      Serial.print(":display_avg_us=");
-      Serial.print(runtime.avgDisplayUs);
-      Serial.print(":audio_avg_us=");
-      Serial.print(runtime.avgAudioUs);
-      Serial.print(":core_max_us=");
-      Serial.print(runtime.maxCoreUs);
-      Serial.print(":display_max_us=");
-      Serial.print(runtime.maxDisplayUs);
-      Serial.print(":audio_max_us=");
-      Serial.print(runtime.maxAudioUs);
-      Serial.print(":blit_scale_us=");
-      Serial.print(gGbBlitScaleLastUs);
-      Serial.print(":blit_copy_us=");
-      Serial.print(gGbBlitCopyLastUs);
-      Serial.print(":blit_flush_us=");
-      Serial.print(gGbBlitFlushLastUs);
-      Serial.print(":cpu_x100=");
-      Serial.print(cpuX100);
-      Serial.print(":heap_free_kb=");
-      Serial.print(ESP.getFreeHeap() / 1024U);
-      Serial.print(":psram_free_kb=");
-      Serial.print(ESP.getFreePsram() / 1024U);
-      Serial.print(":missed=");
-      Serial.println(gbMissedFrames);
+      // [2026-09-27] Un seul Serial.write() au lieu de ~20 Serial.print()
+      // separes -- corruption reproduite sur materiel (des fragments GB:PERF
+      // se retrouvaient entrelaces avec la ligne suivante, meme sans aucun
+      // trafic Teensy concurrent, donc pas une histoire de tache concurrente
+      // cote firmware : la cause reelle semble etre le nombre d'appels
+      // separes, chacun pouvant etre coupe par un flush/refill UART partiel).
+      // Construire la ligne complete dans un buffer local puis l'envoyer
+      // d'un coup rend l'ecriture atomique du point de vue de l'appelant.
+      char perfLine[256];
+      const int perfLineLen = snprintf(
+          perfLine, sizeof(perfLine),
+          "GB:PERF:fps_x100=%lu:frame_us_avg=%lu:frame_us_max=%lu:work_p99_us=%lu:"
+          "core_avg_us=%lu:cpu_only_avg_us=%lu:display_avg_us=%lu:audio_avg_us=%lu:"
+          "core_max_us=%lu:display_max_us=%lu:audio_max_us=%lu:blit_scale_us=%lu:"
+          "blit_copy_us=%lu:blit_flush_us=%lu:cpu_x100=%lu:heap_free_kb=%lu:"
+          "psram_free_kb=%lu:missed=%lu\n",
+          static_cast<unsigned long>(fpsX100), static_cast<unsigned long>(frameAvgUs),
+          static_cast<unsigned long>(gbFrameTimeMaxUs), static_cast<unsigned long>(runtime.p99WorkUs),
+          static_cast<unsigned long>(runtime.avgCoreUs), static_cast<unsigned long>(runtime.avgCpuOnlyUs),
+          static_cast<unsigned long>(runtime.avgDisplayUs), static_cast<unsigned long>(runtime.avgAudioUs),
+          static_cast<unsigned long>(runtime.maxCoreUs), static_cast<unsigned long>(runtime.maxDisplayUs),
+          static_cast<unsigned long>(runtime.maxAudioUs), static_cast<unsigned long>(gGbBlitScaleLastUs),
+          static_cast<unsigned long>(gGbBlitCopyLastUs), static_cast<unsigned long>(gGbBlitFlushLastUs),
+          static_cast<unsigned long>(cpuX100), static_cast<unsigned long>(ESP.getFreeHeap() / 1024U),
+          static_cast<unsigned long>(ESP.getFreePsram() / 1024U), static_cast<unsigned long>(gbMissedFrames));
+      if (perfLineLen > 0) {
+        Serial.write(reinterpret_cast<const uint8_t *>(perfLine),
+                     min(static_cast<size_t>(perfLineLen), sizeof(perfLine) - 1));
+      }
 
       if (kGbPerfOverlay) {
         // Diagnostic discret dans la bande superieure reservee au mode GB.
