@@ -346,12 +346,13 @@ constexpr int16_t kScaleBtnX3 = 306;
 // pretendre lancer un jeu, voir emuPickerActivate().
 constexpr int16_t kEmuCardX = kMargin;
 constexpr int16_t kEmuCardW = kScreenSize - 2 * kMargin;
-constexpr int16_t kEmuCardH = 110;
-constexpr int16_t kEmuCardGap = 14;
+constexpr int16_t kEmuCardH = 88;
+constexpr int16_t kEmuCardGap = 10;
 constexpr int16_t kEmuCardGbY = 76;
 constexpr int16_t kEmuCardGbcY = kEmuCardGbY + kEmuCardH + kEmuCardGap;
 constexpr int16_t kEmuCardNesY = kEmuCardGbcY + kEmuCardH + kEmuCardGap;
-constexpr uint8_t kEmuCardCount = 3;
+constexpr int16_t kEmuCardNeoY = kEmuCardNesY + kEmuCardH + kEmuCardGap;
+constexpr uint8_t kEmuCardCount = 4;
 int8_t emuPickerSelected = 0;
 
 // Exclue de la page SEQUENCEUR depuis le 2026-09-19 ("on peut enlever
@@ -4540,17 +4541,27 @@ void drawGbSettingsMenu() {
 //       mais bug de blocage au demarrage pas encore resolu -- build de labo
 //       separee (collision de symboles avec Peanut-GB, pas compilable dans
 //       le meme firmware).
-//   2 = NES : pas encore commence.
-// kEmuCardTitles/kEmuCardReady utilises par emuPickerActivate() -- garder
-// les 2 tableaux et drawEmuPickerPage() synchronises si l'ordre change.
-constexpr const char *kEmuCardTitles[kEmuCardCount] = {"GAME BOY", "GAME BOY COLOR", "NES"};
+//   2 = NES : etude faite (Anemoia-ESP32, GPLv3, coeur decouple du
+//       materiel), pas encore implemente.
+//   3 = NEO GEO POCKET : pas etudie, a faire plus tard. PAS le Neo Geo
+//       arcade/AES (celui-la est hors de portee : cartouches 40-100+ Mo,
+//       double CPU 68000+Z80, aucun projet microcontroleur connu). Le
+//       Neo Geo Pocket (Color) est une console portable SNK 1998-99,
+//       TLCS-900H, cartouches 2-4 Mo, 160x152 -- echelle comparable au
+//       GB/GBC deja valides, PAS comparable au Neo Geo arcade.
+// kEmuCardTitles utilise par emuPickerActivate() -- garder synchronise avec
+// drawEmuPickerPage() si l'ordre change.
+constexpr const char *kEmuCardTitles[kEmuCardCount] = {"GAME BOY", "GAME BOY COLOR", "NES",
+                                                        "NEO GEO POCKET"};
 
 // Couleur "en cours" (ni pret/vert ni desactive/gris) -- meme convention
 // RGB565() que kDim/kFaint plus haut dans ce fichier.
 constexpr uint16_t kWarnAmber = RGB565(255, 170, 0);
 
-void drawEmuCard(uint8_t index, int16_t y, const char *sub1, const char *sub2, const char *cta,
-                  uint16_t accent, bool filled) {
+// [2026-09-27] 110px/2 lignes de sous-titre -> 88px/1 ligne : 4 cartes
+// tiennent desormais dans les 480px de l'ecran (voir kEmuCardH/kEmuCardGap).
+void drawEmuCard(uint8_t index, int16_t y, const char *sub, const char *cta, uint16_t accent,
+                  bool filled) {
   const bool selected = (emuPickerSelected == index);
   if (filled) {
     gfx->fillRoundRect(kEmuCardX, y, kEmuCardW, kEmuCardH, 10, accent);
@@ -4567,26 +4578,24 @@ void drawEmuCard(uint8_t index, int16_t y, const char *sub1, const char *sub2, c
                         RGB565_WHITE);
   }
   gfx->setTextSize(2);
-  gfx->setCursor(static_cast<int16_t>(kEmuCardX + 20), static_cast<int16_t>(y + 14));
+  gfx->setCursor(static_cast<int16_t>(kEmuCardX + 16), static_cast<int16_t>(y + 8));
   gfx->print(kEmuCardTitles[index]);
   gfx->setTextSize(1);
-  gfx->setCursor(static_cast<int16_t>(kEmuCardX + 20), static_cast<int16_t>(y + 44));
-  gfx->print(sub1);
-  gfx->setCursor(static_cast<int16_t>(kEmuCardX + 20), static_cast<int16_t>(y + 58));
-  gfx->print(sub2);
+  gfx->setCursor(static_cast<int16_t>(kEmuCardX + 16), static_cast<int16_t>(y + 34));
+  gfx->print(sub);
   gfx->setTextSize(2);
-  gfx->setCursor(static_cast<int16_t>(kEmuCardX + 20), static_cast<int16_t>(y + 80));
+  gfx->setCursor(static_cast<int16_t>(kEmuCardX + 16), static_cast<int16_t>(y + 56));
   gfx->print(cta);
 }
 
 void drawEmuPickerPage() {
   drawSubHeader("EMULATEURS", kPalette[2]);
-  drawEmuCard(0, kEmuCardGbY, "Peanut-GB DMG - coeur sur l'autre processeur",
-              "X3 a 59,7 fps - X2 plein debit garanti", "JOUER >", kPalette[2], true);
-  drawEmuCard(1, kEmuCardGbcY, "Walnut-CGB + meme decoupage double coeur",
-              "Bug de blocage au demarrage -- en cours", "EN COURS", kWarnAmber, false);
-  drawEmuCard(2, kEmuCardNesY, "6502 + PPU/APU differents de la Game Boy", "Pas encore commence",
-              "PROCHAINEMENT", kFaint, false);
+  drawEmuCard(0, kEmuCardGbY, "Peanut-GB DMG - 59,7fps X3 valide", "JOUER >", kPalette[2], true);
+  drawEmuCard(1, kEmuCardGbcY, "Walnut-CGB - firmware labo separe, 59,7fps", "EN COURS", kWarnAmber,
+              false);
+  drawEmuCard(2, kEmuCardNesY, "6502 - etude faite (Anemoia-ESP32, GPLv3)", "PROCHAINEMENT", kFaint,
+              false);
+  drawEmuCard(3, kEmuCardNeoY, "TLCS-900H - a etudier plus tard", "PROCHAINEMENT", kFaint, false);
 }
 
 // Active la carte selectionnee (tap ou croix+A). GAME BOY (index 0) lance
@@ -4598,6 +4607,8 @@ void drawEmuPickerPage() {
 // cartes n'y sont qu'une distinction visuelle. Sur le firmware stable
 // (Peanut-GB, DMG-only), la carte GBC reste un message honnete -- pas
 // compilable dans le meme binaire que Peanut-GB (collision de symboles).
+// NES/NEO GEO POCKET (index 2/3) : jamais fonctionnels tant qu'aucun coeur
+// n'est integre, message honnete dans les 2 cas.
 void emuPickerActivate(uint8_t index) {
   emuPickerSelected = static_cast<int8_t>(index);
   if (index == 0) {
@@ -4610,11 +4621,25 @@ void emuPickerActivate(uint8_t index) {
     return;
   }
 #endif
-  const char *msg = (index == 1) ? "GBC : bug de blocage au demarrage, en cours de correction"
-                                  : "NES : pas encore commence";
+  const char *msg;
+  uint16_t color;
+  switch (index) {
+    case 1:
+      msg = "GBC : disponible sur le firmware labo separe (reflash requis)";
+      color = kWarnAmber;
+      break;
+    case 2:
+      msg = "NES : etude faite (Anemoia-ESP32), pas encore implemente";
+      color = kDim;
+      break;
+    default:
+      msg = "NEO GEO POCKET : pas encore etudie";
+      color = kDim;
+      break;
+  }
   gfx->fillRect(0, 0, kScreenSize, 22, RGB565_BLACK);
   gfx->setTextSize(1);
-  gfx->setTextColor(index == 1 ? kWarnAmber : kDim);
+  gfx->setTextColor(color);
   gfx->setCursor(kMargin, 5);
   gfx->print(msg);
 }
@@ -9012,6 +9037,8 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
         emuPickerActivate(1);
       } else if (y >= kEmuCardNesY && y < kEmuCardNesY + kEmuCardH) {
         emuPickerActivate(2);
+      } else if (y >= kEmuCardNeoY && y < kEmuCardNeoY + kEmuCardH) {
+        emuPickerActivate(3);
       }
     }
   } else if (currentScreen == Screen::Retro && !gbIsLoaded()) {
