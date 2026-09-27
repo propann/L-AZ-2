@@ -6854,6 +6854,11 @@ void handleTeensyLine(const String &line) {
           gbSetButton(kGbMap[index], pressed);
         }
       }
+#ifdef AZ2_NES_ENABLED
+      if (currentScreen == Screen::NesRetro && nesIsLoaded() && index < 2) {
+        nesSetButton(static_cast<NesButton>(index), pressed);
+      }
+#endif
       // Page JEUX, liste de ROM (pas encore charge) : A charge la ROM
       // choisie par la croix -- meme convention que le tactile
       // (toucher une ligne), et que A pour confirmer ailleurs (menu).
