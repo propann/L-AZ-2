@@ -1,4 +1,9 @@
-# AZ-2 - TODO Pico -- CLOS (Pico abandonne le 2026-09-15)
+# AZ-2 — TODO Pico — ARCHIVÉ
+
+> **État au 27 septembre 2026 : le Pico, le Button Pad SparkFun et les
+> modules LED/multiplexeurs associés sont abandonnés.** Le firmware
+> `pico_keypad` ne fait pas partie de l'architecture AZ-2 active et ne doit
+> pas être flashé dans le matériel de production.
 
 Cette page suivait ce qu'il faudrait adapter dans le firmware Pico une
 fois rebranche. **Le Pico est abandonne** (voir

@@ -667,6 +667,61 @@ void sendGbAudioPacket() {
 
 }  // namespace
 
+namespace {
+// Moteur de triche local à l'unité de compilation
+constexpr uint8_t kMaxCheats = 8;
+GbCheat activeCheats[kMaxCheats];
+uint8_t activeCheatCount = 0;
+
+void initCheatsForRom() {
+  activeCheatCount = 0;
+  memset(activeCheats, 0, sizeof(activeCheats));
+  
+  if (romTitle[0] == '\0') return;
+  
+  String t = String(romTitle);
+  t.toUpperCase();
+  
+  if (t.indexOf("TETRIS") >= 0) {
+    activeCheats[0] = {"Inf. Lines", 0xC0A0, 99, false};
+    activeCheats[1] = {"Max Score 1", 0xC0A2, 0x99, false};
+    activeCheats[2] = {"Max Score 2", 0xC0A1, 0x99, false};
+    activeCheatCount = 3;
+  } else if (t.indexOf("MARIO") >= 0 || t.indexOf("SML") >= 0) {
+    activeCheats[0] = {"Inf. Lives", 0xDA15, 99, false};
+    activeCheats[1] = {"Inf. Time 1", 0xC101, 9, false};
+    activeCheats[2] = {"Inf. Time 2", 0xC100, 9, false};
+    activeCheats[3] = {"Superball", 0xFF99, 2, false};
+    activeCheatCount = 4;
+  } else if (t.indexOf("ZELDA") >= 0 || t.indexOf("LINK") >= 0) {
+    activeCheats[0] = {"Inf. Hearts", 0xDB5A, 0x08, false};
+    activeCheats[1] = {"Max Rupees 1", 0xDB5D, 0x99, false};
+    activeCheats[2] = {"Max Rupees 2", 0xDB5E, 0x09, false};
+    activeCheats[3] = {"Inf. Bombs", 0xDB4C, 30, false};
+    activeCheats[4] = {"Inf. Arrows", 0xDB4D, 30, false};
+    activeCheatCount = 5;
+  }
+}
+
+void applyCheats() {
+  for (uint8_t i = 0; i < activeCheatCount; ++i) {
+    if (activeCheats[i].enabled) {
+      uint16_t addr = activeCheats[i].address;
+      uint8_t val = activeCheats[i].value;
+      if (addr >= 0xC000 && addr <= 0xDFFF) {
+        gb.wram[addr - 0xC000] = val;
+      } else if (addr >= 0xFF80 && addr <= 0xFFFE) {
+        gb.hram_io[addr - 0xFF00] = val;
+      } else if (addr >= 0xA000 && addr <= 0xBFFF) {
+        if (cartRam && addr - 0xA000 < cartRamSize) {
+          cartRam[addr - 0xA000] = val;
+        }
+      }
+    }
+  }
+}
+}  // namespace
+
 bool gbIsLoaded() {
   return romLoaded;
 }
@@ -683,6 +738,7 @@ bool gbUnload() {
       return false;
     }
   }
+  activeCheatCount = 0;
   if (romData != nullptr) {
     heap_caps_free(romData);
     romData = nullptr;
@@ -720,6 +776,36 @@ bool gbSaveNow() {
   const bool ramOk = gbSaveCartRam();
   const bool rtcOk = gbSaveRtc();
   return ramOk && rtcOk;
+}
+
+bool gbLoadNow() {
+  if (!romLoaded) return true;
+  bool ramOk = true;
+  if (cartRam && cartRamSize > 0) {
+    ramOk = gbLoadCartRamIfPresent();
+  }
+  bool rtcOk = true;
+  if (cartHasRtc) {
+    rtcOk = gbLoadRtcIfPresent();
+  }
+  return ramOk && rtcOk;
+}
+
+uint8_t gbGetCheatCount() {
+  return activeCheatCount;
+}
+
+GbCheat* gbGetCheat(uint8_t index) {
+  if (index < activeCheatCount) {
+    return &activeCheats[index];
+  }
+  return nullptr;
+}
+
+void gbToggleCheat(uint8_t index) {
+  if (index < activeCheatCount) {
+    activeCheats[index].enabled = !activeCheats[index].enabled;
+  }
 }
 
 void gbSetAudioV2Ready(bool ready) {
@@ -958,6 +1044,7 @@ bool gbLoadRom(const char *filename) {
 
   gb_get_rom_name(&gb, romTitle);
   romLoaded = true;
+  initCheatsForRom();
 
   Serial.print("GB:LOADED:title=");
   Serial.print(romTitle);
@@ -982,6 +1069,8 @@ constexpr uint32_t kGbAutosaveIntervalMs = 30000;
 
 void gbRunFrame() {
   if (!romLoaded) return;
+
+  applyCheats();
 
   const uint32_t workStartUs = micros();
   // Walnut-CGB recommande ce chemin : deux opcodes sont recuperes par

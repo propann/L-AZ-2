@@ -56,12 +56,16 @@ de carte SD.
 ## Émulation GB/GBC : statut exact
 
 Walnut-CGB, GNUBOY et plusieurs briques de frontend sont présents dans le
-dépôt. Cela ne constitue pas un émulateur utilisable de bout en bout.
+dépôt. Walnut-CGB est archivé et ne fait plus partie des candidats actifs.
+GNUBOY passe en test A/B face à Peanut-GB. Cela ne constitue pas encore un
+émulateur utilisable de bout en bout.
 
 - aucun émulateur GB ou GBC n'est déclaré fonctionnel sur l'AZ-2 ;
 - aucune matrice ROM vidéo + commandes + audio + sauvegarde n'est validée ;
 - cadence, fidélité APU, RTC et sauvegardes restent à qualifier ;
-- la fonction JEUX et la capture depuis un jeu sont expérimentales.
+- la fonction JEUX et la capture depuis un jeu sont expérimentales ;
+- l'environnement de comparaison GNUBOY est `screen_esp_gnuboy_probe` et
+  expose la télémétrie `GNUBOY:PERF`.
 
 Toute phrase plus optimiste dans un audit antérieur doit être lue comme une
 observation ou une ambition propre à cette ancienne révision.
@@ -83,3 +87,9 @@ observation ou une ambition propre à cette ancienne révision.
 - `pio test -e native` : **21/21 tests réussis** le 23 septembre 2026 ;
 - le stress matériel combiné reste à relancer lorsque le port USB du Teensy
   est visible avec les deux moteurs alimentés.
+# Etat de production - 2026-09-27
+
+- Emulateur actif : Peanut-GB, affichage X2.
+- Capture audio GB : bouton volume, fichier WAV sur la SD Teensy, nom libre `SAMPLE_###.wav`.
+- MIDI DIN : entree desactivee tant que les puces MIDI ne sont pas soudees ; RX maintenu dans un etat fixe.
+- GNUBOY et Walnut-CGB restent des probes/archive, pas le firmware de production.

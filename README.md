@@ -6,7 +6,7 @@
 
 **🌐 Documentation : [Français](docs/i18n/README.fr.md) · [English](docs/i18n/README.en.md) · [Español](docs/i18n/README.es.md)**
 
-**Une groovebox DIY à quatre cartes programmables : tracker 8 pistes et neuf moteurs audio. Un chantier d'émulation GB/GBC est présent dans le code, mais aucun émulateur n'est actuellement fonctionnel et validé sur la machine.**
+**Une groovebox DIY à plusieurs firmwares : tracker 8 pistes et neuf moteurs audio. Des prototypes Game Boy sont présents dans le dépôt, mais aucun émulateur GB/GBC n'est actuellement fonctionnel et validé sur la machine.**
 
 [![CI](https://github.com/propann/L-AZ-2/actions/workflows/ci.yml/badge.svg)](https://github.com/propann/L-AZ-2/actions/workflows/ci.yml)
 ![Statut](https://img.shields.io/badge/status-prototype%20alpha-f59e0b)
@@ -78,7 +78,9 @@ Le matériel Teensy et l'écran ESP32 disposent de configurations de compilation
 
 | Fonction | État |
 | :-- | :-- |
-| Cœurs Walnut-CGB et GNUBOY | Prototypes présents ; **aucun émulateur GB/GBC fonctionnel et validé actuellement** |
+| Walnut-CGB | **Archivé, non retenu** |
+| Peanut-GB | Prototype DMG de référence provisoire ; performances mesurées, validation complète non faite |
+| GNUBOY | **En test A/B** contre Peanut-GB via `screen_esp_gnuboy_probe` |
 | Chargement ROM, rendu, commandes et sauvegardes | Code expérimental incomplet ; ne constitue pas une fonction livrée |
 | Audio V2 séquencé + CRC + L/R PCM8 stéréo | Intégré derrière un pilote désactivé ; sortie Teensy encore downmixée sur le bus mono actuel |
 | Sauvegarde SRAM périodique, SAVE NOW sur D, `.sav/.bak` et RTC MBC3 séparé | Intégré ; qualification coupure/RTC sur matériel encore nécessaire |

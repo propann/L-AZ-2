@@ -120,15 +120,21 @@ bool loadFirstRom() {
 }
 
 void applyLine(const String &line) {
-  if (!line.startsWith("BTN:") || !line.endsWith("DOWN")) return;
-  if (line.indexOf("A:") >= 0) pad |= GB_PAD_A;
-  else if (line.indexOf("B:") >= 0) pad |= GB_PAD_B;
-  else if (line.indexOf("UP:") >= 0) pad |= GB_PAD_UP;
-  else if (line.indexOf("DOWN:") >= 0) pad |= GB_PAD_DOWN;
-  else if (line.indexOf("LEFT:") >= 0) pad |= GB_PAD_LEFT;
-  else if (line.indexOf("RIGHT:") >= 0) pad |= GB_PAD_RIGHT;
-  else if (line.indexOf("C:") >= 0) pad |= GB_PAD_SELECT;
-  else if (line.indexOf("D:") >= 0) pad |= GB_PAD_START;
+  if (!line.startsWith("BTN:")) return;
+  const bool pressed = line.endsWith("DOWN");
+  const bool released = line.endsWith("UP");
+  if (!pressed && !released) return;
+  uint8_t bit = 0;
+  if (line.indexOf("A:") >= 0) bit = GB_PAD_A;
+  else if (line.indexOf("B:") >= 0) bit = GB_PAD_B;
+  else if (line.indexOf("UP:") >= 0) bit = GB_PAD_UP;
+  else if (line.indexOf("DOWN:") >= 0) bit = GB_PAD_DOWN;
+  else if (line.indexOf("LEFT:") >= 0) bit = GB_PAD_LEFT;
+  else if (line.indexOf("RIGHT:") >= 0) bit = GB_PAD_RIGHT;
+  else if (line.indexOf("C:") >= 0) bit = GB_PAD_SELECT;
+  else if (line.indexOf("D:") >= 0) bit = GB_PAD_START;
+  if (pressed) pad |= bit;
+  else pad &= static_cast<uint8_t>(~bit);
   gnuboy_set_pad(pad);
 }
 }

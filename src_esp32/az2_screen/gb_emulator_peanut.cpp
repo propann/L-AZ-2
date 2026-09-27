@@ -89,6 +89,11 @@ GbRuntimeStats runtimeStats;
 uint32_t statsWindowStartUs = 0;
 uint32_t statsWorkAccumUs = 0;
 uint32_t statsCoreAccumUs = 0;
+// [2026-09-25] core_avg_us englobe deja le rendu (gbBlitLine tourne DANS
+// gb_run_frame() via le callback lcd_draw_line) -- ceci isole le temps
+// CPU+PPU pur, sans le rendu, quand un rendu a effectivement eu lieu cette
+// frame (voir gGbDisplayHappenedThisFrame, main.cpp).
+uint32_t statsCpuOnlyAccumUs = 0;
 uint32_t statsAudioAccumUs = 0;
 uint32_t statsDisplayAccumUs = 0;
 uint32_t statsCoreMaxUs = 0;
@@ -589,6 +594,61 @@ void sendGbAudioPacket() {
 
 }  // namespace
 
+namespace {
+// Moteur de triche local à l'unité de compilation
+constexpr uint8_t kMaxCheats = 8;
+GbCheat activeCheats[kMaxCheats];
+uint8_t activeCheatCount = 0;
+
+void initCheatsForRom() {
+  activeCheatCount = 0;
+  memset(activeCheats, 0, sizeof(activeCheats));
+  
+  if (romTitle[0] == '\0') return;
+  
+  String t = String(romTitle);
+  t.toUpperCase();
+  
+  if (t.indexOf("TETRIS") >= 0) {
+    activeCheats[0] = {"Inf. Lines", 0xC0A0, 99, false};
+    activeCheats[1] = {"Max Score 1", 0xC0A2, 0x99, false};
+    activeCheats[2] = {"Max Score 2", 0xC0A1, 0x99, false};
+    activeCheatCount = 3;
+  } else if (t.indexOf("MARIO") >= 0 || t.indexOf("SML") >= 0) {
+    activeCheats[0] = {"Inf. Lives", 0xDA15, 99, false};
+    activeCheats[1] = {"Inf. Time 1", 0xC101, 9, false};
+    activeCheats[2] = {"Inf. Time 2", 0xC100, 9, false};
+    activeCheats[3] = {"Superball", 0xFF99, 2, false};
+    activeCheatCount = 4;
+  } else if (t.indexOf("ZELDA") >= 0 || t.indexOf("LINK") >= 0) {
+    activeCheats[0] = {"Inf. Hearts", 0xDB5A, 0x08, false};
+    activeCheats[1] = {"Max Rupees 1", 0xDB5D, 0x99, false};
+    activeCheats[2] = {"Max Rupees 2", 0xDB5E, 0x09, false};
+    activeCheats[3] = {"Inf. Bombs", 0xDB4C, 30, false};
+    activeCheats[4] = {"Inf. Arrows", 0xDB4D, 30, false};
+    activeCheatCount = 5;
+  }
+}
+
+void applyCheats() {
+  for (uint8_t i = 0; i < activeCheatCount; ++i) {
+    if (activeCheats[i].enabled) {
+      uint16_t addr = activeCheats[i].address;
+      uint8_t val = activeCheats[i].value;
+      if (addr >= 0xC000 && addr <= 0xDFFF) {
+        gb.wram[addr - 0xC000] = val;
+      } else if (addr >= 0xFF80 && addr <= 0xFFFE) {
+        gb.hram_io[addr - 0xFF00] = val;
+      } else if (addr >= 0xA000 && addr <= 0xBFFF) {
+        if (cartRam && addr - 0xA000 < cartRamSize) {
+          cartRam[addr - 0xA000] = val;
+        }
+      }
+    }
+  }
+}
+}  // namespace
+
 bool gbIsLoaded() {
   return romLoaded;
 }
@@ -602,6 +662,7 @@ bool gbUnload() {
       return false;
     }
   }
+  activeCheatCount = 0;
   if (romData != nullptr) {
     heap_caps_free(romData);
     romData = nullptr;
@@ -639,6 +700,36 @@ bool gbSaveNow() {
   const bool ramOk = gbSaveCartRam();
   const bool rtcOk = gbSaveRtc();
   return ramOk && rtcOk;
+}
+
+bool gbLoadNow() {
+  if (!romLoaded) return true;
+  bool ramOk = true;
+  if (cartRam && cartRamSize > 0) {
+    ramOk = gbLoadCartRamIfPresent();
+  }
+  bool rtcOk = true;
+  if (cartHasRtc) {
+    rtcOk = gbLoadRtcIfPresent();
+  }
+  return ramOk && rtcOk;
+}
+
+uint8_t gbGetCheatCount() {
+  return activeCheatCount;
+}
+
+GbCheat* gbGetCheat(uint8_t index) {
+  if (index < activeCheatCount) {
+    return &activeCheats[index];
+  }
+  return nullptr;
+}
+
+void gbToggleCheat(uint8_t index) {
+  if (index < activeCheatCount) {
+    activeCheats[index].enabled = !activeCheats[index].enabled;
+  }
 }
 
 void gbSetAudioV2Ready(bool ready) {
@@ -847,18 +938,20 @@ bool gbLoadRom(const char *filename) {
   gb_init_lcd(&gb, lcdDrawLine);
   minigb_apu_audio_init(&apuCtx);
   gb.direct.joypad = 0xFF;  // rien de presse (voir gbSetButton() -- 0=presse, 1=relache)
-  // DESACTIVE le 2026-09-24 pour mesurer le vrai debit plein regime (voir
-  // docs/AZ2_MESURE_EMULATEUR_GB_2026-09-24.md §6) -- meme demarche que
-  // pour Walnut-CGB dans gb_emulator.cpp : avec frame_skip=true, core_avg_us
-  // etait deja tombe a ~45-55% du cout Walnut, mais on veut savoir a quel
-  // point Peanut-GB approche le budget reel 16743us/frame avec un rendu
-  // COMPLET (pas un sur deux). A remettre a `true` si ce prototype devient
-  // un jour la reference (pour l'instant reste sur la branche prototype,
-  // aucun impact production).
-  gb.direct.frame_skip = false;
+  // REACTIVE le 2026-09-25 a la demande explicite de l'utilisateur (priorite
+  // a la vitesse reelle plutot qu'a une mesure A/B equitable, voir
+  // docs/AZ2_MESURE_EMULATEUR_GB_2026-09-24.md §6). Avec frame_skip=true,
+  // __gb_draw_line() (peanut_gb.h) saute entierement le rendu (donc tout le
+  // pipeline scale/copy/flush de gbBlitLine, ~16 000us) une frame sur deux
+  // -- la logique/le tempo du coeur GB restent corrects a chaque frame,
+  // seul l'affichage visuel devient moins fluide (rafraichi une fois sur
+  // deux). Deja mesure sur ce meme materiel (§6) : gain reel important sur
+  // core_avg_us. Aucun impact sur Walnut-CGB (fichier different).
+  gb.direct.frame_skip = true;
 
   gb_get_rom_name(&gb, romTitle);
   romLoaded = true;
+  initCheatsForRom();
 
   Serial.print("GB:LOADED:title=");
   Serial.print(romTitle);
@@ -874,6 +967,10 @@ constexpr uint32_t kGbAutosaveIntervalMs = 30000;
 void gbRunFrame() {
   if (!romLoaded) return;
 
+  applyCheats();
+
+  extern volatile bool gGbDisplayHappenedThisFrame;
+  gGbDisplayHappenedThisFrame = false;
   const uint32_t workStartUs = micros();
   // gb_run_frame() -- pas de variante "dualfetch" dans Peanut-GB (celle-ci
   // est une optimisation propre a Walnut-CGB, voir le commentaire
@@ -882,6 +979,13 @@ void gbRunFrame() {
   const uint32_t coreUs = micros() - workStartUs;
   extern volatile uint32_t gGbDisplayLastUs;
   const uint32_t displayUs = gGbDisplayLastUs;
+  // coreUs englobe deja displayUs quand un rendu a eu lieu cette frame
+  // (gbBlitLine tourne de maniere synchrone DANS gb_run_frame()) -- on
+  // isole ici le CPU+PPU pur pour savoir ce qui reste a optimiser une fois
+  // le rendu mis a part.
+  const uint32_t cpuOnlyUs = (gGbDisplayHappenedThisFrame && coreUs > displayUs)
+                                 ? (coreUs - displayUs)
+                                 : coreUs;
   const uint32_t audioStartUs = micros();
   sendGbAudioPacket();
   const uint32_t audioUs = micros() - audioStartUs;
@@ -891,6 +995,7 @@ void gbRunFrame() {
   ++statsWindowFrames;
   statsWorkAccumUs += workUs;
   statsCoreAccumUs += coreUs;
+  statsCpuOnlyAccumUs += cpuOnlyUs;
   statsDisplayAccumUs += displayUs;
   statsAudioAccumUs += audioUs;
   if (coreUs > statsCoreMaxUs) statsCoreMaxUs = coreUs;
@@ -908,6 +1013,7 @@ void gbRunFrame() {
         (static_cast<uint64_t>(statsWindowFrames) * 10000000ull + windowUs / 2) / windowUs);
     runtimeStats.avgWorkUs = statsWorkAccumUs / statsWindowFrames;
     runtimeStats.avgCoreUs = statsCoreAccumUs / statsWindowFrames;
+    runtimeStats.avgCpuOnlyUs = statsCpuOnlyAccumUs / statsWindowFrames;
     runtimeStats.avgDisplayUs = statsDisplayAccumUs / statsWindowFrames;
     runtimeStats.avgAudioUs = statsAudioAccumUs / statsWindowFrames;
     runtimeStats.maxCoreUs = statsCoreMaxUs;
@@ -933,6 +1039,7 @@ void gbRunFrame() {
     statsWindowStartUs = nowUs;
     statsWorkAccumUs = 0;
     statsCoreAccumUs = 0;
+    statsCpuOnlyAccumUs = 0;
     statsDisplayAccumUs = 0;
     statsAudioAccumUs = 0;
     statsCoreMaxUs = 0;

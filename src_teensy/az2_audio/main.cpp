@@ -185,6 +185,9 @@ AudioAnalyzePeak rackFinalPeakL;
 AudioAnalyzePeak rackFinalPeakR;
 AudioMixer4 mixOutputL;
 AudioMixer4 mixOutputR;
+// Diagnostic temporaire : coupe uniquement le retour audio du rack externe
+// pour isoler le bip parasite sans dessouder la liaison I2S.
+constexpr bool kMuteExternalRackAudio = false;
 #endif
 
 // Son de l'emulateur Game Boy (ESP32 -> Teensy, voir AZ2_Protocol.h
@@ -590,6 +593,7 @@ void applyGroupGainNow(uint8_t track) {
 // (AZ2_Protocol.h) -- l'index doit correspondre, les deux fichiers
 // DOIVENT rester synchronises a la main.
 #include "az2_dexed_bank_data.h"
+#include "az2_epiano_bank_data.h"
 
 // Les 43 formes UTILISABLES de Synth_Braids (voir settings.h:
 // MacroOscillatorShape -- WAVETABLES/QUESTION_MARK/YOUR_ALGO restent
@@ -640,6 +644,27 @@ const float kDrumSecondMixValues[az2::kDrumPatchCount] = {0.0f, 0.8f, 0.15f, 0.9
 // actif de la piste (trackEngine[track]). Partagee avec liveVoice (voir
 // setup()) qui n'a pas de "piste" mais profite des memes patchs nommes.
 void relayLine(const String &line);  // definie plus bas, voir son commentaire
+
+// [2026-09-26] 105 patches (5 d'origine mdaEPiano + 100 variations
+// generees, voir az2_epiano_bank_data.h) -- setProgram() du moteur vendored
+// ne connait que ses 5 presets internes, donc on applique directement les
+// 12 parametres continus via les setters dedies, meme principe que
+// loadDexedPatch() ci-dessous pour DEXED.
+void loadEPianoPatch(AudioSynthEPiano &engine, uint8_t patch) {
+  const float *p = kEPianoFullBank[patch % (sizeof(kEPianoFullBank) / sizeof(kEPianoFullBank[0]))].p;
+  engine.setDecay(p[0]);
+  engine.setRelease(p[1]);
+  engine.setHardness(p[2]);
+  engine.setTreble(p[3]);
+  engine.setPanTremolo(p[4]);
+  engine.setPanLFO(p[5]);
+  engine.setVelocitySense(p[6]);
+  engine.setStereo(p[7]);
+  engine.setTune(p[8]);
+  engine.setDetune(p[9]);
+  engine.setOverdrive(p[10]);
+  engine.setVolume(p[11]);
+}
 
 void loadDexedPatch(AudioSynthDexed &engine, uint8_t patch) {
   uint8_t packed[128];
@@ -709,6 +734,8 @@ bool readWavPcm16Mono(const char *path, int16_t *dst, uint32_t capacity, const c
   if (!f) {
     Serial.print(errPrefix);
     Serial.println(":OPEN_ERROR");
+    Serial1.print(errPrefix);
+    Serial1.println(":OPEN_ERROR");
     return false;
   }
   uint8_t riffHeader[12];
@@ -717,6 +744,8 @@ bool readWavPcm16Mono(const char *path, int16_t *dst, uint32_t capacity, const c
     f.close();
     Serial.print(errPrefix);
     Serial.println(":WAV_UNSUPPORTED");
+    Serial1.print(errPrefix);
+    Serial1.println(":WAV_UNSUPPORTED");
     return false;
   }
 
@@ -748,6 +777,8 @@ bool readWavPcm16Mono(const char *path, int16_t *dst, uint32_t capacity, const c
         f.close();
         Serial.print(errPrefix);
         Serial.println(":WAV_UNSUPPORTED");
+        Serial1.print(errPrefix);
+        Serial1.println(":WAV_UNSUPPORTED");
         return false;
       }
       formatTag = wavLe16(fmtBuf);
@@ -771,6 +802,8 @@ bool readWavPcm16Mono(const char *path, int16_t *dst, uint32_t capacity, const c
     f.close();
     Serial.print(errPrefix);
     Serial.println(":WAV_UNSUPPORTED");
+    Serial1.print(errPrefix);
+    Serial1.println(":WAV_UNSUPPORTED");
     return false;
   }
 
@@ -780,6 +813,8 @@ bool readWavPcm16Mono(const char *path, int16_t *dst, uint32_t capacity, const c
     f.close();
     Serial.print(errPrefix);
     Serial.println(":WAV_SIZE_ERROR");
+    Serial1.print(errPrefix);
+    Serial1.println(":WAV_SIZE_ERROR");
     return false;
   }
 
@@ -793,6 +828,8 @@ bool readWavPcm16Mono(const char *path, int16_t *dst, uint32_t capacity, const c
       f.close();
       Serial.print(errPrefix);
       Serial.println(":READ_ERROR");
+      Serial1.print(errPrefix);
+      Serial1.println(":READ_ERROR");
       return false;
     }
     offset += got;
@@ -1004,6 +1041,7 @@ void finishGranularSampleTransfer(const char *error = nullptr) {
 bool startWavToGranular(const char *path) {
   if (strncmp(path, "/samples/", 9) != 0 || strstr(path, "..") != nullptr) {
     Serial.println("GRANULAR_SAMPLE:ERROR:PATH");
+    Serial1.println("GRANULAR_SAMPLE:ERROR:PATH");
     return false;
   }
   if (rackSampleTransfer.phase != RackSampleTransferPhase::Idle) {
@@ -1013,12 +1051,14 @@ bool startWavToGranular(const char *path) {
   f = SD.open(path);
   if (!f) {
     Serial.println("GRANULAR_SAMPLE:ERROR:OPEN");
+    Serial1.println("GRANULAR_SAMPLE:ERROR:OPEN");
     return false;
   }
   uint8_t riff[12];
   if (f.read(riff, sizeof(riff)) != sizeof(riff) || memcmp(riff, "RIFF", 4) || memcmp(riff + 8, "WAVE", 4)) {
     f.close();
     Serial.println("GRANULAR_SAMPLE:ERROR:WAV");
+    Serial1.println("GRANULAR_SAMPLE:ERROR:WAV");
     return false;
   }
   bool haveFmt = false, haveData = false;
@@ -1051,6 +1091,7 @@ bool startWavToGranular(const char *path) {
       dataPosition + dataBytes > f.size()) {
     f.close();
     Serial.println("GRANULAR_SAMPLE:ERROR:FORMAT_OR_SIZE");
+    Serial1.println("GRANULAR_SAMPLE:ERROR:FORMAT_OR_SIZE");
     return false;
   }
   snprintf(rackSampleTransfer.path, sizeof(rackSampleTransfer.path), "%s", path);
@@ -1066,6 +1107,8 @@ bool startWavToGranular(const char *path) {
   rackSampleTransfer.phase = RackSampleTransferPhase::CrcScan;
   Serial.printf("GRANULAR_SAMPLE:QUEUED:path=%s:bytes=%lu:rate=%lu\n", path,
                 static_cast<unsigned long>(dataBytes), static_cast<unsigned long>(rate));
+  Serial1.printf("GRANULAR_SAMPLE:QUEUED:path=%s:bytes=%lu:rate=%lu\n", path,
+                 static_cast<unsigned long>(dataBytes), static_cast<unsigned long>(rate));
   return true;
 }
 
@@ -1264,7 +1307,7 @@ void applyTrackPatch(uint8_t track) {
       announceDexedParams(track);
       break;
     case az2::kEngineEPiano:
-      trackEPianoEngine[track].setProgram(patch % az2::kEPianoPatchCount);
+      loadEPianoPatch(trackEPianoEngine[track], patch);
       break;
     case az2::kEngineBraids:
       trackBraidsEngine[track].set_braids_shape(kBraidsShapeValues[patch % az2::kBraidsPatchCount]);
@@ -2517,8 +2560,9 @@ void applyMasterMix() {
   // de tête mais suit le même volume général.
   mixOutputL.gain(0, 1.0f);
   mixOutputR.gain(0, 1.0f);
-  mixOutputL.gain(1, 0.6f * masterVolume);
-  mixOutputR.gain(1, 0.6f * masterVolume);
+  const float rackGain = kMuteExternalRackAudio ? 0.0f : 0.6f * masterVolume;
+  mixOutputL.gain(1, rackGain);
+  mixOutputR.gain(1, rackGain);
   mixOutputL.gain(2, 0.0f);
   mixOutputL.gain(3, 0.0f);
   mixOutputR.gain(2, 0.0f);
@@ -4693,15 +4737,16 @@ void setup() {
   static uint8_t serial1RxBuf[2048];
   Serial1.addMemoryForRead(serial1RxBuf, sizeof(serial1RxBuf));
   Serial1.begin(az2::kControlBaud);
-  // MIDI DIN IN desactive le 2026-09-23 : le circuit 6N138 n'est pas encore
-  // cable, donc RX8 (pin 34) flotte. Un pin flottant ouvert par Serial8.begin()
-  // peut capter du bruit electrique lu comme un flux d'octets parasites --
-  // combine au "while (Serial8.available())" sans limite d'updateMidiDin(),
-  // ca a probablement monopolise loop() et retarde la lecture des boutons/
-  // croix (signalement "faut presser 10 fois", 2026-09-23). A reactiver
-  // seulement une fois le 6N138 reellement cable.
-  // Serial8.begin(31250);
+  // MIDI DIN IN totalement neutralise tant que le 6N138 n'est pas soude.
+  // Le RX8 (pin 34) est tire au bas pour qu'aucun bruit ne puisse devenir
+  // une commande MIDI parasite. Reactiver Serial8 et updateMidiDin()
+  // uniquement apres montage reel du circuit MIDI.
+  pinMode(34, INPUT_PULLDOWN);
 #ifdef AZ2_EXTERNAL_RACK
+  // RX7 (pin 28) reste physiquement connecte au rack, mais peut flotter
+  // quand le S3 est eteint/non branche. Le pull-down interne evite que le
+  // bruit de la liaison soit interprete comme des octets de controle.
+  pinMode(28, INPUT_PULLDOWN);
   Serial7.begin(115200);  // pins 28 RX7 / 29 TX7 vers le S3, contrôle seulement
 #endif
   // Graine pour random() (PROB:, voir advanceTick()) -- micros() au boot

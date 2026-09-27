@@ -519,9 +519,34 @@ constexpr const char *kDexedPatchNames[kDexedPatchCount] = {
     "DESCENT", "OCTAVE WAR", "..GOTCHA..", "ST.HELENS",
 };
 
-constexpr uint8_t kEPianoPatchCount = 5;
+// [2026-09-26] 105 (etait 5) : les 5 presets d'origine mdaEPiano restent en
+// tete (rien de plus n'existe reellement en amont pour ce moteur, verifie --
+// tous les ports de mda-epiano, LV2/JSFX/autres, n'ont jamais que ces 5-la),
+// suivis de 100 variations generees par famille (voir
+// az2_epiano_bank_data.h cote Teensy, GARDER LE MEME ORDRE ici).
+constexpr uint8_t kEPianoPatchCount = 105;
 constexpr const char *kEPianoPatchNames[kEPianoPatchCount] = {
     "Default", "Bright", "Mellow", "Autopan", "Tremolo",
+    "GRAND 01", "GRAND 02", "GRAND 03", "GRAND 04", "GRAND 05",
+    "GRAND 06", "GRAND 07", "GRAND 08", "GRAND 09", "GRAND 10",
+    "BRIGHT 01", "BRIGHT 02", "BRIGHT 03", "BRIGHT 04", "BRIGHT 05",
+    "BRIGHT 06", "BRIGHT 07", "BRIGHT 08", "BRIGHT 09", "BRIGHT 10",
+    "MELLOW 01", "MELLOW 02", "MELLOW 03", "MELLOW 04", "MELLOW 05",
+    "MELLOW 06", "MELLOW 07", "MELLOW 08", "MELLOW 09", "MELLOW 10",
+    "SUITCASE 01", "SUITCASE 02", "SUITCASE 03", "SUITCASE 04", "SUITCASE 05",
+    "SUITCASE 06", "SUITCASE 07", "SUITCASE 08", "SUITCASE 09", "SUITCASE 10",
+    "TREMOLO 01", "TREMOLO 02", "TREMOLO 03", "TREMOLO 04", "TREMOLO 05",
+    "TREMOLO 06", "TREMOLO 07", "TREMOLO 08", "TREMOLO 09", "TREMOLO 10",
+    "CHORUS 01", "CHORUS 02", "CHORUS 03", "CHORUS 04", "CHORUS 05",
+    "CHORUS 06", "CHORUS 07", "CHORUS 08", "CHORUS 09", "CHORUS 10",
+    "DRIVEN 01", "DRIVEN 02", "DRIVEN 03", "DRIVEN 04", "DRIVEN 05",
+    "DRIVEN 06", "DRIVEN 07", "DRIVEN 08", "DRIVEN 09", "DRIVEN 10",
+    "BELL 01", "BELL 02", "BELL 03", "BELL 04", "BELL 05",
+    "BELL 06", "BELL 07", "BELL 08", "BELL 09", "BELL 10",
+    "MUTED 01", "MUTED 02", "MUTED 03", "MUTED 04", "MUTED 05",
+    "MUTED 06", "MUTED 07", "MUTED 08", "MUTED 09", "MUTED 10",
+    "PAD 01", "PAD 02", "PAD 03", "PAD 04", "PAD 05",
+    "PAD 06", "PAD 07", "PAD 08", "PAD 09", "PAD 10",
 };
 
 // 43 depuis le 2026-09-18 ("recuperer un max de patch pour tout les

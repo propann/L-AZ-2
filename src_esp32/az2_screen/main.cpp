@@ -138,6 +138,10 @@ uint16_t dimColor(uint16_t c, uint8_t shift) {
   return static_cast<uint16_t>((r << 11) | (g << 5) | b);
 }
 constexpr uint16_t kFaint = RGB565(90, 90, 110);
+// [2026-09-26] Fond des cadres selectionnes du menu principal (voir
+// drawCategoryCard()) -- gris fonce neutre, plus clair que le noir mais
+// jamais aussi vif qu'un accent de moteur.
+constexpr uint16_t kPanel2 = RGB565(28, 32, 40);
 
 // ---------------------------------------------------------------------
 // Tactile FT6336U
@@ -280,7 +284,7 @@ bool inBox(int16_t x, int16_t y, int16_t bx, int16_t by, int16_t bw, int16_t bh)
 // ---------------------------------------------------------------------
 // Etat partage entre les pages / le lien Teensy
 // ---------------------------------------------------------------------
-enum class Screen : uint8_t { Menu, Controls, Audio, Sampler, Sequencer, Engines, Retro, Config, Links, About, Patch, Song, Project, Mixer };
+enum class Screen : uint8_t { Menu, Controls, Audio, Sampler, Sequencer, Engines, Retro, Config, Links, About, Patch, Song, Project, Mixer, StepSeq };
 Screen currentScreen = Screen::Menu;
 // "Retour" (2026-09-19, "il faut pas que ca revienne aux menu general
 // il faut que ca revienne d'un etage seulement") -- UN SEUL niveau
@@ -392,7 +396,7 @@ struct CategoryInfo {
 
 constexpr CategoryInfo kCategories[kMenuCatCount] = {
     {"AZ-TRACKER", "sequenceur, moteurs, audio"},
-    {"JEUX", "emulateur Game Boy / GBC"},
+    {"JEUX", "emulateur Game Boy"},
     {"CONFIG", "reglages, croix/boutons"},
     {"DOC", "journal serie, a propos"},
 };
@@ -406,13 +410,19 @@ struct MenuItem {
 
 constexpr MenuItem kMenuItems[] = {
     {"SEQUENCEUR", "programmer les 16 pas", Screen::Sequencer, MenuCat::Musique},
+    // [2026-09-26] Demande : "un sequenceur piste en plus du sequenceur
+    // tracker, plus traditionnel comme le OP1" -- meme donnees
+    // (seqStepOn/seqStepNote/seqStepProb), vue alternative en gros blocs
+    // par piste au lieu de la grille dense multi-colonnes. Voir
+    // drawStepSeqPage().
+    {"SEQ. PAS", "vue step, style OP-1", Screen::StepSeq, MenuCat::Musique},
     {"MOTEURS", "moteur + patch par piste", Screen::Engines, MenuCat::Musique},
     {"PATCH", "filtre + ADSR + forme d'onde", Screen::Patch, MenuCat::Musique},
     {"MIXER", "volume de toutes les pistes", Screen::Mixer, MenuCat::Musique},
     {"SONG", "chaine les patterns", Screen::Song, MenuCat::Musique},
     {"PROJETS", "liste, charger et sauver", Screen::Project, MenuCat::Musique},
     {"AUDIO", "jouer le Teensy depuis l'ecran", Screen::Audio, MenuCat::Musique},
-    {"JEUX", "Game Boy / GBC (ROM sur carte SD)", Screen::Retro, MenuCat::Jeux},
+    {"JEUX", "Game Boy (ROM sur carte SD)", Screen::Retro, MenuCat::Jeux},
     {"CONFIGURATION", "ecran de veille, reglages", Screen::Config, MenuCat::Config},
     {"CONTROLES", "croix + boutons + potards (Teensy)", Screen::Controls, MenuCat::Config},
     {"LIENS SERIE", "journal ESP32 / Teensy", Screen::Links, MenuCat::Doc},
@@ -449,31 +459,65 @@ constexpr int16_t kMenuTop = 130;
 constexpr int16_t kMenuRowH = 34;
 constexpr int16_t kMenuWidth = kScreenSize - 2 * kMenuLeft;
 
-// Grille 2x2 des 4 cartes de categorie.
-constexpr int16_t kCatTop = 110;
+// [2026-09-26] Grille 2x2 gardee (des lignes pleine largeur cassaient la
+// navigation croix GAUCHE/DROITE entre colonnes, essaye puis annule) --
+// seul l'en-tete "AZ-2 / CHOISIS UNE SECTION" reste retire (espace juge
+// inutile, voir drawMenu()), la place gagnee sert a des cadres plus
+// grands qu'avant (kCatTop remonte d'autant).
+constexpr int16_t kCatTop = 24;
 constexpr int16_t kCatGap = 16;
 constexpr int16_t kCatW = (kScreenSize - 2 * kMargin - kCatGap) / 2;
-constexpr int16_t kCatH = (kStatusY - kCatTop - kCatGap - 24) / 2;
+constexpr int16_t kCatH = (kStatusY - kCatTop - kCatGap) / 2;
 
 void catRect(uint8_t index, int16_t &x, int16_t &y) {
   x = static_cast<int16_t>(kMargin + (index % 2) * (kCatW + kCatGap));
   y = static_cast<int16_t>(kCatTop + (index / 2) * (kCatH + kCatGap));
 }
 
+// [2026-09-26] Trame/matrice discrete en fond de la page menu (avant les
+// cadres) -- lignes fines espacees de 24px, tres attenuees. Purement
+// decoratif, dessine une seule fois par entree sur la page.
+void drawMenuMatrixBackdrop() {
+  constexpr int16_t kGridStep = 24;
+  constexpr uint16_t kGridColor = RGB565(20, 22, 28);
+  for (int16_t gx = 0; gx < kScreenSize; gx += kGridStep) {
+    gfx->drawFastVLine(gx, 0, kStatusY, kGridColor);
+  }
+  for (int16_t gy = 0; gy < kStatusY; gy += kGridStep) {
+    gfx->drawFastHLine(0, gy, kScreenSize, kGridColor);
+  }
+}
+
 void drawCategoryCard(uint8_t index) {
-  int16_t x, y;
-  catRect(index, x, y);
+  int16_t cellX, cellY;
+  catRect(index, cellX, cellY);
+  // [2026-09-26] Cadre retreci a l'interieur de sa cellule (demande : "un
+  // peu plus petit"), bordure epaissie a 3px (3 rects imbriques -- GFX ne
+  // fait que des contours 1px nativement).
+  constexpr int16_t kInset = 10;
+  constexpr int16_t kBorderThickness = 3;
+  const int16_t x = static_cast<int16_t>(cellX + kInset);
+  const int16_t y = static_cast<int16_t>(cellY + kInset);
+  const int16_t w = static_cast<int16_t>(kCatW - 2 * kInset);
+  const int16_t h = static_cast<int16_t>(kCatH - 2 * kInset);
   const uint16_t accent = kPalette[index % kPaletteCount];
   const bool selected = (index == menuSelected);
-  gfx->fillRect(x, y, kCatW, kCatH, selected ? accent : RGB565_BLACK);
-  gfx->drawRect(x, y, kCatW, kCatH, accent);
-  gfx->setTextSize(3);
-  gfx->setTextColor(selected ? RGB565_BLACK : RGB565_WHITE);
-  gfx->setCursor(static_cast<int16_t>(x + 14), static_cast<int16_t>(y + kCatH / 2 - 24));
+  gfx->fillRect(x, y, w, h, selected ? kPanel2 : RGB565_BLACK);
+  for (int16_t b = 0; b < kBorderThickness; ++b) {
+    gfx->drawRect(static_cast<int16_t>(x + b), static_cast<int16_t>(y + b),
+                  static_cast<int16_t>(w - 2 * b), static_cast<int16_t>(h - 2 * b),
+                  selected ? accent : kFaint);
+  }
+  // Lisere de couleur a gauche : identifie la categorie meme non
+  // selectionnee, sans avoir besoin d'un fond plein.
+  gfx->fillRect(x, y, kBorderThickness + 1, h, accent);
+  gfx->setTextSize(2);
+  gfx->setTextColor(selected ? accent : RGB565_WHITE);
+  gfx->setCursor(static_cast<int16_t>(x + 16), static_cast<int16_t>(y + h / 2 - 18));
   gfx->print(kCategories[index].label);
   gfx->setTextSize(1);
-  gfx->setTextColor(selected ? RGB565_BLACK : kDim);
-  gfx->setCursor(static_cast<int16_t>(x + 14), static_cast<int16_t>(y + kCatH / 2 + 6));
+  gfx->setTextColor(kDim);
+  gfx->setCursor(static_cast<int16_t>(x + 16), static_cast<int16_t>(y + h / 2 + 8));
   gfx->print(kCategories[index].hint);
 }
 
@@ -495,16 +539,11 @@ void drawMenuSubRow(uint8_t rowIndex, uint8_t itemIndex) {
 
 void drawMenu() {
   if (menuCategory < 0) {
+    // [2026-09-26] En-tete "AZ-2 / CHOISIS UNE SECTION" retire (demande
+    // utilisateur, "rien a faire la") -- l'espace sert desormais a des
+    // cadres de categorie plus grands (voir kCatTop/kCatH ci-dessous).
     gfx->fillScreen(RGB565_BLACK);
-    gfx->setTextColor(RGB565_WHITE);
-    gfx->setTextSize(3);
-    gfx->setCursor(kMargin, 48);
-    gfx->print("AZ-2");
-    gfx->setTextSize(1);
-    gfx->setTextColor(kDim);
-    gfx->setCursor(static_cast<int16_t>(kMargin + 90), 60);
-    gfx->print("CHOISIS UNE SECTION");
-    gfx->drawFastHLine(kMargin, 96, kScreenSize - 2 * kMargin, kFaint);
+    drawMenuMatrixBackdrop();
     for (uint8_t i = 0; i < kMenuCatCount; ++i) {
       drawCategoryCard(i);
     }
@@ -838,6 +877,12 @@ char samplerUiStatus[40] = {};
 // pads inchange.
 bool samplerTargetIsTrack = false;
 int8_t samplerTargetTrack = -1;
+// [2026-09-25] Vrai quand le navigateur SD (meme ecran, meme liste) a ete
+// ouvert depuis la ligne SAMPLE du moteur GRANULAR plutot que pour le
+// SAMPLER -- change juste le message envoye au choix d'un fichier
+// (GRANULAR_SAMPLE: au lieu de TRACKSAMPLE:), voir samplerAssignSelected().
+// N'a de sens que si samplerTargetIsTrack est aussi vrai.
+bool samplerTargetIsGranular = false;
 void saveSamplerKit();
 void loadSamplerKit();
 extern bool screensaverActive;
@@ -872,6 +917,7 @@ void samplerGoUp() {
     // ecran n'a jamais ete ouvert depuis le menu PAD dans ce cas.
     if (samplerTargetIsTrack) {
       samplerTargetIsTrack = false;
+      samplerTargetIsGranular = false;
       goTo(Screen::Patch);
     } else {
       goTo(Screen::Audio);
@@ -893,7 +939,9 @@ void drawSamplerPage() {
   gfx->setTextSize(1);
   gfx->setTextColor(kDim);
   gfx->setCursor(20, 72);
-  gfx->print(samplerTargetIsTrack ? "PISTE  choisir un WAV pour son SAMPLER" : "PAD   toucher pour jouer / choisir");
+  gfx->print(samplerTargetIsGranular ? "GRANULAR  choisir un WAV"
+             : samplerTargetIsTrack  ? "PISTE  choisir un WAV pour son SAMPLER"
+                                      : "PAD   toucher pour jouer / choisir");
   gfx->setCursor(242, 72);
   gfx->print(String(samplerFolder).substring(0, 35));
   if (samplerTargetIsTrack) {
@@ -968,7 +1016,13 @@ void samplerAssignSelected() {
   if (samplerSelectedRow >= samplerVisible || samplerIsDir[samplerSelectedRow] ||
       !samplerFiles[samplerSelectedRow][0]) return;
   char msg[96];
-  if (samplerTargetIsTrack) {
+  if (samplerTargetIsTrack && samplerTargetIsGranular) {
+    // [2026-09-25] Meme liste/navigateur, destination GRANULAR_SAMPLE:
+    // (voir startWavToGranular() cote Teensy) au lieu de TRACKSAMPLE:.
+    snprintf(msg, sizeof(msg), "GRANULAR_SAMPLE:%s", samplerFiles[samplerSelectedRow]);
+    sendToTeensy(msg);
+    snprintf(samplerUiStatus, sizeof(samplerUiStatus), "Chargement granular...");
+  } else if (samplerTargetIsTrack) {
     // Fusion PATCH <-> navigateur SD (2026-09-23) : meme fichier, meme
     // liste, mais destination = TRACKSAMPLE:<piste> au lieu de
     // PADSAMPLE:<pad> -- voir loadWavIntoTrackSampler() cote Teensy.
@@ -991,6 +1045,23 @@ void samplerAssignSelected() {
 void goTo(Screen s);
 void openSamplerForTrack(uint8_t track) {
   samplerTargetIsTrack = true;
+  samplerTargetIsGranular = false;
+  samplerTargetTrack = static_cast<int8_t>(track);
+  snprintf(samplerFolder, sizeof(samplerFolder), "/samples");
+  samplerOffset = 0;
+  samplerSelectedRow = 0;
+  samplerUiStatus[0] = '\0';
+  goTo(Screen::Sampler);
+}
+
+// [2026-09-25] Meme navigateur, cible GRANULAR (voir samplerTargetIsGranular)
+// -- demande utilisateur : pouvoir importer un WAV present sur la carte SD
+// du Teensy pour le moteur granulaire, jusqu'ici uniquement charge au
+// demarrage (kGranularStartupSample, cote Teensy) sans aucun moyen d'en
+// choisir un autre depuis l'ecran.
+void openSamplerForGranular(uint8_t track) {
+  samplerTargetIsTrack = true;
+  samplerTargetIsGranular = true;
   samplerTargetTrack = static_cast<int8_t>(track);
   snprintf(samplerFolder, sizeof(samplerFolder), "/samples");
   samplerOffset = 0;
@@ -1564,6 +1635,7 @@ bool hitTestPatternHeader(int16_t x, int16_t y) {
 }
 
 void drawSequencerPage();  // definie plus bas -- seul appelant de switchToPattern()
+void drawStepSeqPage();  // definie plus bas, voir son commentaire (apres patchAccent())
 
 void switchToPattern(uint8_t p) {
   currentPattern = static_cast<uint8_t>(p % kPatternCount);
@@ -1625,6 +1697,142 @@ uint16_t engineAccent(uint8_t engine) {
 }
 uint16_t patchAccent(uint8_t track) {
   return engineAccent(trackEngine[track]);
+}
+
+// ---------------------------------------------------------------------
+// Page SEQ. PAS -- vue alternative du sequenceur, style step-sequencer
+// "traditionnel" (OP-1 : gros blocs par piste, un ecran = une mesure de
+// 16 pas) demandee en plus du tracker dense existant (drawSeqDetailPage),
+// PAS a sa place. Memes donnees exactement (seqStepOn/seqStepNote/
+// seqStepProb, currentPattern, selectedSeqTrack) -- change seulement la
+// facon de les montrer/editer. Un seul curseur de pas partage avec le
+// tracker (selectedSeqStep, voir seqVisibleMeasure) : passer d'une vue a
+// l'autre garde la position.
+// ---------------------------------------------------------------------
+constexpr int16_t kStepSeqTabH = 22;
+constexpr int16_t kStepSeqCols = 8;
+constexpr int16_t kStepSeqRows = 4;
+constexpr int16_t kStepSeqGap = 6;
+// [2026-09-26] 32 pas visibles d'un coup (demande, "on peut afficher 32")
+// au lieu de 16 -- fenetre INDEPENDANTE de seqVisibleMeasure (qui reste
+// geree par le tracker classique pour ses propres besoins d'affichage) :
+// cette page calcule sa propre fenetre de 32 directement a partir de
+// selectedSeqStep, sans toucher a l'etat du tracker.
+constexpr uint8_t kStepSeqWindow = kStepSeqCols * kStepSeqRows;
+
+constexpr int16_t kStepSeqTabsY = 84;
+constexpr int16_t kStepSeqGridTop = 134;
+constexpr int16_t kStepSeqCellH = 46;
+
+uint8_t stepSeqFirstStep() {
+  return static_cast<uint8_t>((selectedSeqStep / kStepSeqWindow) * kStepSeqWindow);
+}
+
+void drawStepSeqPage() {
+  drawSubHeader("SEQ. PAS", kEngineAccent[trackEngine[selectedSeqTrack]]);
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(kMargin, 70);
+  gfx->printf("PATTERN %02u", currentPattern + 1);
+
+  // Onglets de piste (8), lisere colore par moteur assigne, piste
+  // courante plus epaisse -- tactiles, voir handleTouchDown().
+  const int16_t tabW = (kScreenSize - 2 * kMargin - (kSeqTrackCount - 1) * 4) / kSeqTrackCount;
+  for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
+    const int16_t tx = static_cast<int16_t>(kMargin + t * (tabW + 4));
+    const uint16_t accent = patchAccent(t);
+    const bool cur = (t == selectedSeqTrack);
+    gfx->drawRect(tx, kStepSeqTabsY, tabW, kStepSeqTabH, accent);
+    if (cur) {
+      gfx->drawRect(static_cast<int16_t>(tx + 1), static_cast<int16_t>(kStepSeqTabsY + 1),
+                    static_cast<int16_t>(tabW - 2), static_cast<int16_t>(kStepSeqTabH - 2), accent);
+    }
+  }
+
+  const uint8_t track = static_cast<uint8_t>(selectedSeqTrack);
+  const uint8_t firstStep = stepSeqFirstStep();
+  const uint8_t localStep = static_cast<uint8_t>(selectedSeqStep - firstStep);
+  const uint8_t activeSteps = static_cast<uint8_t>(patternMeasures[currentPattern] * kSeqStepsPerMeasure);
+  const uint16_t accent = patchAccent(track);
+
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(kMargin, 116);
+  gfx->printf("%u %s   PAS %02u", track + 1, az2::engineName(trackEngine[track]), selectedSeqStep + 1);
+
+  // Grille 4x8 (32 pas) -- les pas au-dela de la longueur reelle du
+  // pattern (activeSteps) restent visibles mais attenues/non tactiles,
+  // pour que la fenetre garde toujours 32 cases meme sur un pattern d'1
+  // seule mesure.
+  const int16_t gridW = kScreenSize - 2 * kMargin;
+  const int16_t cellW = (gridW - (kStepSeqCols - 1) * kStepSeqGap) / kStepSeqCols;
+  for (uint8_t i = 0; i < kStepSeqWindow; ++i) {
+    const uint8_t row = i / kStepSeqCols;
+    const uint8_t col = i % kStepSeqCols;
+    const int16_t bx = static_cast<int16_t>(kMargin + col * (cellW + kStepSeqGap));
+    const int16_t by = static_cast<int16_t>(kStepSeqGridTop + row * (kStepSeqCellH + kStepSeqGap));
+    const uint8_t globalStep = static_cast<uint8_t>(firstStep + i);
+    const bool beyondPattern = globalStep >= activeSteps;
+    const bool on = !beyondPattern && seqStepOn[currentPattern][track][globalStep];
+    const bool cur = (i == localStep);
+    gfx->fillRect(bx, by, cellW, kStepSeqCellH, on ? accent : RGB565_BLACK);
+    gfx->drawRect(bx, by, cellW, kStepSeqCellH, on ? accent : (beyondPattern ? RGB565(30, 30, 36) : kFaint));
+    if (cur) {
+      gfx->drawRect(static_cast<int16_t>(bx - 2), static_cast<int16_t>(by - 2),
+                    static_cast<int16_t>(cellW + 4), static_cast<int16_t>(kStepSeqCellH + 4), RGB565_WHITE);
+    }
+    gfx->setTextSize(1);
+    gfx->setTextColor(on ? RGB565_BLACK : (beyondPattern ? RGB565(40, 40, 48) : kFaint));
+    gfx->setCursor(static_cast<int16_t>(bx + 3), static_cast<int16_t>(by + kStepSeqCellH - 11));
+    gfx->print(globalStep + 1);
+  }
+
+  // Panneau d'info du pas au curseur : note + probabilite (pas de
+  // vitesse/velocite par pas dans le modele de donnees actuel).
+  const int16_t infoY = static_cast<int16_t>(kStepSeqGridTop + kStepSeqRows * (kStepSeqCellH + kStepSeqGap) + 4);
+  gfx->drawRect(kMargin, infoY, gridW, 44, kFaint);
+  char noteBuf[8];
+  formatNoteName(seqStepNote[currentPattern][track][selectedSeqStep], noteBuf, sizeof(noteBuf));
+  gfx->setTextSize(2);
+  gfx->setTextColor(accent);
+  gfx->setCursor(static_cast<int16_t>(kMargin + 12), static_cast<int16_t>(infoY + 12));
+  gfx->print(noteBuf);
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(static_cast<int16_t>(kMargin + 90), static_cast<int16_t>(infoY + 10));
+  gfx->printf("PROB %u%%", seqStepProb[currentPattern][track][selectedSeqStep]);
+  gfx->setCursor(static_cast<int16_t>(kMargin + 90), static_cast<int16_t>(infoY + 26));
+  gfx->print(seqPlaying ? "PLAY" : "STOP");
+
+  gfx->setTextColor(kFaint);
+  gfx->setCursor(kMargin, static_cast<int16_t>(kStatusY - 14));
+  gfx->print("Toucher : piste/pas -- ENC2 piste, ENC3 note, C play/stop");
+}
+
+// Tactile : ligne des onglets de piste, ou l'une des 32 cases de la
+// grille (voir drawStepSeqPage() pour la geometrie identique -- meme
+// constantes reutilisees pour rester synchronisees).
+int8_t hitTestStepSeqTab(int16_t x, int16_t y) {
+  if (y < kStepSeqTabsY || y >= kStepSeqTabsY + kStepSeqTabH) return -1;
+  const int16_t tabW = (kScreenSize - 2 * kMargin - (kSeqTrackCount - 1) * 4) / kSeqTrackCount;
+  for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
+    const int16_t tx = static_cast<int16_t>(kMargin + t * (tabW + 4));
+    if (x >= tx && x < tx + tabW) return static_cast<int8_t>(t);
+  }
+  return -1;
+}
+
+int8_t hitTestStepSeqCell(int16_t x, int16_t y) {
+  const int16_t gridW = kScreenSize - 2 * kMargin;
+  const int16_t cellW = (gridW - (kStepSeqCols - 1) * kStepSeqGap) / kStepSeqCols;
+  if (y < kStepSeqGridTop || x < kMargin) return -1;
+  const int16_t relY = static_cast<int16_t>(y - kStepSeqGridTop);
+  const int16_t relX = static_cast<int16_t>(x - kMargin);
+  const int16_t row = relY / (kStepSeqCellH + kStepSeqGap);
+  const int16_t col = relX / (cellW + kStepSeqGap);
+  if (row < 0 || row >= kStepSeqRows || col < 0 || col >= kStepSeqCols) return -1;
+  if (relY % (kStepSeqCellH + kStepSeqGap) >= kStepSeqCellH) return -1;  // dans le gap vertical
+  if (relX % (cellW + kStepSeqGap) >= cellW) return -1;  // dans le gap horizontal
+  return static_cast<int8_t>(row * kStepSeqCols + col);
 }
 
 // Annonce par announceHello() cote Teensy (RACK_CAP:0/1, audit 2026-09-22) :
@@ -2163,7 +2371,10 @@ uint8_t patchExtraCount(uint8_t track) {
     case az2::kEngineEPiano: return 12;  // les 12 parametres continus mdaEPiano
     case az2::kEngineBraids: return 2;   // color, timbre (shape reste sur la page MOTEURS)
     case az2::kEngineSampler: return 2;  // MODE (one-shot/gate) + SAMPLE (2026-09-23, choix libre d'un WAV)
-    case az2::kEngineGranular: return az2::kRackGranularParamCount - 6;
+    // +1 (2026-09-25) : derniere ligne = SAMPLE, meme principe que Sampler
+    // ci-dessus -- ouvre le navigateur SD au lieu d'etre un parametre RACK_PARAM
+    // numerique (voir sendPatchExtra()). SPECTRAL non concerne pour l'instant.
+    case az2::kEngineGranular: return az2::kRackGranularParamCount - 6 + 1;
     case az2::kEngineSpectral: return az2::kRackSpectralParamCount - 6;
     default: return 0;
   }
@@ -2332,6 +2543,8 @@ const char *patchExtraLabel(uint8_t track, uint8_t extraIdx) {
     case az2::kEngineBraids: return kBraidsExtraLabel[extraIdx];
     case az2::kEngineSampler: return extraIdx == 0 ? "MODE" : "SAMPLE";
     case az2::kEngineGranular:
+      if (extraIdx == az2::kRackGranularParamCount - 6) return "SAMPLE";
+      return az2::rackParamName(rackEngineForTrack(track), extraIdx + 6);
     case az2::kEngineSpectral:
       return az2::rackParamName(rackEngineForTrack(track), extraIdx + 6);
     default: return "?";
@@ -2348,6 +2561,9 @@ uint8_t patchExtraMax(uint8_t track, uint8_t extraIdx) {
   }
   if (trackEngine[track] == az2::kEngineSampler) {
     return 1;
+  }
+  if (trackEngine[track] == az2::kEngineGranular && extraIdx == az2::kRackGranularParamCount - 6) {
+    return 1;  // ligne SAMPLE, meme convention cosmetique que Sampler ci-dessus
   }
   return 127;
 }
@@ -2421,6 +2637,20 @@ void sendPatchExtra(uint8_t track, uint8_t extraIdx) {
       snprintf(msg, sizeof(msg), "SMODE:%d:%d", track, patchExtraVal[track][extraIdx] ? 1 : 0);
       break;
     case az2::kEngineGranular:
+      if (extraIdx == az2::kRackGranularParamCount - 6) {
+        // Ligne SAMPLE (2026-09-25, meme principe que kEngineSampler plus
+        // haut) : ouvre le navigateur SD au lieu d'ecrire dans
+        // rackParamVal[] (qui n'a de toute facon pas de case pour cet
+        // index -- tableau dimensionne exactement a kRackGranularParamCount).
+        openSamplerForGranular(track);
+        return;
+      }
+      rackParamVal[track][extraIdx + 6] = patchExtraVal[track][extraIdx];
+      if (!isRackOwner(track)) return;
+      snprintf(msg, sizeof(msg), "RACK_PARAM:%s:%d:%d",
+               az2::kRackEngineNames[rackEngineForTrack(track)], extraIdx + 6,
+               patchExtraVal[track][extraIdx]);
+      break;
     case az2::kEngineSpectral:
       // Garde localement la valeur voulue meme si "track" n'est plus
       // proprietaire (reprend effet des qu'elle reclame le moteur, voir
@@ -3512,6 +3742,114 @@ void drawPatchPage() {
   drawPatchWindow();
 }
 
+// Vue compacte du moteur SAMPLER dans PATCH : les 16 pads restent la banque
+// logique du patch, et la liste SD dessous expose les WAV disponibles pour
+// remplacer rapidement le pad selectionne. L'ecran SAMPLEUR complet reste
+// disponible pour naviguer dans les dossiers.
+void drawPatchSamplerBrowser() {
+  constexpr int16_t x = 250;
+  constexpr int16_t y = 198;
+  constexpr int16_t w = 210;
+  constexpr int16_t listY = 198;
+  constexpr int16_t listH = 244;
+  const uint16_t accent = kEngineAccent[az2::kEngineSampler];
+  gfx->fillRect(x, listY, w, listH, RGB565_BLACK);
+  gfx->drawRect(x, listY, w, listH, kPalette[2]);
+  gfx->setTextColor(kPalette[2]);
+  gfx->setCursor(x + 6, listY + 5);
+  gfx->print("SAMPLES DISPONIBLES");
+  gfx->setTextColor(RGB565_WHITE);
+  for (uint8_t row = 0; row < 6; ++row) {
+    const int16_t ry = listY + 22 + row * 27;
+    if (!samplerFiles[row][0]) {
+      gfx->setTextColor(kDim);
+      gfx->setCursor(x + 8, ry);
+      gfx->print(row == 0 ? "ouvrir SAMPLEUR pour charger" : "");
+      continue;
+    }
+    if (row == samplerSelectedRow) gfx->fillRect(x + 3, ry - 2, w - 6, 17, RGB565(35, 55, 75));
+    gfx->setTextColor(row == samplerSelectedRow ? RGB565_WHITE : kDim);
+    const char *name = strrchr(samplerFiles[row], '/');
+    gfx->setCursor(x + 8, ry + 2);
+    gfx->printf("%u %s", samplerOffset + row + 1,
+                String(name ? name + 1 : samplerFiles[row]).substring(0, 27).c_str());
+  }
+  gfx->setTextColor(kDim);
+  gfx->setCursor(x + 6, listY + listH - 12);
+  gfx->print("PAD selectionne : AFFECTER");
+}
+
+void drawPatchSamplerPage() {
+  constexpr int16_t leftX = 20;
+  constexpr int16_t leftY = 98;
+  constexpr int16_t leftW = 222;
+  constexpr int16_t rightX = 252;
+  constexpr int16_t rightY = 98;
+  constexpr int16_t rightW = 208;
+  constexpr int16_t panelH = 306;
+  const uint16_t accent = kEngineAccent[az2::kEngineSampler];
+
+  gfx->fillRect(leftX, leftY, leftW, panelH, RGB565_BLACK);
+  gfx->drawRect(leftX, leftY, leftW, panelH, accent);
+  gfx->setTextSize(1);
+  gfx->setTextColor(accent);
+  gfx->setCursor(leftX + 8, leftY + 8);
+  gfx->print("PAD 4X4 - SONS ATTRIBUES");
+  for (uint8_t pad = 0; pad < az2::kPadCount; ++pad) {
+    const uint8_t col = pad % 2;
+    const uint8_t row = pad / 2;
+    const int16_t x = leftX + 6 + col * 108;
+    const int16_t y = leftY + 27 + row * 33;
+    const bool selected = pad == samplerSelectedPad;
+    if (selected) gfx->fillRect(x, y, 102, 28, accent);
+    gfx->drawRect(x, y, 102, 28, selected ? RGB565_WHITE : kFaint);
+    gfx->setTextColor(selected ? RGB565_BLACK : RGB565_WHITE);
+    gfx->setCursor(x + 5, y + 4);
+    gfx->printf("PAD %02u", pad + 1);
+    const char *name = padSamplePath[pad][0] ? strrchr(padSamplePath[pad], '/') : nullptr;
+    gfx->setCursor(x + 5, y + 16);
+    gfx->print(padSamplePath[pad][0]
+                   ? String(name ? name + 1 : padSamplePath[pad]).substring(0, 15)
+                   : "(vide)");
+  }
+
+  gfx->fillRect(rightX, rightY, rightW, panelH, RGB565_BLACK);
+  gfx->drawRect(rightX, rightY, rightW, panelH, kPalette[2]);
+  gfx->setTextColor(kPalette[2]);
+  gfx->setCursor(rightX + 8, rightY + 8);
+  gfx->print("EXPLORATEUR /samples");
+  for (uint8_t row = 0; row < kSamplerRows; ++row) {
+    const int16_t y = rightY + 28 + row * 39;
+    const bool selected = row == samplerSelectedRow;
+    if (selected) gfx->fillRect(rightX + 4, y - 3, rightW - 8, 31, RGB565(35, 55, 75));
+    gfx->drawRect(rightX + 4, y - 3, rightW - 8, 31, selected ? kPalette[2] : kFaint);
+    gfx->setTextColor(selected ? RGB565_WHITE : kDim);
+    const char *name = samplerFiles[row][0] ? strrchr(samplerFiles[row], '/') : nullptr;
+    gfx->setCursor(rightX + 10, y + 4);
+    gfx->printf("%02u  %s", samplerOffset + row + 1,
+                samplerFiles[row][0] ? String(name ? name + 1 : samplerFiles[row]).substring(0, 25).c_str()
+                                      : "-");
+    gfx->setCursor(rightX + 10, y + 17);
+    gfx->print(samplerFiles[row][0] ? "WAV disponible" : "");
+  }
+
+  gfx->setTextColor(kDim);
+  gfx->setCursor(leftX, 420);
+  gfx->printf("PAD %02u selectionne   %s", samplerSelectedPad + 1,
+              samplerUiStatus[0] ? samplerUiStatus : "choisir un WAV puis AFFECTER");
+  gfx->drawRect(20, 438, 88, 28, kFaint);
+  gfx->drawRect(114, 438, 88, 28, kFaint);
+  gfx->drawRect(208, 438, 108, 28, kPalette[2]);
+  gfx->drawRect(322, 438, 68, 28, kPalette[1]);
+  gfx->drawRect(396, 438, 64, 28, kPalette[3]);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(29, 448); gfx->print("< LISTE");
+  gfx->setCursor(122, 448); gfx->print("LISTE >");
+  gfx->setCursor(224, 448); gfx->print("AFFECTER");
+  gfx->setCursor(332, 448); gfx->print("SAUVER");
+  gfx->setCursor(405, 448); gfx->print("CHARGER");
+}
+
 bool hitTestPatchTrackPrev(int16_t x, int16_t y) {
   return inBox(x, y, kMargin, kPatchTrackRowY, kScreenSize / 2 - kMargin, 22);
 }
@@ -3901,6 +4239,11 @@ void drawLinksPage() {
 char gbRomNames[kGbMaxRoms][kGbRomNameLen];
 uint8_t gbRomCount = 0;
 
+bool gbSettingsMenuOpen = false;
+bool gbCheatMenuOpen = false;
+int8_t gbSettingsSelectedRow = 0;
+int8_t gbCheatSelectedRow = 0;
+
 constexpr int16_t kRomRowTop = 90;
 constexpr int16_t kRomRowH = 40;
 // Pagination (demande 2026-09-17, "met en plus des trucs cool ... genre
@@ -4032,13 +4375,124 @@ void drawGbRecIndicator() {
   constexpr int16_t kRecY = 16;
   gfx->fillRect(kRecX, kRecY, 90, 12, RGB565_BLACK);
   if (gbRecActive) {
-    // Pas de glyphe rond (police GFX par defaut non verifiee pour ca) --
-    // "REC" seul en rouge suffit a etre visible/comprehensible.
     gfx->setTextSize(1);
     gfx->setTextColor(RGB565_RED);
     gfx->setCursor(kRecX, kRecY);
     gfx->print("REC");
   }
+}
+
+void drawGbSettingsMenu() {
+  // Coordonnées de centrage de notre overlay de menu
+  const int16_t menuX = 60;
+  const int16_t menuY = 60;
+  const int16_t menuW = 360;
+  const int16_t menuH = 360;
+
+  // Dessiner l'arrière-plan opaque et la bordure stylisée
+  gfx->fillRect(menuX, menuY, menuW, menuH, RGB565_BLACK);
+  gfx->drawRect(menuX, menuY, menuW, menuH, kPalette[2]);
+  gfx->drawRect(menuX + 2, menuY + 2, menuW - 4, menuH - 4, kFaint);
+
+  // Titre du menu
+  gfx->setTextSize(2);
+  gfx->setTextColor(kPalette[1]);
+  gfx->setCursor(menuX + 20, menuY + 25);
+  if (gbCheatMenuOpen) {
+    gfx->print("TRICHES (CHEATS)");
+  } else {
+    gfx->print("OPTIONS JEU");
+  }
+
+  gfx->setTextSize(1);
+  if (gbCheatMenuOpen) {
+    uint8_t count = gbGetCheatCount();
+    if (count == 0) {
+      gfx->setTextColor(kDim);
+      gfx->setCursor(menuX + 30, menuY + 100);
+      gfx->print("Aucune triche disponible.");
+      gfx->setCursor(menuX + 30, menuY + 300);
+      gfx->setTextColor(RGB565_WHITE);
+      gfx->print("[B] Retour");
+    } else {
+      for (uint8_t i = 0; i < count; ++i) {
+        const bool selected = (i == gbCheatSelectedRow);
+        const int16_t rowY = menuY + 80 + i * 32;
+
+        if (selected) {
+          gfx->fillRect(menuX + 15, rowY - 6, menuW - 30, 26, kPalette[2]);
+          gfx->setTextColor(RGB565_BLACK);
+        } else {
+          gfx->setTextColor(RGB565_WHITE);
+        }
+
+        GbCheat *cheat = gbGetCheat(i);
+        if (cheat != nullptr) {
+          gfx->setCursor(menuX + 25, rowY);
+          gfx->print(cheat->name);
+
+          if (selected) {
+            gfx->setTextColor(RGB565_BLACK);
+          } else {
+            gfx->setTextColor(cheat->enabled ? RGB565_GREEN : kDim);
+          }
+          gfx->setCursor(menuX + 250, rowY);
+          gfx->print(cheat->enabled ? "[ACTIF]" : "[DESACTIVE]");
+        }
+      }
+      gfx->setTextColor(kDim);
+      gfx->setCursor(menuX + 20, menuY + 325);
+      gfx->print("Croix: Naviguer | A: Basculer | B: Retour");
+    }
+  } else {
+    static const char *const kOptions[] = {
+      "Continuer le jeu",
+      "Sauvegarder la partie (SAVE)",
+      "Charger la partie (LOAD)",
+      "Triches (Cheats)",
+      "Quitter le jeu (EXIT)"
+    };
+    constexpr uint8_t kOptCount = 5;
+
+    for (uint8_t i = 0; i < kOptCount; ++i) {
+      const bool selected = (i == gbSettingsSelectedRow);
+      const int16_t rowY = menuY + 80 + i * 40;
+
+      if (selected) {
+        gfx->fillRect(menuX + 15, rowY - 10, menuW - 30, 34, kPalette[2]);
+        gfx->setTextColor(RGB565_BLACK);
+      } else {
+        gfx->setTextColor(RGB565_WHITE);
+      }
+
+      gfx->setCursor(menuX + 30, rowY);
+      gfx->print(kOptions[i]);
+
+      if (i == 3) {
+        char buf[16];
+        snprintf(buf, sizeof(buf), "(%d dispo)", gbGetCheatCount());
+        if (selected) {
+          gfx->setTextColor(RGB565_BLACK);
+        } else {
+          gfx->setTextColor(kDim);
+        }
+        gfx->setCursor(menuX + 200, rowY);
+        gfx->print(buf);
+      }
+    }
+
+    gfx->setTextColor(kDim);
+    gfx->setCursor(menuX + 20, menuY + 325);
+    gfx->print("Croix: Naviguer | A: Choisir | B: Fermer");
+  }
+#ifdef AZ2_DIRECT_PANEL
+  flushUiCanvas();
+#else
+  if (uint16_t *framebuffer = gfx->getFramebuffer(); framebuffer != nullptr) {
+    esp_cache_msync(framebuffer, static_cast<size_t>(kScreenSize * kScreenSize * sizeof(uint16_t)),
+                    ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  }
+#endif
 }
 
 void drawRetroPage() {
@@ -4103,7 +4557,12 @@ void drawRetroPage() {
   const char *lines[] = {
       "Aucune ROM trouvee dans /games.",
       "",
+#ifdef AZ2_GB_CORE_PEANUT
+      "Moteur : Peanut-GB (GB seul, pas de",
+      "couleur GBC), licence MIT.",
+#else
       "Moteur : Walnut-CGB (GB/GBC, licence MIT).",
+#endif
       "GBA ecarte : ~20fps mesures sur ESP32-S3,",
       "pas fluide avec les coeurs existants.",
       "",
@@ -5147,11 +5606,16 @@ void drawScreen(Screen s) {
     case Screen::Song: drawSongPage(); break;
     case Screen::Project: drawProjectPage(); break;
     case Screen::Mixer: drawMixerPage(); break;
+    case Screen::StepSeq: drawStepSeqPage(); break;
   }
   flushUiCanvas();
 }
 
 void goTo(Screen s) {
+  if (s != Screen::Retro) {
+    gbSettingsMenuOpen = false;
+    gbCheatMenuOpen = false;
+  }
   // La sortie de la page Jeux doit etre annulee si la carte SD refuse
   // la sauvegarde : conserver le jeu en RAM et la navigation intacte.
   if (s != Screen::Retro && gbIsLoaded() && !gbUnload()) {
@@ -5256,6 +5720,80 @@ void goTo(Screen s) {
   drawScreen(s);
 }
 
+// Valide la ligne selectionnee du menu reglages/triches (voir
+// drawGbSettingsMenu()) -- appelee par la lettre A ET par le bouton
+// poussoir de l'encodeur 2 (demande 2026-09-25, navigation a la molette).
+void gbSettingsMenuConfirm() {
+  if (gbCheatMenuOpen) {
+    uint8_t count = gbGetCheatCount();
+    if (gbCheatSelectedRow < count) {
+      gbToggleCheat(gbCheatSelectedRow);
+      drawGbSettingsMenu();
+    }
+    return;
+  }
+  if (gbSettingsSelectedRow == 0) {
+    gbSettingsMenuOpen = false;
+    drawRetroPage();
+    drawGbViewportFrame();
+  } else if (gbSettingsSelectedRow == 1) {
+    const bool ok = gbSaveNow();
+    gfx->fillRect(80, 200, 320, 100, RGB565_BLACK);
+    gfx->drawRect(80, 200, 320, 100, kPalette[2]);
+    gfx->setTextSize(2);
+    gfx->setTextColor(ok ? RGB565_GREEN : RGB565_RED);
+    gfx->setCursor(100, 240);
+    gfx->print(ok ? "SAVE REUSSIE" : "ECHEC SAVE SD");
+#ifdef AZ2_DIRECT_PANEL
+    flushUiCanvas();
+#else
+    if (uint16_t *framebuffer = gfx->getFramebuffer(); framebuffer != nullptr) {
+      esp_cache_msync(framebuffer, static_cast<size_t>(kScreenSize * kScreenSize * sizeof(uint16_t)), ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    }
+#endif
+    delay(1000);
+    drawGbSettingsMenu();
+  } else if (gbSettingsSelectedRow == 2) {
+    const bool ok = gbLoadNow();
+    gfx->fillRect(80, 200, 320, 100, RGB565_BLACK);
+    gfx->drawRect(80, 200, 320, 100, kPalette[2]);
+    gfx->setTextSize(2);
+    gfx->setTextColor(ok ? RGB565_GREEN : RGB565_RED);
+    gfx->setCursor(100, 240);
+    gfx->print(ok ? "LOAD REUSSI" : "ECHEC LOAD SD");
+#ifdef AZ2_DIRECT_PANEL
+    flushUiCanvas();
+#else
+    if (uint16_t *framebuffer = gfx->getFramebuffer(); framebuffer != nullptr) {
+      esp_cache_msync(framebuffer, static_cast<size_t>(kScreenSize * kScreenSize * sizeof(uint16_t)), ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    }
+#endif
+    delay(1000);
+    drawGbSettingsMenu();
+  } else if (gbSettingsSelectedRow == 3) {
+    gbCheatMenuOpen = true;
+    gbCheatSelectedRow = 0;
+    drawGbSettingsMenu();
+  } else if (gbSettingsSelectedRow == 4) {
+    gbSettingsMenuOpen = false;
+    gbCheatMenuOpen = false;
+    goTo(navPrevious);
+  }
+}
+
+// Retour/sortie du menu reglages/triches -- appelee par la lettre B ET par
+// le bouton poussoir de l'encodeur 3 (demande 2026-09-25).
+void gbSettingsMenuBack() {
+  if (gbCheatMenuOpen) {
+    gbCheatMenuOpen = false;
+    drawGbSettingsMenu();
+  } else {
+    gbSettingsMenuOpen = false;
+    drawRetroPage();
+    drawGbViewportFrame();
+  }
+}
+
 // ---------------------------------------------------------------------
 // Reception Teensy : met a jour l'etat partage + le journal + la page
 // courante si elle affiche la donnee concernee.
@@ -5277,6 +5815,39 @@ void handleTeensyLine(const String &line) {
   Serial.print("TEENSY:");
   Serial.println(line);
   pushLog(line);
+
+  // [2026-09-25] Ces deux familles de messages partaient bien du Teensy
+  // (confirme par audit) mais n'avaient AUCUN retour visuel a l'ecran --
+  // seulement pushLog() ci-dessus (log discret, pas un vrai retour pour
+  // l'utilisateur). Toast simple, pas de delay() bloquant ici (voir plus
+  // bas dans ce fichier : un delay() dans handleTeensyLine() a deja
+  // retarde BTN:/NAV: par le passe) -- le toast reste affiche jusqu'a la
+  // prochaine navigation, qui redessine l'ecran normalement.
+  if (line.startsWith("SAMPLER:GB_CAPTURE:") || line.startsWith("GRANULAR_SAMPLE:")) {
+    const bool isReady = line.indexOf(":READY:") >= 0;
+    const bool isQueued = line.indexOf(":QUEUED:") >= 0;
+    const bool isSent = line.indexOf(":SENT:") >= 0;
+    const bool isError = line.indexOf(":ERROR") >= 0 || line.indexOf("_ERROR") >= 0;
+    if (isReady || isQueued || isSent || isError) {
+      gfx->fillRect(80, 190, 320, 100, RGB565_BLACK);
+      gfx->drawRect(80, 190, 320, 100, kPalette[2]);
+      gfx->setTextSize(2);
+      gfx->setTextColor(isError ? RGB565_RED : RGB565_GREEN);
+      gfx->setCursor(100, 220);
+      if (line.startsWith("SAMPLER:GB_CAPTURE:")) {
+        gfx->print(isReady ? "SAMPLE GB PRET" : "ECHEC CAPTURE GB");
+      } else {
+        gfx->print(isError ? "ECHEC SAMPLE GRANULAR" : "SAMPLE GRANULAR OK");
+      }
+#ifdef AZ2_DIRECT_PANEL
+      flushUiCanvas();
+#else
+      if (uint16_t *framebuffer = gfx->getFramebuffer(); framebuffer != nullptr) {
+        esp_cache_msync(framebuffer, static_cast<size_t>(kScreenSize * kScreenSize * sizeof(uint16_t)), ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+      }
+#endif
+    }
+  }
 
   if (line.startsWith("SAMPLEFILE:") || line.startsWith("SAMPLEDIR:")) {
     const bool isDir = line.startsWith("SAMPLEDIR:");
@@ -5319,6 +5890,17 @@ void handleTeensyLine(const String &line) {
 
       if (index >= 0) {
         navState[index] = pressed;
+        if (pressed && currentScreen == Screen::StepSeq && (index == 2 || index == 3)) {
+          // GAUCHE/DROITE deplace le curseur de pas sur toute la longueur
+          // reelle du pattern (pas seulement la fenetre de 32 affichee) --
+          // meme variable selectedSeqStep que le tracker classique, pour
+          // que la position reste coherente en changeant de vue.
+          const uint8_t activeSteps =
+              static_cast<uint8_t>(patternMeasures[currentPattern] * kSeqStepsPerMeasure);
+          selectedSeqStep = static_cast<int8_t>(
+              (selectedSeqStep + (index == 3 ? 1 : activeSteps - 1)) % activeSteps);
+          drawStepSeqPage();
+        }
         if (pressed && currentScreen == Screen::Sampler && !screensaverActive) {
           if (index == 0) {
             if (samplerSelectedRow > 0) --samplerSelectedRow;
@@ -5369,7 +5951,32 @@ void handleTeensyLine(const String &line) {
         // Game Boy (voir gb_emulator.h -- GbButton::Up/Down/Left/Right
         // sont dans le meme ordre que index ici, 0-3).
         if (currentScreen == Screen::Retro && gbIsLoaded()) {
-          gbSetButton(static_cast<GbButton>(index), pressed);
+          if (gbSettingsMenuOpen) {
+            if (pressed) {
+              if (gbCheatMenuOpen) {
+                uint8_t count = gbGetCheatCount();
+                if (count > 0) {
+                  if (index == 1) { // BAS
+                    gbCheatSelectedRow = (gbCheatSelectedRow + 1) % count;
+                    drawGbSettingsMenu();
+                  } else if (index == 0) { // HAUT
+                    gbCheatSelectedRow = (gbCheatSelectedRow + count - 1) % count;
+                    drawGbSettingsMenu();
+                  }
+                }
+              } else {
+                if (index == 1) { // BAS
+                  gbSettingsSelectedRow = (gbSettingsSelectedRow + 1) % 5;
+                  drawGbSettingsMenu();
+                } else if (index == 0) { // HAUT
+                  gbSettingsSelectedRow = (gbSettingsSelectedRow + 4) % 5;
+                  drawGbSettingsMenu();
+                }
+              }
+            }
+          } else {
+            gbSetButton(static_cast<GbButton>(index), pressed);
+          }
         }
         // Page JEUX, liste de ROM (pas encore charge) : HAUT/BAS
         // deplacent la selection surlignee (voir selectedRomIndex plus
@@ -5573,8 +6180,17 @@ void handleTeensyLine(const String &line) {
                 }
               }
             } else if ((index == 0 || index == 1) && !btnState[0]) {
-              const uint8_t firstVisible = static_cast<uint8_t>(seqVisibleMeasure * kSeqStepsPerMeasure);
-              if (index == 0 && selectedSeqStep == firstVisible) {
+              // [2026-09-25] Bug reel trouve en testant : cette condition
+              // comparait au premier pas de la mesure VISIBLE (firstVisible)
+              // au lieu du tout premier pas du pattern (0) -- sur la mesure
+              // 2+, HAUT au premier pas de cette mesure partait donc dans le
+              // focus vertical au lieu de redescendre a la mesure precedente,
+              // rendant les mesures au-dela de la premiere inaccessibles en
+              // arriere avec la croix ("affiche la mesure 2 mais on peut pas
+              // remonter"). Comparer a 0 (vrai debut du pattern) au lieu de
+              // firstVisible corrige le probleme sans toucher au cas normal
+              // (mesure 1, firstVisible vaut deja 0).
+              if (index == 0 && selectedSeqStep == 0) {
                 seqVerticalFocus = 1;
                 drawSeqDetailPage();
                 return;
@@ -5906,8 +6522,18 @@ void handleTeensyLine(const String &line) {
       // libres dans l'emulateur pour les futurs roles de gachette.
       const bool inGbGame = (currentScreen == Screen::Retro && gbIsLoaded());
       if (inGbGame && index < 2) {
-        static const GbButton kGbMap[2] = {GbButton::A, GbButton::B};
-        gbSetButton(kGbMap[index], pressed);
+        if (gbSettingsMenuOpen) {
+          if (pressed) {
+            if (letter == 'A') {
+              gbSettingsMenuConfirm();
+            } else if (letter == 'B') {
+              gbSettingsMenuBack();
+            }
+          }
+        } else {
+          static const GbButton kGbMap[2] = {GbButton::A, GbButton::B};
+          gbSetButton(kGbMap[index], pressed);
+        }
       }
       // Page JEUX, liste de ROM (pas encore charge) : A charge la ROM
       // choisie par la croix -- meme convention que le tactile
@@ -6059,6 +6685,28 @@ void handleTeensyLine(const String &line) {
       }
       if (pressed && letter == 'C' && currentScreen == Screen::Sampler) {
         samplerGoUp();
+      } else if (pressed && letter == 'C' &&
+                 (currentScreen == Screen::Sequencer || currentScreen == Screen::StepSeq)) {
+        // [2026-09-25] PLAY/STOP du tracker n'etait accessible qu'au toucher
+        // (hitTestTrkPlay()) malgre le commentaire plus haut annoncant C
+        // pour PLAY/STOP sur cette page -- jamais reellement cable, C
+        // tombait dans le "retour" generique ci-dessous et faisait quitter
+        // la page. Meme commande que le toucher. Partagee avec SEQ. PAS
+        // (2026-09-26), meme transport.
+        sendToTeensy(seqPlaying ? az2::kStop : az2::kPlay);
+      } else if (pressed && letter == 'A' && currentScreen == Screen::StepSeq) {
+        // [2026-09-26] Bascule ON/OFF du pas au curseur -- meme message
+        // que le tracker classique (STEP:piste:pas:0/1, voir
+        // hitTestDetailRow()), juste declenche par A ici au lieu du
+        // double-toucher.
+        const uint8_t track = static_cast<uint8_t>(selectedSeqTrack);
+        const uint8_t step = static_cast<uint8_t>(selectedSeqStep);
+        const bool newState = !seqStepOn[currentPattern][track][step];
+        seqStepOn[currentPattern][track][step] = newState;
+        char msg[20];
+        snprintf(msg, sizeof(msg), "STEP:%d:%d:%d", track, step, newState ? 1 : 0);
+        sendToTeensy(msg);
+        drawStepSeqPage();
       } else if (pressed && letter == 'C' && currentScreen != Screen::Menu && !inGbGame) {
         // Toute page ouverte depuis une catégorie revient à cette
         // catégorie, même après un détour par MOTEURS, PATCH ou AUDIO.
@@ -6142,9 +6790,21 @@ void handleTeensyLine(const String &line) {
         sendToTeensy(msg);
         drawEngRow(t);
       }
-      if (pressed && currentScreen == Screen::Engines && letter == 'B') {
-        engineParamBank = static_cast<uint8_t>(engineParamBank ^ 1U);
-        drawEngVisualizer();
+      if (currentScreen == Screen::Engines && letter == 'B') {
+        // [2026-09-26] Demande : pouvoir tester le son d'un moteur SANS
+        // quitter la page MOTEURS (avant, seul B->bascule banque de
+        // parametres etait cable ici ; tester demandait d'aller sur
+        // PATCH, voir A ci-dessus). Meme convention TEST:piste:60:1/0
+        // que la page PATCH, en plus du basculement de banque existant
+        // (garde les deux, pas de conflit reel : la banque bascule au
+        // press, la note joue tant que B reste enfonce).
+        char msg[16];
+        snprintf(msg, sizeof(msg), "TEST:%d:60:%d", selectedEngineTrack, pressed ? 1 : 0);
+        sendToTeensy(msg);
+        if (pressed) {
+          engineParamBank = static_cast<uint8_t>(engineParamBank ^ 1U);
+          drawEngVisualizer();
+        }
       }
       // Page MIXER (2026-09-19, "le mixeur doit gerer le volume de
       // toutes les voix") : B = mute, D = solo sur la piste
@@ -6173,6 +6833,46 @@ void handleTeensyLine(const String &line) {
         padMenuIndex = static_cast<uint8_t>(
             (padMenuIndex + (direction > 0 ? 1 : kPadMenuCount - 1)) % kPadMenuCount);
         drawPadMenu();
+      }
+      // [2026-09-26] Page SEQ. PAS : encodeur 2 change de piste, encodeur
+      // 3 change la note du pas au curseur -- memes encodeurs Reverb/Delay
+      // que le reste de l'appli (deja reutilises pour la navigation
+      // ailleurs, voir le menu JEUX plus bas), donc leur rotation agit
+      // aussi sur les envois FX en temps reel cote Teensy : compromis deja
+      // accepte par le reste du code, pas nouveau ici.
+      if (currentScreen == Screen::StepSeq && direction != 0) {
+        if (index == 1) {
+          selectedSeqTrack = static_cast<int8_t>(
+              (selectedSeqTrack + (direction > 0 ? 1 : kSeqTrackCount - 1)) % kSeqTrackCount);
+          drawStepSeqPage();
+        } else if (index == 2) {
+          const uint8_t track = static_cast<uint8_t>(selectedSeqTrack);
+          const uint8_t step = static_cast<uint8_t>(selectedSeqStep);
+          const uint8_t newNote = nextNoteInScale(seqStepNote[currentPattern][track][step],
+                                                   static_cast<int8_t>(direction));
+          seqStepNote[currentPattern][track][step] = newNote;
+          char msg[20];
+          snprintf(msg, sizeof(msg), "NOTE:%d:%d:%d", track, step, newNote);
+          sendToTeensy(msg);
+          drawStepSeqPage();
+        }
+      }
+      // Menu reglages/triches JEUX : demande 2026-09-25, naviguer a la
+      // molette de l'encodeur 2 plutot qu'a la croix.
+      if (currentScreen == Screen::Retro && gbIsLoaded() && gbSettingsMenuOpen &&
+          index == 1 && direction != 0) {
+        if (gbCheatMenuOpen) {
+          const uint8_t count = gbGetCheatCount();
+          if (count > 0) {
+            gbCheatSelectedRow = static_cast<int8_t>(
+                (gbCheatSelectedRow + (direction > 0 ? 1 : count - 1)) % count);
+            drawGbSettingsMenu();
+          }
+        } else {
+          gbSettingsSelectedRow = static_cast<int8_t>(
+              (gbSettingsSelectedRow + (direction > 0 ? 1 : 4)) % 5);
+          drawGbSettingsMenu();
+        }
       }
     }
   } else if (line.startsWith("POT:")) {
@@ -6333,20 +7033,58 @@ void handleTeensyLine(const String &line) {
           drawPotBar(index);
         }
         if (currentScreen == Screen::Retro && gbIsLoaded()) {
-          if (index == 1) {
-            gbSetButton(GbButton::Select, pressed);
-          } else if (index == 2) {
-            gbSetButton(GbButton::Start, pressed);
-          } else if (index == 0 && pressed) {
-            // Sampler (voir drawGbRecIndicator()) : un appui = bascule
-            // demarrer/arreter -- l'etat visuel n'est mis a jour qu'a
-            // l'echo REC:STARTED:/REC:STOPPED: du Teensy, pas ici.
-            sendToTeensy(gbRecActive ? "REC:STOP" : "REC:START");
-          }
-          // Sortie volontaire et difficile a declencher par erreur:
-          // START + SELECT maintenus simultanement.
-          if ((index == 1 || index == 2) && encSwState[1] && encSwState[2]) {
-            goTo(navPrevious);
+          // Declenchement du menu d'options par l'appui simultane sur les
+          // encodeurs 0 et 1 (1+2 est deja le combo de sortie ci-dessous).
+          // L'un des deux est toujours detecte en premier (impossible
+          // d'appuyer pile au meme instant) : son action individuelle
+          // (Select, ou bascule REC sur l'encodeur 0) part donc avant que
+          // le combo ne soit reconnu -- on l'annule explicitement a
+          // l'ouverture pour eviter un Select emule bloque ou un
+          // enregistrement audio declenche par erreur.
+          if (encSwState[0] && encSwState[1]) {
+            if (pressed) {
+              gbSettingsMenuOpen = !gbSettingsMenuOpen;
+              gbCheatMenuOpen = false;
+              if (gbSettingsMenuOpen) {
+                gbSetButton(GbButton::Select, false);
+                gbSetButton(GbButton::Start, false);
+                if (gbRecActive) {
+                  sendToTeensy("REC:STOP");
+                }
+                drawGbSettingsMenu();
+              } else {
+                drawRetroPage();
+                drawGbViewportFrame();
+              }
+            }
+          } else if (!gbSettingsMenuOpen) {
+            if (index == 1) {
+              gbSetButton(GbButton::Select, pressed);
+            } else if (index == 2) {
+              gbSetButton(GbButton::Start, pressed);
+            } else if (index == 0 && !pressed) {
+              const bool longPress = (millis() - encPressStartedMs[index]) >= kEncoderLongPressMs;
+              if (longPress) {
+                sendToTeensy(gbRecActive ? "REC:STOP" : "REC:START");
+              }
+            }
+            // Sortie volontaire et difficile a declencher par erreur:
+            // START + SELECT maintenus simultanement.
+            if ((index == 1 || index == 2) && encSwState[1] && encSwState[2]) {
+              goTo(navPrevious);
+            }
+          } else if (gbSettingsMenuOpen) {
+            // Demande 2026-09-25 : bouton poussoir de l'encodeur 2 valide
+            // (comme la lettre A), celui de l'encodeur 3 sort du menu
+            // (comme la lettre B) -- la molette de l'encodeur 2 navigue
+            // (voir TURN: plus haut).
+            if (pressed) {
+              if (index == 1) {
+                gbSettingsMenuConfirm();
+              } else if (index == 2) {
+                gbSettingsMenuBack();
+              }
+            }
           }
         }
         if (currentScreen == Screen::Audio && index == 1 && !pressed) {
@@ -6941,6 +7679,16 @@ void handleTeensyLine(const String &line) {
     if (currentScreen == Screen::Retro && !screensaverActive) {
       drawGbRecIndicator();
     }
+    // Une capture cree un nouveau SAMPLE_xxx.wav sur la SD du Teensy.
+    // Rafraichir le navigateur si l'utilisateur est deja dans le sampleur,
+    // sinon le fichier n'apparait qu'apres une nouvelle navigation/requete.
+    if (line.startsWith("REC:STOPPED:") && currentScreen == Screen::Sampler &&
+        strcmp(samplerFolder, "/samples") == 0) {
+      samplerOffset = 0;
+      samplerSelectedRow = 0;
+      requestSamplerList();
+      drawSamplerPage();
+    }
   }
 
   if (currentScreen == Screen::Links) {
@@ -7205,6 +7953,12 @@ void drawGbViewportFrame() {
 // ("certaines animations ne s'affichent pas correctement, ex.
 // Prehistorik Man") -- accepte comme compromis connu, pas un bug AZ-2.
 void gbBlitLine(int line, const uint16_t *row) {
+  // [2026-09-25] Essaye a 16 (bandes deux fois plus grandes, 9 flushs/frame
+  // au lieu de 18) pour reduire le cout esp_cache_msync() -- confirme
+  // scintillant sur materiel reel, comme le regroupement total deja
+  // essaye et annule plus haut. Revenu a 8 : ce pipeline semble sensible
+  // a la frequence de synchronisation avec le scan DMA de l'ecran, pas
+  // seulement a son cout CPU total.
   constexpr int16_t kGbSourceRowsPerBand = 8;
   const int16_t scale = gbDisplayScale;
   const int16_t scaledW = gbScaledW();
@@ -7304,6 +8058,13 @@ void gbBlitLine(int line, const uint16_t *row) {
     copyFrameUs += micros() - copyStartUs;
     const uint32_t flushStartUs = micros();
 #ifndef AZ2_DIRECT_PANEL
+    // [2026-09-25] Regroupement en un seul flush par frame essaye puis
+    // annule : sur materiel reel, resultat mesure PIRE (plus lent ET
+    // scintillement visible), pas meilleur comme le suggerait l'analyse a
+    // froid dans AZ2_MESURE_EMULATEUR_GB_2026-09-24.md §9 -- un seul gros
+    // flush tardif a plus de chances de tomber en pleine lecture DMA de
+    // l'ecran qu'une serie de petits flushs frequents. Revenu au flush
+    // par bande. Voir doc pour le detail.
     if (framebuffer != nullptr) {
       const int16_t firstDstY = static_cast<int16_t>(kScreenSize - 1 - (y + outputRows - 1));
       esp_cache_msync(framebuffer + firstDstY * kScreenSize,
@@ -7318,10 +8079,12 @@ void gbBlitLine(int line, const uint16_t *row) {
       extern volatile uint32_t gGbBlitScaleLastUs;
       extern volatile uint32_t gGbBlitCopyLastUs;
       extern volatile uint32_t gGbBlitFlushLastUs;
+      extern volatile bool gGbDisplayHappenedThisFrame;
       gGbDisplayLastUs = displayFrameUs;
       gGbBlitScaleLastUs = scaleFrameUs;
       gGbBlitCopyLastUs = copyFrameUs;
       gGbBlitFlushLastUs = flushFrameUs;
+      gGbDisplayHappenedThisFrame = true;
       displayFrameUs = 0;
       scaleFrameUs = 0;
       copyFrameUs = 0;
@@ -7334,6 +8097,13 @@ volatile uint32_t gGbDisplayLastUs = 0;
 volatile uint32_t gGbBlitScaleLastUs = 0;
 volatile uint32_t gGbBlitCopyLastUs = 0;
 volatile uint32_t gGbBlitFlushLastUs = 0;
+// [2026-09-25] Instrumentation : distingue le temps CPU+PPU pur du temps
+// d'affichage a l'INTERIEUR de core_avg_us (gbBlitLine() est appelee de
+// maniere synchrone DANS gb_run_frame(), donc son cout est deja inclus
+// dans le chrono brut autour de gb_run_frame() -- ce booleen dit si un
+// rendu a reellement eu lieu cette frame precise, pour permettre de
+// soustraire son cout et isoler le cœur pur (voir gbRunFrame()).
+volatile bool gGbDisplayHappenedThisFrame = false;
 
 void setup() {
   Serial.begin(230400);
@@ -7782,6 +8552,33 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
     } else if (hitTestMixerSolo(x, y)) {
       toggleMixerMuteSolo(false);
     }
+  } else if (currentScreen == Screen::StepSeq) {
+    // [2026-09-26] Demande : "tout rendre tactile" -- toucher un onglet
+    // change de piste, toucher une case bascule le pas ET y deplace le
+    // curseur (memes messages STEP:/etat que le clavier physique, voir
+    // le gestionnaire BTN: 'A' plus haut).
+    const int8_t tab = hitTestStepSeqTab(x, y);
+    const int8_t cell = hitTestStepSeqCell(x, y);
+    if (tab >= 0) {
+      selectedSeqTrack = tab;
+      drawStepSeqPage();
+    } else if (cell >= 0) {
+      const uint8_t globalStep = static_cast<uint8_t>(stepSeqFirstStep() + cell);
+      const uint8_t activeSteps =
+          static_cast<uint8_t>(patternMeasures[currentPattern] * kSeqStepsPerMeasure);
+      if (globalStep < activeSteps) {
+        const uint8_t track = static_cast<uint8_t>(selectedSeqTrack);
+        if (globalStep == selectedSeqStep) {
+          const bool newState = !seqStepOn[currentPattern][track][globalStep];
+          seqStepOn[currentPattern][track][globalStep] = newState;
+          char msg[20];
+          snprintf(msg, sizeof(msg), "STEP:%d:%d:%d", track, globalStep, newState ? 1 : 0);
+          sendToTeensy(msg);
+        }
+        selectedSeqStep = static_cast<int8_t>(globalStep);
+        drawStepSeqPage();
+      }
+    }
   } else if (currentScreen == Screen::Song) {
     if (hitTestSongProjects(x, y)) {
       goTo(Screen::Project);
@@ -7937,6 +8734,7 @@ void loop() {
   const uint32_t now = millis();
   const bool gbGameActive = (currentScreen == Screen::Retro && gbIsLoaded());
 
+
   readTeensyStatus();
   if (!gbGameActive && patchUiNeedsRedraw) {
     patchUiNeedsRedraw = false;
@@ -8070,7 +8868,10 @@ void loop() {
   // Le bandeau de diagnostic est utile en qualification, mais inutile en
   // jeu et provoque un rafraichissement parasite chaque seconde. Les mesures
   // restent envoyees sur le port serie pour les tests.
-  constexpr bool kGbPerfOverlay = false;
+  // [2026-09-25] Reactive a la demande de l'utilisateur : seul moyen de
+  // suivre fps/frames manquees sans rouvrir le port serie (qui redemarre
+  // la carte via le circuit auto-reset CH340 et coupe le test en cours).
+  constexpr bool kGbPerfOverlay = true;
   static uint32_t nextGbFrameUs = 0;
   static uint32_t gbFrameFraction = 0;
   static uint32_t gbFrameCount = 0;
@@ -8078,7 +8879,7 @@ void loop() {
   static uint32_t gbFrameTimeMaxUs = 0;
   static uint32_t gbMissedFrames = 0;
   static uint32_t gbFpsWindowStartMs = 0;
-  if (currentScreen == Screen::Retro && gbIsLoaded() && !screensaverActive) {
+  if (currentScreen == Screen::Retro && gbIsLoaded() && !screensaverActive && !gbSettingsMenuOpen) {
     const uint32_t nowUs = micros();
     if (nextGbFrameUs == 0) {
       nextGbFrameUs = nowUs;
@@ -8131,6 +8932,8 @@ void loop() {
       Serial.print(runtime.p99WorkUs);
       Serial.print(":core_avg_us=");
       Serial.print(runtime.avgCoreUs);
+      Serial.print(":cpu_only_avg_us=");
+      Serial.print(runtime.avgCpuOnlyUs);
       Serial.print(":display_avg_us=");
       Serial.print(runtime.avgDisplayUs);
       Serial.print(":audio_avg_us=");

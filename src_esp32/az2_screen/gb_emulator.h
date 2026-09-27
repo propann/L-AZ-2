@@ -52,6 +52,10 @@ struct GbRuntimeStats {
   uint32_t maxWorkUs = 0;       // pire frame de la fenetre
   uint32_t p99WorkUs = 0;       // 99e percentile de la fenetre
   uint32_t avgCoreUs = 0;       // coeur GB + rendu LCD
+  // [2026-09-25, Peanut-GB uniquement] avgCoreUs ci-dessus englobe deja le
+  // rendu (gbBlitLine tourne DANS gb_run_frame()) -- ceci isole le CPU+PPU
+  // pur (0 sur Walnut-CGB, pas instrumente la, pas necessaire pour l'instant).
+  uint32_t avgCpuOnlyUs = 0;
   uint32_t avgDisplayUs = 0;    // temps passe dans le driver RGB
   uint32_t avgAudioUs = 0;      // generation/conversion/envoi audio
   uint32_t maxCoreUs = 0;
@@ -84,6 +88,22 @@ void gbSetButton(GbButton button, bool pressed);
 // Nom (titre ROM, 16 caracteres max + fin de chaine) de la ROM chargee,
 // pour affichage sur la page JEUX. Chaine vide si rien de charge.
 const char *gbRomTitle();
+
+// Restaure manuellement la SRAM et le RTC de la cartouche courante à partir de la SD.
+bool gbLoadNow();
+
+// Structure pour stocker un code de triche (cheat)
+struct GbCheat {
+  char name[24];
+  uint16_t address;
+  uint8_t value;
+  bool enabled;
+};
+
+// Accesseurs publics pour le moteur de triche
+uint8_t gbGetCheatCount();
+GbCheat* gbGetCheat(uint8_t index);
+void gbToggleCheat(uint8_t index);
 
 // Implementee dans main.cpp (seul endroit qui connait `gfx`) : dessine
 // une ligne Game Boy (160 pixels RGB565 deja convertis) a l'ecran,
