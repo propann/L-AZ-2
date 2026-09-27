@@ -1,8 +1,8 @@
 #ifndef FLASH_MMAP_H
 #define FLASH_MMAP_H
 
-#include "core/mapper.h"
-#include "core/rom_types.h"
+#include "mapper.h"
+#include "rom_types.h"
 #include "debug.h"
 #include "esp_partition.h"
 #include <Arduino.h>

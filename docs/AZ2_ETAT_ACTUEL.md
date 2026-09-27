@@ -125,6 +125,12 @@ câblage de production.
 
 ## Vérifications
 
+- Préparation SD ROM documentée dans `docs/AZ2_SD_ROM_SETUP.md`. Le format
+  produit attendu est MBR + une partition FAT32 unique avec `/games/gb`,
+  `/games/gbc`, `/games/ngpc` et `/nes`. La validation complète de copie reste
+  bloquée par des erreurs du lecteur Broadcom interne du MacBook Pro pendant
+  les transferts (`ADMA`, timeout et remount FAT en lecture seule).
+
 - `pio run -e screen_esp_peanut_gb_lab` : OK.
 - `pio run -e screen_esp_peanut_gb_core_task` : OK, flashé et validé sur
   matériel réel (59,76fps X3, boutons/tactile confirmés).

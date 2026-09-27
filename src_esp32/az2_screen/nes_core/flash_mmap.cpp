@@ -1,5 +1,5 @@
 #include "flash_mmap.h"
-#include "core/cartridge.h"
+#include "cartridge.h"
 
 struct PartitionHeader
 {
