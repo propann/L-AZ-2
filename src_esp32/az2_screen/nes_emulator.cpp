@@ -14,6 +14,7 @@
 
 #include <SD.h>
 
+#include "AZ2_Protocol.h"
 #include "nes_core/cpu6502.h"
 
 namespace {
@@ -51,14 +52,21 @@ void nesDrawCallback(uint8_t *buffer, uint32_t size) {
   ++currentBandIndex;
 }
 
-// Point d'accroche audio (voir nes_core/apu2A03.cpp, writeBuffer()) -- pas
-// encore branche sur un paquet serie vers le Teensy, voir le commentaire
-// d'en-tete de ce fichier. No-op volontaire pour cette premiere passe
-// (le jeu tourne et s'affiche sans le son, comme un premier test GB avant
-// que sendGbAudioPacket() existe).
+// Meme paquet audio V1 que la Game Boy : l'APU NES fournit 128 echantillons
+// stereo signes/16 bits a 14 kHz ; on les replie en mono PCM8 et on les
+// envoie au Teensy sur Serial1.
 void nesAudioBufferReady(const uint16_t *buffer, size_t count) {
-  (void)buffer;
-  (void)count;
+  if (buffer == nullptr || count < 2) return;
+  const size_t samples = count / 2;
+  if (samples > 255) return;
+  uint8_t mono[255];
+  for (size_t i = 0; i < samples; ++i) {
+    const uint32_t mixed = static_cast<uint32_t>(buffer[i * 2]) + buffer[i * 2 + 1];
+    mono[i] = static_cast<uint8_t>((mixed / 2) >> 8);
+  }
+  Serial1.write(az2::kGbAudioPacketMagic);
+  Serial1.write(static_cast<uint8_t>(samples));
+  Serial1.write(mono, samples);
 }
 
 void scanNesDir(File &dir, const String &prefix, char names[][kNesRomNameLen],

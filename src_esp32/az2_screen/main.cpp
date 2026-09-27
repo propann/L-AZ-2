@@ -6852,13 +6852,6 @@ void handleTeensyLine(const String &line) {
           gbSetButton(kGbMap[index], pressed);
         }
       }
-#ifdef AZ2_NES_ENABLED
-      if (currentScreen == Screen::NesRetro && nesIsLoaded() && index < 4) {
-        // La NES n'a pas de gachettes : C/D doublent A/B et ne quittent
-        // jamais la partie. La sortie reste reservee au combo START+SELECT.
-        nesSetButton(static_cast<NesButton>(index == 2 ? 0 : index == 3 ? 1 : index), pressed);
-      }
-#endif
       // Page JEUX, liste de ROM (pas encore charge) : A charge la ROM
       // choisie par la croix -- meme convention que le tactile
       // (toucher une ligne), et que A pour confirmer ailleurs (menu).
@@ -7432,6 +7425,13 @@ void handleTeensyLine(const String &line) {
             nesSetButton(NesButton::Select, pressed);
           } else if (index == 2) {
             nesSetButton(NesButton::Start, pressed);
+          }
+          // Meme sortie que GB : START + SELECT maintenus ensemble.
+          if ((index == 1 || index == 2) && encSwState[1] && encSwState[2]) {
+            nesSetButton(NesButton::Select, false);
+            nesSetButton(NesButton::Start, false);
+            nesUnload();
+            goTo(navPrevious);
           }
         }
 #endif
