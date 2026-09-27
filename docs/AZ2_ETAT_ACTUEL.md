@@ -90,6 +90,7 @@ observation ou une ambition propre à cette ancienne révision.
 # Etat de production - 2026-09-27
 
 - Emulateur actif : Peanut-GB, affichage X2.
+- Validation réelle : jeu fonctionnel en X2 ; le mode X3 reste utilisable mais plus lent.
 - Capture audio GB : bouton volume, fichier WAV sur la SD Teensy, nom libre `SAMPLE_###.wav`.
 - MIDI DIN : entree desactivee tant que les puces MIDI ne sont pas soudees ; RX maintenu dans un etat fixe.
 - GNUBOY et Walnut-CGB restent des probes/archive, pas le firmware de production.

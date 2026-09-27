@@ -23,7 +23,7 @@
 
 | 🎛️ Créer | 🎮 Jouer | 🎚️ Transformer |
 | :-- | :-- | :-- |
-| Tracker 8 pistes, patterns, song, swing, effets par pas, mute/solo | Prototype d'émulation GB/GBC non fonctionnel à ce jour | Mixage via Teensy et DAC I²S, sampleur one-shot et infrastructure expérimentale de capture |
+| Tracker 8 pistes, patterns, song, swing, effets par pas, mute/solo | Peanut-GB fonctionnel sur matériel en X2 ; X3 fonctionne mais avec une cadence plus lente | Mixage via Teensy et DAC I²S, capture GB WAV et lecture sampleur one-shot |
 | Dexed · ePiano · Braids · Karplus · Analog · Sampler · Drum · Granular · Spectral | Prototypes de navigateur et de cœurs, non validés comme émulateur | Neuf moteurs audio au choix par piste |
 
 **Intention produit :** composer au tracker, jouer à la Game Boy et faire dialoguer le son chiptune avec les synthétiseurs de la machine. La capture WAV est présente et le dernier enregistrement Game Boy peut désormais être chargé en PSRAM comme patch dynamique **SAMPLER / GB Capture** ; la gestion d'une vraie bibliothèque multi-captures reste à développer.
@@ -79,8 +79,8 @@ Le matériel Teensy et l'écran ESP32 disposent de configurations de compilation
 | Fonction | État |
 | :-- | :-- |
 | Walnut-CGB | **Archivé, non retenu** |
-| Peanut-GB | Prototype DMG de référence provisoire ; performances mesurées, validation complète non faite |
-| GNUBOY | **En test A/B** contre Peanut-GB via `screen_esp_gnuboy_probe` |
+| Peanut-GB | **Référence fonctionnelle** en X2 ; X3 plus lent ; capture audio validée en X2 |
+| GNUBOY | Probe séparée, non retenue pour la production |
 | Chargement ROM, rendu, commandes et sauvegardes | Code expérimental incomplet ; ne constitue pas une fonction livrée |
 | Audio V2 séquencé + CRC + L/R PCM8 stéréo | Intégré derrière un pilote désactivé ; sortie Teensy encore downmixée sur le bus mono actuel |
 | Sauvegarde SRAM périodique, SAVE NOW sur D, `.sav/.bak` et RTC MBC3 séparé | Intégré ; qualification coupure/RTC sur matériel encore nécessaire |
