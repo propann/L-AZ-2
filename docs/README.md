@@ -18,6 +18,7 @@
 - [Sampleur](AZ2_SAMPLEUR.md)
 - [Licences et provenance](AZ2_LICENCES.md)
 - [Validation NES et bilan d’optimisation du 27 septembre 2026](AZ2_NES_VALIDATION_2026-09-27.md)
+- [Étude Neo Geo Pocket / Color du 27 septembre 2026](AZ2_NGP_ETUDE_2026-09-27.md)
 
 La référence matérielle actuelle est le couple Teensy 4.1 + écran VIEWE
 UEDX48480040E-WB-V1.3. Les commandes sont raccordées directement au Teensy.
