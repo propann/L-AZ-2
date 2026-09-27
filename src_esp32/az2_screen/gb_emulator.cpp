@@ -79,7 +79,7 @@ bool cartRamRecoveredFromBackup = false;
 bool cartHasRtc = false;
 bool rtcRecoveredFromBackup = false;
 uint8_t rtcLastSaved[5] = {0};
-char rtcPath[96] = {0};
+char rtcPath[192] = {0};
 
 // Sauvegarde periodique (2026-09-19, voir gbRunFrame()) -- remis a
 // zero a chaque chargement de ROM (voir gbLoadRom()) pour que le
@@ -107,8 +107,8 @@ char romTitle[17] = {0};
 // ROM avec l'extension remplacee par .sav, a cote d'elle dans /games --
 // convention classique d'emulateur (rom.gb + rom.sav). Vide si aucune
 // ROM chargee ou si la cartouche n'a pas de RAM (cartRamSize==0).
-constexpr size_t kSavePathCapacity = 96;
-// /games/ + nom + extension .sav eventuellement un octet plus longue
+constexpr size_t kSavePathCapacity = 192;
+// /games/ + chemin relatif + extension .sav eventuellement un octet plus longue
 // que .gb + terminateur : ne pas modifier la taille de liste sans
 // ajuster l'espace alloue au chemin SD.
 static_assert(kGbRomNameLen + sizeof("/games/") <= kSavePathCapacity,
@@ -838,6 +838,30 @@ void sortRomNames(char names[][kGbRomNameLen], uint8_t count) {
   }
 }
 
+void scanGbDir(File &dir, const String &prefix, char names[][kGbRomNameLen],
+               uint8_t &count) {
+  for (File entry = dir.openNextFile(); entry && count < kGbMaxRoms;
+       entry = dir.openNextFile()) {
+    const String fullName = entry.name();
+    const int slash = fullName.lastIndexOf('/');
+    const String base = (slash >= 0) ? fullName.substring(slash + 1) : fullName;
+    const String relative = prefix.length() ? prefix + "/" + base : base;
+    if (entry.isDirectory()) {
+      scanGbDir(entry, relative, names, count);
+    } else if (fullName.endsWith(".gb") || fullName.endsWith(".gbc") ||
+               fullName.endsWith(".GB") || fullName.endsWith(".GBC")) {
+      if (relative.length() >= kGbRomNameLen) {
+        Serial.print("GB:ROM_PATH_TOO_LONG:");
+        Serial.println(relative);
+      } else {
+        strncpy(names[count], relative.c_str(), kGbRomNameLen);
+        ++count;
+      }
+    }
+    entry.close();
+  }
+}
+
 uint8_t gbScanRoms(char names[][kGbRomNameLen]) {
   uint8_t count = 0;
 
@@ -851,27 +875,7 @@ uint8_t gbScanRoms(char names[][kGbRomNameLen]) {
     return 0;
   }
 
-  for (File entry = dir.openNextFile(); entry && count < kGbMaxRoms; entry = dir.openNextFile()) {
-    const String name = entry.name();
-    if (!entry.isDirectory() && (name.endsWith(".gb") || name.endsWith(".gbc") ||
-                                  name.endsWith(".GB") || name.endsWith(".GBC"))) {
-      // entry.name() peut renvoyer le chemin complet ("/games/xxx.gb")
-      // selon la version de la lib SD -- ne garder que le nom de fichier.
-      const int slash = name.lastIndexOf('/');
-      const String base = (slash >= 0) ? name.substring(slash + 1) : name;
-      // Ne pas tronquer les noms : deux ROM differant seulement apres
-      // le 39e caractere devenaient indiscernables et pouvaient charger
-      // la mauvaise cartouche (ou partager accidentellement un .sav).
-      if (base.length() >= kGbRomNameLen) {
-        Serial.print("GB:ROM_NAME_TOO_LONG:");
-        Serial.println(base);
-      } else {
-        strncpy(names[count], base.c_str(), kGbRomNameLen);
-        ++count;
-      }
-    }
-    entry.close();
-  }
+  scanGbDir(dir, "", names, count);
   dir.close();
 
   if (count == 0) {
@@ -883,9 +887,8 @@ uint8_t gbScanRoms(char names[][kGbRomNameLen]) {
 }
 
 bool gbLoadRom(const char *filename) {
-  if (filename == nullptr || filename[0] == '\0' || strchr(filename, '/') != nullptr ||
-      strchr(filename, '\\') != nullptr || strcmp(filename, ".") == 0 ||
-      strcmp(filename, "..") == 0) {
+  if (filename == nullptr || filename[0] == '\0' || filename[0] == '/' ||
+      strchr(filename, '\\') != nullptr || strstr(filename, "..") != nullptr) {
     Serial.println("GB:ROM_INVALID_NAME");
     return false;
   }

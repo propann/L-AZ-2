@@ -16,15 +16,14 @@
 // tronques pour l'affichage : 87 octets max pour rester dans le chemin
 // /games/<name> (kSavePathCapacity=96 cote emulation). Les noms plus
 // longs sont exclus du scan avec un diagnostic, jamais tronques.
-constexpr uint8_t kGbRomNameLen = 88;
+constexpr uint8_t kGbRomNameLen = 160;
 // Nombre maximum d'entrees du navigateur ROM. 100 reste sous la limite
 // int8_t du curseur UI et coute ~8,8 Ko pour les noms complets.
 constexpr uint8_t kGbMaxRoms = 100;
 
-// Scanne /games sur la carte SD pour les fichiers .gb/.gbc (jusqu'a
-// kGbMaxRoms), remplit `names` (kGbMaxRoms x kGbRomNameLen, deja
-// alloue par l'appelant) avec les noms de fichiers trouves. Renvoie le
-// nombre trouve (0 si pas de carte/dossier/fichier).
+// Scanne recursivement /games pour les fichiers .gb/.gbc (jusqu'a
+// kGbMaxRoms), remplit `names` avec les chemins relatifs a /games
+// (ex. "GameBoyColor/jeu.gbc").
 uint8_t gbScanRoms(char names[][kGbRomNameLen]);
 
 // Charge et demarre le fichier /games/<filename> (nom tel que renvoye

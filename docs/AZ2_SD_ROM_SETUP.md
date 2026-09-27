@@ -15,20 +15,24 @@ Structure cible :
 
 ```text
 /games/
+  GameBoy/
+  GameBoyColor/
+  NES/
+  NeoGeoPocket/
 /nes/
 /projects/
 /kits/
 ```
 
-Le firmware actuel attend les fichiers Game Boy directement dans `/games/`
-(pas dans `/games/gb/` ou `/games/gbc/`) :
+Le firmware parcourt maintenant récursivement `/games/`. Les ROMs peuvent
+donc être rangées par console dans des sous-dossiers :
 
 ```text
-/games/tetris.gb
-/games/zelda.gb
-/games/jeu_gbc.gbc
-/games/zelda.sav       # sauvegarde à côté de la ROM
-/nes/jeu.nes
+/games/GameBoy/tetris.gb
+/games/GameBoy/zelda.gb
+/games/GameBoyColor/jeu_gbc.gbc
+/games/GameBoy/zelda.sav       # sauvegarde à côté de la ROM
+/games/NES/jeu.nes
 /projects/0.proj       # jusqu'à 3.proj
 /kits/0.kit            # jusqu'à 3.kit, créés par l'interface
 ```
@@ -89,7 +93,8 @@ copie complète suivie d’une relecture n’a pas réussi.
 Avant de flasher ou d’utiliser la carte dans l’AZ-2 :
 
 1. monter la partition FAT32 en écriture ;
-2. créer les dossiers `/games`, `/nes`, `/projects` et `/kits` ;
+2. créer `/games` puis les sous-dossiers `GameBoy`, `GameBoyColor` et `NES`,
+   ainsi que `/projects` et `/kits` ;
 3. copier un petit jeu GB, un GBC et une ROM NES ;
 4. démonter proprement ;
 5. remonter et relire les fichiers ;
