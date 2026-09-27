@@ -6,7 +6,7 @@
 
 **🌐 Documentation : [Français](docs/i18n/README.fr.md) · [English](docs/i18n/README.en.md) · [Español](docs/i18n/README.es.md)**
 
-**Une groovebox DIY à plusieurs firmwares : tracker 8 pistes et neuf moteurs audio. Des prototypes Game Boy sont présents dans le dépôt, mais aucun émulateur GB/GBC n'est actuellement fonctionnel et validé sur la machine.**
+**Une groovebox DIY à plusieurs firmwares : tracker 8 pistes et neuf moteurs audio. Peanut-GB est validé sur la machine en X2 ; le mode X3 reste utilisable mais plus lent.**
 
 [![CI](https://github.com/propann/L-AZ-2/actions/workflows/ci.yml/badge.svg)](https://github.com/propann/L-AZ-2/actions/workflows/ci.yml)
 ![Statut](https://img.shields.io/badge/status-prototype%20alpha-f59e0b)
@@ -81,12 +81,12 @@ Le matériel Teensy et l'écran ESP32 disposent de configurations de compilation
 | Walnut-CGB | **Archivé, non retenu** |
 | Peanut-GB | **Référence fonctionnelle** en X2 ; X3 plus lent ; capture audio validée en X2 |
 | GNUBOY | Probe séparée, non retenue pour la production |
-| Chargement ROM, rendu, commandes et sauvegardes | Code expérimental incomplet ; ne constitue pas une fonction livrée |
+| Chargement ROM, rendu et commandes | Fonctionnels en X2 sur Peanut-GB ; compatibilité complète GB/GBC encore non promise |
 | Audio V2 séquencé + CRC + L/R PCM8 stéréo | Intégré derrière un pilote désactivé ; sortie Teensy encore downmixée sur le bus mono actuel |
 | Sauvegarde SRAM périodique, SAVE NOW sur D, `.sav/.bak` et RTC MBC3 séparé | Intégré ; qualification coupure/RTC sur matériel encore nécessaire |
-| Audio GB vers Teensy | Infrastructure intégrée, mais sans émulateur fonctionnel pour valider le chemin complet |
+| Audio GB vers Teensy | Fonctionnel en X2 pour la capture mono actuelle |
 | Audio haute fidélité, APU horodatée et sortie DAC réellement stéréo | **Non livré** ; le transport V2 stéréo est présent mais désactivé par défaut |
-| Capture GB → patch SAMPLER / GB Capture | Infrastructure intégrée (un slot dynamique PSRAM), non validée de bout en bout faute d'émulateur fonctionnel |
+| Capture GB → WAV / SAMPLER | Validée en X2 : WAV sur SD Teensy, nouveau `SAMPLE_###.wav`, dernier fichier chargé dynamiquement |
 | Synchronisation musicale LSDJ ↔ tracker | **Non livré** |
 
 Pour le chantier en cours : [roadmap Game Boy / LSDJ détaillée](docs/AZ2_GB_ROADMAP_IMPLEMENTATION.md). Pour les limites de compatibilité : [audit émulation](docs/AZ2_AUDIT_EMULATION_LSDJ_TETRIS_MARIO.md). Pour comprendre pourquoi Walnut-CGB a été retenu : [étude des cœurs](docs/AZ2_ETUDE_COEURS_EMULATION_GB.md).
