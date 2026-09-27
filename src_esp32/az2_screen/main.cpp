@@ -4315,16 +4315,19 @@ void drawRomRow(uint8_t index) {
   }
   int16_t y;
   romRowRect(static_cast<uint8_t>(index - gbRomScroll), y);
-  gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, kRomRowH - 6, RGB565_BLACK);
-  gfx->drawRect(kMargin, y, kScreenSize - 2 * kMargin, kRomRowH - 6, kPalette[index % kPaletteCount]);
-  if (index == selectedRomIndex) {
+  const bool selected = (index == selectedRomIndex);
+  gfx->fillRect(kMargin, y, kScreenSize - 2 * kMargin, kRomRowH - 6,
+                selected ? kPalette[1] : RGB565_BLACK);
+  gfx->drawRect(kMargin, y, kScreenSize - 2 * kMargin, kRomRowH - 6,
+                selected ? kPalette[1] : kPalette[index % kPaletteCount]);
+  if (selected) {
     // Ligne selectionnee par la croix -- meme convention que la piste
     // choisie sur la page MOTEURS (contour blanc double).
     gfx->drawRect(static_cast<int16_t>(kMargin + 1), static_cast<int16_t>(y + 1), kScreenSize - 2 * kMargin - 2,
                   kRomRowH - 8, RGB565_WHITE);
   }
   gfx->setTextSize(2);
-  gfx->setTextColor(RGB565_WHITE);
+  gfx->setTextColor(selected ? RGB565_BLACK : RGB565_WHITE);
   gfx->setCursor(static_cast<int16_t>(kMargin + 10), static_cast<int16_t>(y + 6));
   // L'identifiant SD reste complet dans gbRomNames[]. On tronque
   // uniquement le LIBELLE visible pour ne jamais dessiner hors cadre.
@@ -4564,14 +4567,17 @@ constexpr uint16_t kWarnAmber = RGB565(255, 170, 0);
 void drawEmuCard(uint8_t index, int16_t y, const char *sub, const char *cta, uint16_t accent,
                   bool filled) {
   const bool selected = (emuPickerSelected == index);
-  if (filled) {
+  if (selected) {
+    gfx->fillRoundRect(kEmuCardX, y, kEmuCardW, kEmuCardH, 10, kPalette[1]);
+    gfx->setTextColor(RGB565_BLACK);
+  } else if (filled) {
     gfx->fillRoundRect(kEmuCardX, y, kEmuCardW, kEmuCardH, 10, accent);
     gfx->setTextColor(RGB565_BLACK);
   } else {
     gfx->fillRoundRect(kEmuCardX, y, kEmuCardW, kEmuCardH, 10, RGB565_BLACK);
     gfx->setTextColor(accent);
   }
-  gfx->drawRoundRect(kEmuCardX, y, kEmuCardW, kEmuCardH, 10, accent);
+  gfx->drawRoundRect(kEmuCardX, y, kEmuCardW, kEmuCardH, 10, selected ? kPalette[1] : accent);
   if (selected) {
     // Curseur croix/A : cadre exterieur supplementaire, visible sans tactile.
     gfx->drawRoundRect(static_cast<int16_t>(kEmuCardX - 3), static_cast<int16_t>(y - 3),
@@ -4699,13 +4705,14 @@ void drawNesPage() {
   for (uint8_t i = 0; i < visible; ++i) {
     const uint8_t idx = static_cast<uint8_t>(nesRomScroll + i);
     const int16_t y = static_cast<int16_t>(kNesRowTop + i * kNesRowH);
+    const bool selected = (idx == nesSelectedRomIndex);
     gfx->fillRect(kMargin, y, static_cast<int16_t>(kScreenSize - 2 * kMargin),
-                  static_cast<int16_t>(kNesRowH - 6), RGB565_BLACK);
+                  static_cast<int16_t>(kNesRowH - 6), selected ? kPalette[1] : RGB565_BLACK);
     gfx->drawRect(kMargin, y, static_cast<int16_t>(kScreenSize - 2 * kMargin),
                   static_cast<int16_t>(kNesRowH - 6),
-                  idx == nesSelectedRomIndex ? RGB565_WHITE : kPalette[idx % kPaletteCount]);
+                  selected ? kPalette[1] : kPalette[idx % kPaletteCount]);
     gfx->setTextSize(1);
-    gfx->setTextColor(RGB565_WHITE);
+    gfx->setTextColor(selected ? RGB565_BLACK : RGB565_WHITE);
     gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(y + 10));
     gfx->print(nesRomNames[idx]);
   }
@@ -6268,11 +6275,6 @@ void handleTeensyLine(const String &line) {
 #ifdef AZ2_NES_ENABLED
         if (currentScreen == Screen::NesRetro && nesIsLoaded()) {
           if (index <= 3) nesSetButton(static_cast<NesButton>(index + 4), pressed);
-          if (index == 1) nesSetButton(NesButton::Select, pressed);
-          if (index == 2) nesSetButton(NesButton::Start, pressed);
-          if ((index == 1 || index == 2) && encSwState[1] && encSwState[2]) {
-            goTo(navPrevious);
-          }
         }
         if (pressed && currentScreen == Screen::NesRetro && !nesIsLoaded() && nesRomCount > 0 &&
             (index == 0 || index == 1)) {
