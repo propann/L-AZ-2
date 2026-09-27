@@ -24,7 +24,7 @@
 | 🎛️ Créer | 🎮 Jouer | 🎚️ Transformer |
 | :-- | :-- | :-- |
 | Tracker 8 pistes, patterns, song, swing, effets par pas, mute/solo | Peanut-GB fonctionnel sur matériel en X2 ; X3 fonctionne mais avec une cadence plus lente | Mixage via Teensy et DAC I²S, capture GB WAV et lecture sampleur one-shot |
-| Dexed · ePiano · Braids · Karplus · Analog · Sampler · Drum · Granular · Spectral | Prototypes de navigateur et de cœurs, non validés comme émulateur | Neuf moteurs audio au choix par piste |
+| Dexed · ePiano · Braids · Karplus · Analog · Sampler · Drum · Granular · Spectral | Rack audio externe fonctionnel : GRANULAR S3 + SPECTRAL WROOM ; réglages fins encore en qualification | Neuf moteurs audio au choix par piste |
 
 **Intention produit :** composer au tracker, jouer à la Game Boy et faire dialoguer le son chiptune avec les synthétiseurs de la machine. La capture WAV est présente et le dernier enregistrement Game Boy peut désormais être chargé en PSRAM comme patch dynamique **SAMPLER / GB Capture** ; la gestion d'une vraie bibliothèque multi-captures reste à développer.
 

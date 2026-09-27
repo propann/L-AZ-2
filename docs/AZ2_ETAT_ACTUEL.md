@@ -11,6 +11,18 @@ Ce document est la source de vérité de l’état courant. Les audits datés da
 - Firmware audio de référence : `master_teensy_rack_lab`.
 - Firmware écran de référence : `screen_esp_peanut_gb_lab`.
 
+## Rack audio
+
+- Rack audio externe fonctionnel dans la configuration validée : ESP32-S3
+  GRANULAR et ESP-WROOM SPECTRAL reliés au Teensy par le protocole rack et le
+  retour audio I²S.
+- `master_teensy_rack_lab` est le firmware à utiliser avec ce rack ; il ne
+  faut pas le confondre avec un banc abandonné.
+- Le Teensy conserve le rôle de maître : horloge, commandes de piste, mixage
+  final et sortie PCM5102A.
+- Les tests et réglages fins des moteurs externes restent à poursuivre, mais
+  le chemin rack audio de base est fonctionnel.
+
 ## Game Boy
 
 - Cœur actif : Peanut-GB, DMG-only.
