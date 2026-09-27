@@ -26,7 +26,10 @@ public:
     ~Cartridge();
 
     void ppuScanline();
-    void cpuCycle(int cycles);
+    IRAM_ATTR inline void cpuCycle(int cycles)
+    {
+        if (mapper_ID == 69) mapper069_cycle(&mapper, cycles);
+    }
     void reset();
 
     void mapPages(Bus* bus);
@@ -44,6 +47,10 @@ public:
 
     void dumpState(File& state);
     void loadState(File& state);
+    bool hasBatteryRam() const;
+    size_t batteryRamSize() const;
+    bool dumpBatteryRam(File& state);
+    bool loadBatteryRam(File& state);
     bool isValid();
 
     void seek(uint32_t offset);
@@ -63,6 +70,7 @@ private:
 
     File rom;
     uint8_t mapper_ID = 0;
+    bool battery_backed = false;
     void createMapper(uint8_t number_PRG_banks, uint8_t number_CHR_banks, ROMBackend backend);
     uint32_t crc32(const void* buf, size_t size, uint32_t seed = ~0U);
 };

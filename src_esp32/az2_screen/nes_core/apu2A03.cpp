@@ -1,6 +1,14 @@
+#pragma GCC optimize("Ofast", "unroll-loops", "rename-registers")
+
 #include "apu2A03.h"
 #include "bus.h"
 #include "cpu6502.h"
+
+#ifdef AZ2_NES_DUAL_CORE
+#include <freertos/FreeRTOS.h>
+#include <freertos/portmacro.h>
+static portMUX_TYPE g_apu_state_mux = portMUX_INITIALIZER_UNLOCKED;
+#endif
 
 #ifdef COMPOSITE_VIDEO
 void cv_audio_write_16(const uint16_t* s, int len, int channels);
@@ -20,6 +28,13 @@ Apu2A03::~Apu2A03()
 
 void Apu2A03::reset()
 {
+#ifdef AZ2_NES_DUAL_CORE
+    portENTER_CRITICAL(&g_apu_state_mux);
+#endif
+    clock_counter = 0;
+    pulse_hz = 0;
+    buffer_index = 0;
+    prev_sample = 0;
     pulse1_enable = false;
     pulse2_enable = false;
     triangle_enable = false;
@@ -42,10 +57,17 @@ void Apu2A03::reset()
     DMC.sample_buffer = 0;
     DMC.sample_length = 0;
     DMC.output_unit.silence_flag = true;
+#ifdef AZ2_NES_DUAL_CORE
+    portEXIT_CRITICAL(&g_apu_state_mux);
+    resetScheduler();
+#endif
 }
 
 void Apu2A03::cpuWrite(uint16_t addr, uint8_t data)
 {
+#ifdef AZ2_NES_DUAL_CORE
+    portENTER_CRITICAL(&g_apu_state_mux);
+#endif
     switch (addr)
     {
     case 0x4000:
@@ -222,14 +244,27 @@ void Apu2A03::cpuWrite(uint16_t addr, uint8_t data)
         else interrupt_inhibit = false;
         break;
 
-    default: return;
+    default:
+#ifdef AZ2_NES_DUAL_CORE
+        portEXIT_CRITICAL(&g_apu_state_mux);
+#endif
+        return;
     }
+#ifdef AZ2_NES_DUAL_CORE
+    portEXIT_CRITICAL(&g_apu_state_mux);
+#endif
 }
 
 uint8_t Apu2A03::cpuRead(uint16_t addr)
 {
+#ifdef AZ2_NES_DUAL_CORE
+    portENTER_CRITICAL(&g_apu_state_mux);
+#endif
     uint8_t data = 0x00;
     if (addr == 0x4015) { IRQ = false; }
+#ifdef AZ2_NES_DUAL_CORE
+    portEXIT_CRITICAL(&g_apu_state_mux);
+#endif
     return data;
 }
 
@@ -238,8 +273,13 @@ void Apu2A03::setVolume(uint8_t vol)
     volume = vol;
 }
 
-void Apu2A03::clock()
+void Apu2A03::clock(uint16_t cycles)
 {
+#ifdef AZ2_NES_DUAL_CORE
+    portENTER_CRITICAL(&g_apu_state_mux);
+#endif
+    bool audio_buffer_ready = false;
+    while (cycles-- > 0) {
     // Clock all sound channels
     pulseChannelClock(pulse1.seq, pulse1_enable);
     pulseChannelClock(pulse2.seq, pulse2_enable);
@@ -347,13 +387,49 @@ void Apu2A03::clock()
         // 	triangle.seq.output = 0;
         // 	triangle.env.output = 0;
         // }
-        generateSample();
+        if (generateSample()) audio_buffer_ready = true;
         pulse_hz -= 894886;
     }
     clock_counter++;
+    }
+#ifdef AZ2_NES_DUAL_CORE
+    portEXIT_CRITICAL(&g_apu_state_mux);
+#endif
+    // Serial1.write() peut attendre le FIFO UART. Ne jamais l'appeler dans
+    // la section critique : cela desactive les interruptions et declenche le
+    // watchdog pendant le rattrapage audio du core 0.
+    if (audio_buffer_ready) writeBuffer();
 }
 
-inline void Apu2A03::generateSample()
+#ifdef AZ2_NES_DUAL_CORE
+void Apu2A03::scheduleCycles(uint32_t cycles)
+{
+    __atomic_fetch_add(&scheduled_cycles, cycles, __ATOMIC_RELEASE);
+}
+
+uint32_t Apu2A03::scheduledCycles() const
+{
+    return __atomic_load_n(&scheduled_cycles, __ATOMIC_ACQUIRE);
+}
+
+uint32_t Apu2A03::completedCycles() const
+{
+    return __atomic_load_n(&completed_cycles, __ATOMIC_ACQUIRE);
+}
+
+void Apu2A03::markCyclesComplete(uint32_t cycles)
+{
+    __atomic_fetch_add(&completed_cycles, cycles, __ATOMIC_RELEASE);
+}
+
+void Apu2A03::resetScheduler()
+{
+    __atomic_store_n(&scheduled_cycles, 0u, __ATOMIC_RELEASE);
+    __atomic_store_n(&completed_cycles, 0u, __ATOMIC_RELEASE);
+}
+#endif
+
+inline bool Apu2A03::generateSample()
 {
     uint16_t index = (buffer_index << 1);
 
@@ -382,8 +458,9 @@ inline void Apu2A03::generateSample()
     if (buffer_index >= AUDIO_BUFFER_SIZE)
     {
         buffer_index = 0;
-        writeBuffer();
+        return true;
     }
+    return false;
 }
 
 // Implementee dans nes_emulator.cpp -- packetise vers le Teensy au lieu

@@ -1,3 +1,5 @@
+#pragma GCC optimize("Ofast", "unroll-loops", "rename-registers")
+
 #include "mapper069.h"
 #include "../bus.h"
 #include "../cartridge.h"
@@ -343,4 +345,16 @@ static inline uint8_t* getCHRBank(Mapper069_state* state, uint8_t index)
     if (state->backend == ROMBackend::LRU)
         return getBank(&state->CHR_cache_1K, index, RomType::CHR);
     return (uint8_t*)(state->mROM->chr_base + (uint32_t)index * 1U * 1024U);
+}
+
+size_t mapper069_dumpBatteryRam(Mapper* mapper, File& state)
+{
+    Mapper069_state* s = (Mapper069_state*)mapper->state;
+    return s->RAM ? state.write(s->RAM, 8U * 1024U) : 0;
+}
+
+size_t mapper069_loadBatteryRam(Mapper* mapper, File& state)
+{
+    Mapper069_state* s = (Mapper069_state*)mapper->state;
+    return s->RAM ? state.read(s->RAM, 8U * 1024U) : 0;
 }

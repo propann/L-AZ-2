@@ -1,3 +1,5 @@
+#pragma GCC optimize("Ofast", "unroll-loops", "rename-registers")
+
 #include "mapper001.h"
 #include "../bus.h"
 #include "../cartridge.h"
@@ -468,4 +470,16 @@ static inline void loadCHRRAM(Mapper001_state* state, uint8_t* bank, uint16_t si
     if (state->backend == ROMBackend::FLASH)
         memcpy(bank, (uint8_t*)(state->mROM->chr_base + offset), size);
     else state->cart->loadCHRBank(bank, size, offset);
+}
+
+size_t mapper001_dumpBatteryRam(Mapper* mapper, File& state)
+{
+    Mapper001_state* s = (Mapper001_state*)mapper->state;
+    return s->RAM ? state.write(s->RAM, 8U * 1024U) : 0;
+}
+
+size_t mapper001_loadBatteryRam(Mapper* mapper, File& state)
+{
+    Mapper001_state* s = (Mapper001_state*)mapper->state;
+    return s->RAM ? state.read(s->RAM, 8U * 1024U) : 0;
 }

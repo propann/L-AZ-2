@@ -14,4 +14,6 @@ void mapper004_scanline(Mapper* mapper);
 void mapper004_reset(Mapper* mapper);
 void mapper004_dumpState(Mapper* mapper, File& state);
 void mapper004_loadState(Mapper* mapper, File& state);
+size_t mapper004_dumpBatteryRam(Mapper* mapper, File& state);
+size_t mapper004_loadBatteryRam(Mapper* mapper, File& state);
 #endif

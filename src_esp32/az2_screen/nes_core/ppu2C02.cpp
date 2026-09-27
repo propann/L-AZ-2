@@ -1,3 +1,5 @@
+#pragma GCC optimize("Ofast", "unroll-loops", "rename-registers")
+
 #include "ppu2C02.h"
 #include "bus.h"
 #include "cartridge.h"

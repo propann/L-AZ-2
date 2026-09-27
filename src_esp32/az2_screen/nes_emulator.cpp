@@ -14,6 +14,11 @@
 
 #include <SD.h>
 
+#ifdef AZ2_NES_DUAL_CORE
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#endif
+
 #include "AZ2_Protocol.h"
 #include "nes_core/cpu6502.h"
 
@@ -32,6 +37,45 @@ uint32_t statsCoreAccumUs = 0;
 uint32_t statsCoreMaxUs = 0;
 
 int currentBandIndex = 0;
+uint8_t nesAudioPacket[az2::kGbAudioSamplesPerPacket] = {};
+uint8_t nesAudioPacketSize = 0;
+constexpr uint32_t kNesSaveMagic = 0x325A4E53;  // "SNZ2"
+constexpr uint16_t kNesSaveVersion = 1;
+constexpr size_t kNesSavePathCapacity = kNesRomNameLen + sizeof("/games/") + sizeof(".sav");
+char nesSavePath[kNesSavePathCapacity] = {};
+
+#ifdef AZ2_NES_DUAL_CORE
+TaskHandle_t nesApuTaskHandle = nullptr;
+
+void nesApuTask(void *) {
+  // Les blocs courts limitent le temps pendant lequel l'APU verrouille ses
+  // registres lorsqu'un jeu ecrit dans $4000-$4017 depuis le core 1.
+  // 512 cycles restent sous 0,3 ms a l'horloge CPU NES et reduisent fortement
+  // le nombre de prises de verrou/atomiques pendant chaque frame.
+  constexpr uint32_t kApuBatchCycles = 512;
+  for (;;) {
+    const uint32_t target = nesCpu.apu.scheduledCycles();
+    const uint32_t completed = nesCpu.apu.completedCycles();
+    const uint32_t pending = target - completed;
+    if (pending == 0) {
+      vTaskDelay(1);
+      continue;
+    }
+    const uint16_t batch = static_cast<uint16_t>(pending > kApuBatchCycles ?
+                                                  kApuBatchCycles : pending);
+    nesCpu.apu.clock(batch);
+    nesCpu.apu.markCyclesComplete(batch);
+  }
+}
+#endif
+
+struct NesSaveHeader {
+  uint32_t magic;
+  uint16_t version;
+  uint16_t reserved;
+  uint32_t romCrc;
+  uint32_t ramSize;
+};
 
 // Compare-insensible aux majuscules/minuscules pour l'extension .nes --
 // meme raison que gbScanRoms() (SD peut renvoyer les noms dans la casse du
@@ -41,6 +85,15 @@ bool endsWithNes(const String &name) {
 }
 
 }  // namespace
+
+#ifdef AZ2_NES_DUAL_CORE
+void nesInitDualCore() {
+  if (nesApuTaskHandle != nullptr) return;
+  xTaskCreatePinnedToCore(nesApuTask, "NES_APU", 6144, nullptr, 2,
+                          &nesApuTaskHandle, 0);
+  Serial.println("NES:DUAL_CORE:APU=CORE0:CPU_PPU=CORE1");
+}
+#endif
 
 // Trampoline vers le callback de dessin du coeur (voir nes_core/ppu2C02.h,
 // DrawCallback) -- reconstruit l'index de bande (0-29, 240/8) a partir du
@@ -52,21 +105,79 @@ void nesDrawCallback(uint8_t *buffer, uint32_t size) {
   ++currentBandIndex;
 }
 
-// Meme paquet audio V1 que la Game Boy : l'APU NES fournit 128 echantillons
-// stereo PCM16 decales (0..65535) ; on les replie en mono PCM8 non signe
-// (0..255, centre 128) et on les envoie au Teensy sur Serial1.
+// Meme paquet audio V1 que la Game Boy : l'APU NES fournit des blocs de 128
+// echantillons stereo PCM16 decales (0..65535). Le Teensy attend exactement
+// az2::kGbAudioSamplesPerPacket echantillons par paquet (234 a 14 kHz) ; on
+// accumule donc plusieurs blocs avant de transmettre du mono PCM8.
 void nesAudioBufferReady(const uint16_t *buffer, size_t count) {
   if (buffer == nullptr || count < 2) return;
   const size_t samples = count / 2;
-  if (samples > 255) return;
-  uint8_t mono[255];
   for (size_t i = 0; i < samples; ++i) {
     const uint32_t mixed = static_cast<uint32_t>(buffer[i * 2]) + buffer[i * 2 + 1];
-    mono[i] = static_cast<uint8_t>(((mixed / 2) >> 8) & 0xff);
+    // L'APU NES produit une amplitude 0..255 dont le silence vaut 0.
+    // Le protocole Teensy attend un PCM8 non signe centre en 128 ; sans
+    // cet offset, le silence devenait un enorme signal continu (-32768).
+    const uint16_t amplitude = static_cast<uint16_t>((mixed / 2) >> 8);
+    const uint8_t centered = static_cast<uint8_t>(128u + (amplitude > 127u ? 127u : amplitude));
+    nesAudioPacket[nesAudioPacketSize++] = centered;
+    if (nesAudioPacketSize == az2::kGbAudioSamplesPerPacket) {
+      Serial1.write(az2::kGbAudioPacketMagic);
+      Serial1.write(nesAudioPacketSize);
+      Serial1.write(nesAudioPacket, nesAudioPacketSize);
+      nesAudioPacketSize = 0;
+    }
   }
-  Serial1.write(az2::kGbAudioPacketMagic);
-  Serial1.write(static_cast<uint8_t>(samples));
-  Serial1.write(mono, samples);
+}
+
+bool buildNesSavePath(const char *filename) {
+  const int pathLen = snprintf(nesSavePath, sizeof(nesSavePath), "/games/%s", filename);
+  if (pathLen < 0 || static_cast<size_t>(pathLen) >= sizeof(nesSavePath)) return false;
+  char *dot = strrchr(nesSavePath, '.');
+  if (dot == nullptr || static_cast<size_t>(dot - nesSavePath) + sizeof(".sav") > sizeof(nesSavePath)) {
+    return false;
+  }
+  strcpy(dot, ".sav");
+  return true;
+}
+
+bool loadNesSaveFromPath(const char *path) {
+  if (path == nullptr || !SD.exists(path) || nesCart == nullptr || !nesCart->hasBatteryRam()) return false;
+  File f = SD.open(path, FILE_READ);
+  if (!f) return false;
+
+  NesSaveHeader header = {};
+  const size_t expectedSize = sizeof(header) + nesCart->batteryRamSize();
+  const bool headerRead = f.read(reinterpret_cast<uint8_t *>(&header), sizeof(header)) == sizeof(header);
+  const bool valid = headerRead && f.size() == expectedSize && header.magic == kNesSaveMagic &&
+                     header.version == kNesSaveVersion && header.romCrc == nesCart->CRC32 &&
+                     header.ramSize == nesCart->batteryRamSize();
+  const bool loaded = valid && nesCart->loadBatteryRam(f);
+  f.close();
+  return loaded;
+}
+
+bool loadNesSaveIfPresent() {
+  if (nesSavePath[0] == '\0' || nesCart == nullptr || !nesCart->hasBatteryRam()) return true;
+  if (loadNesSaveFromPath(nesSavePath)) {
+    Serial.print("NES:SAVE_LOADED:");
+    Serial.println(nesSavePath);
+    return true;
+  }
+
+  char backupPath[kNesSavePathCapacity + 5];
+  const int backupLen = snprintf(backupPath, sizeof(backupPath), "%s.bak", nesSavePath);
+  if (backupLen >= 0 && static_cast<size_t>(backupLen) < sizeof(backupPath) &&
+      loadNesSaveFromPath(backupPath)) {
+    Serial.print("NES:SAVE_RECOVERED:");
+    Serial.println(backupPath);
+    return true;
+  }
+
+  if (SD.exists(nesSavePath)) {
+    Serial.print("NES:SAVE_INVALID:");
+    Serial.println(nesSavePath);
+  }
+  return false;
 }
 
 void scanNesDir(File &dir, const String &prefix, char names[][kNesRomNameLen],
@@ -152,6 +263,13 @@ bool nesLoadRom(const char *filename) {
   nesCpu.reset();
   romLoaded = true;
   nesButtonState = 0;
+  nesAudioPacketSize = 0;
+  nesSavePath[0] = '\0';
+  if (!buildNesSavePath(filename)) {
+    Serial.println("NES:SAVE_PATH_ERROR");
+  } else {
+    loadNesSaveIfPresent();
+  }
 
   strncpy(romTitle, filename, sizeof(romTitle) - 1);
   romTitle[sizeof(romTitle) - 1] = '\0';
@@ -169,14 +287,72 @@ bool nesLoadRom(const char *filename) {
 
 bool nesIsLoaded() { return romLoaded; }
 
+
 bool nesUnload() {
   if (!romLoaded) return true;
-  // TODO(2026-09-27): sauvegarder la SRAM a pile avant de decharger, voir
-  // Cartridge::dumpState() -- pas fait dans cette premiere passe.
+  nesSaveRam();
   romLoaded = false;
   delete nesCart;
   nesCart = nullptr;
   romTitle[0] = '\0';
+  nesSavePath[0] = '\0';
+  return true;
+}
+
+bool nesSaveRam() {
+  if (nesCart == nullptr || !nesCart->hasBatteryRam() || nesSavePath[0] == '\0') {
+    Serial.println("NES:SAVE_UNAVAILABLE");
+    return false;
+  }
+
+  char tmpPath[kNesSavePathCapacity + 5];
+  char backupPath[kNesSavePathCapacity + 5];
+  if (snprintf(tmpPath, sizeof(tmpPath), "%s.tmp", nesSavePath) < 0 ||
+      snprintf(backupPath, sizeof(backupPath), "%s.bak", nesSavePath) < 0) {
+    Serial.println("NES:SAVE_PATH_ERROR");
+    return false;
+  }
+  SD.remove(tmpPath);
+
+  File f = SD.open(tmpPath, FILE_WRITE);
+  if (!f) {
+    Serial.print("NES:SAVE_OPEN_ERROR:");
+    Serial.println(tmpPath);
+    return false;
+  }
+  const NesSaveHeader header = {kNesSaveMagic, kNesSaveVersion, 0, nesCart->CRC32,
+                                static_cast<uint32_t>(nesCart->batteryRamSize())};
+  const bool headerOk = f.write(reinterpret_cast<const uint8_t *>(&header), sizeof(header)) == sizeof(header);
+  const bool ramOk = headerOk && nesCart->dumpBatteryRam(f);
+  f.close();
+  File verify = SD.open(tmpPath, FILE_READ);
+  const bool sizeOk = verify && verify.size() == sizeof(header) + nesCart->batteryRamSize();
+  if (verify) verify.close();
+  if (!ramOk || !sizeOk) {
+    SD.remove(tmpPath);
+    Serial.print("NES:SAVE_WRITE_ERROR:");
+    Serial.println(nesSavePath);
+    return false;
+  }
+
+  const bool hadPrimary = SD.exists(nesSavePath);
+  if (hadPrimary) {
+    SD.remove(backupPath);
+    if (!SD.rename(nesSavePath, backupPath)) {
+      SD.remove(tmpPath);
+      Serial.println("NES:SAVE_BACKUP_ERROR");
+      return false;
+    }
+  }
+  if (!SD.rename(tmpPath, nesSavePath)) {
+    if (hadPrimary) SD.rename(backupPath, nesSavePath);
+    SD.remove(tmpPath);
+    Serial.println("NES:SAVE_RENAME_ERROR");
+    return false;
+  }
+
+  Serial.print("NES:SAVED:");
+  Serial.println(nesSavePath);
   return true;
 }
 
@@ -219,8 +395,12 @@ void nesRunFrame() {
   const uint32_t nowUs = micros();
   const uint32_t windowUs = nowUs - statsWindowStartUs;
   if (windowUs >= 1000000u && statsWindowFrames > 0) {
+    // FPS x10: frames * 10 s / window_s, avec arrondi en microsecondes.
+    // L'ancienne formule divisait le résultat par 10 et affichait 4.7 au
+    // lieu d'environ 47 FPS.
     stats.fpsX10 = static_cast<uint16_t>(
-        (static_cast<uint64_t>(statsWindowFrames) * 10000ull + windowUs / 200) / (windowUs / 100));
+        (static_cast<uint64_t>(statsWindowFrames) * 10000000ull + windowUs / 2) /
+        windowUs);
     stats.avgCoreUs = statsCoreAccumUs / statsWindowFrames;
     stats.maxCoreUs = statsCoreMaxUs;
     statsWindowStartUs = nowUs;

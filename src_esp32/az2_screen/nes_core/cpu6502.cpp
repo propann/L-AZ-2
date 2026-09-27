@@ -1,3 +1,5 @@
+#pragma GCC optimize("Ofast", "unroll-loops", "rename-registers")
+
 #include "cpu6502.h"
 
 #define EXECUTE(addrmode, instruction)                                                             \
@@ -5,6 +7,12 @@
         additional_cycle1 = addrmode();                                                            \
         additional_cycle2 = instruction();                                                         \
     }
+
+#ifdef AZ2_NES_DUAL_CORE
+#define CLOCK_APU(cycles) apu.scheduleCycles(cycles)
+#else
+#define CLOCK_APU(cycles) apu.clock(cycles)
+#endif
 
 Cpu6502::Cpu6502()
 {
@@ -361,12 +369,15 @@ IRAM_ATTR void Cpu6502::clockFrame()
     for (int ppu_scanline = 0; ppu_scanline < 240; ppu_scanline += 3)
     {
         clock(113);
+        CLOCK_APU(113);
         bus.ppu.renderScanline(ppu_scanline);
 
         clock(114);
+        CLOCK_APU(114);
         bus.ppu.renderScanline(ppu_scanline + 1);
 
         clock(114);
+        CLOCK_APU(114);
         bus.ppu.renderScanline(ppu_scanline + 2);
     }
 
@@ -374,32 +385,41 @@ IRAM_ATTR void Cpu6502::clockFrame()
     // Same reason as scanlines 0-239, 2/3 of scanlines will have an extra CPU clock.
     // Scanline 240
     clock(113);
+    CLOCK_APU(113);
 
     // Scanline 241-261
     bus.ppu.setVBlank();
     clock(2501);
+    CLOCK_APU(2501);
 
     bus.ppu.clearVBlank();
     clock(114);
+    CLOCK_APU(114);
 #else
     static bool frame_latch = false;
     for (int ppu_scanline = 0; ppu_scanline < 240; ppu_scanline += 3)
     {
         clock(113);
+        CLOCK_APU(113);
         if (frame_latch) bus.ppu.fakeSpriteHit(ppu_scanline);
         else bus.ppu.renderScanline(ppu_scanline);
         clock(114);
+        CLOCK_APU(114);
         if (frame_latch) bus.ppu.fakeSpriteHit(ppu_scanline + 1);
         else bus.ppu.renderScanline(ppu_scanline + 1);
         clock(114);
+        CLOCK_APU(114);
         if (frame_latch) bus.ppu.fakeSpriteHit(ppu_scanline + 2);
         else bus.ppu.renderScanline(ppu_scanline + 2);
     }
     clock(113);
+    CLOCK_APU(113);
     bus.ppu.setVBlank();
     clock(2501);
+    CLOCK_APU(2501);
     bus.ppu.clearVBlank();
     clock(114);
+    CLOCK_APU(114);
     frame_latch = !frame_latch;
 #endif
     profileReport(240);

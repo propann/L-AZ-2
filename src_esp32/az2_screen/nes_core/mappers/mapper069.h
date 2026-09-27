@@ -14,4 +14,6 @@ void mapper069_cycle(Mapper* mapper, int cycles);
 void mapper069_reset(Mapper* mapper);
 void mapper069_dumpState(Mapper* mapper, File& state);
 void mapper069_loadState(Mapper* mapper, File& state);
+size_t mapper069_dumpBatteryRam(Mapper* mapper, File& state);
+size_t mapper069_loadBatteryRam(Mapper* mapper, File& state);
 #endif

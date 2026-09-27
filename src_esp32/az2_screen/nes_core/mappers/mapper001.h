@@ -14,4 +14,6 @@ void mapper001_mapPPUPages(Mapper* mapper, Ppu2C02* ppu);
 void mapper001_reset(Mapper* mapper);
 void mapper001_dumpState(Mapper* mapper, File& state);
 void mapper001_loadState(Mapper* mapper, File& state);
+size_t mapper001_dumpBatteryRam(Mapper* mapper, File& state);
+size_t mapper001_loadBatteryRam(Mapper* mapper, File& state);
 #endif

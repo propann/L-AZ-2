@@ -40,7 +40,7 @@
 #ifdef AZ2_DIRECT_PANEL
 #include "AZ2_RGB_Direct.h"
 #endif
-#ifdef AZ2_GB_DUAL_CORE_BLIT
+#if defined(AZ2_GB_DUAL_CORE_BLIT) || defined(AZ2_NES_DUAL_CORE_BLIT)
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
@@ -4597,11 +4597,12 @@ void drawEmuCard(uint8_t index, int16_t y, const char *sub, const char *cta, uin
 
 void drawEmuPickerPage() {
   drawSubHeader("EMULATEURS", kPalette[2]);
-  drawEmuCard(0, kEmuCardGbY, "Peanut-GB DMG - 59,7fps X3 valide", "JOUER >", kPalette[2], true);
+  constexpr uint16_t kGameBoyYellow = RGB565(255, 225, 80);
+  drawEmuCard(0, kEmuCardGbY, "Peanut-GB DMG - 59,7fps X3 valide", "JOUER >", kGameBoyYellow, true);
   drawEmuCard(1, kEmuCardGbcY, "Walnut-CGB - valide 59,7fps, firmware labo separe", "VALIDE (labo)",
-              kPalette[1], true);
-  drawEmuCard(2, kEmuCardNesY, "6502 - etude faite (Anemoia-ESP32, GPLv3)", "PROCHAINEMENT", kFaint,
-              false);
+              kGameBoyYellow, true);
+  drawEmuCard(2, kEmuCardNesY, "6502 - etude faite (Anemoia-ESP32, GPLv3)", "PROCHAINEMENT",
+              kGameBoyYellow, true);
   drawEmuCard(3, kEmuCardNeoY, "TLCS-900H - a etudier plus tard", "PROCHAINEMENT", kFaint, false);
 }
 
@@ -4687,7 +4688,7 @@ void drawNesPage() {
     gfx->setCursor(kMargin, 4);
     gfx->print(nesRomTitle());
     gfx->setCursor(static_cast<int16_t>(kScreenSize - kMargin - 66), 4);
-    gfx->print("C:QUITTER");
+    gfx->print("C:QUITTER D:SAVE");
     return;
   }
   drawSubHeader("NES - choisis une ROM", kPalette[2]);
@@ -4725,20 +4726,44 @@ void nesBlitBandImpl(int bandIndex, const uint16_t *pixels) {
   if (framebuffer == nullptr) return;
   constexpr int16_t kBandLines = 8;
   const int16_t sourceTop = static_cast<int16_t>(bandIndex * kBandLines);
+  // La conversion 256 -> 480 est identique pour toutes les bandes. La
+  // construire une seule fois retire toutes les divisions du chemin chaud
+  // (115 200 lectures de pixels par frame), sans changer le mapping ni la
+  // rotation.
+  static uint8_t nesXMap[kScreenSize];
+  static bool nesXMapReady = false;
+  if (!nesXMapReady) {
+    for (int16_t dstX = 0; dstX < kScreenSize; ++dstX) {
+      nesXMap[dstX] = static_cast<uint8_t>(
+          (static_cast<uint32_t>(kScreenSize - 1 - dstX) * 256u) /
+          static_cast<uint32_t>(kScreenSize));
+    }
+    nesXMapReady = true;
+  }
   for (int16_t row = 0; row < kBandLines; ++row) {
     const uint16_t *src = pixels + row * 256;
-    for (int16_t dy = 0; dy < 2; ++dy) {
-      const int16_t dstY = static_cast<int16_t>(kScreenSize - 1 - ((sourceTop + row) * 2 + dy));
-      uint16_t *dst = framebuffer + dstY * kScreenSize;
-      for (int16_t dstX = 0; dstX < kScreenSize; ++dstX) {
-        const int16_t sourceX = static_cast<int16_t>(((kScreenSize - 1 - dstX) * 256) / kScreenSize);
-        dst[dstX] = src[sourceX];
-      }
+    const int16_t dstY = static_cast<int16_t>(
+        kScreenSize - 1 - ((sourceTop + row) * 2));
+    uint16_t *dst0 = framebuffer + dstY * kScreenSize;
+    uint16_t *dst1 = dst0 - kScreenSize;
+    // NES 256x240 -> ecran 480x480 : l'echelle horizontale est 480/256,
+    // pas 2. Ecrire 512 pixels debordait de 32 pixels sur chaque ligne.
+    // Le calcul inverse conserve le flip 180 degres et reste sans lecture
+    // hors limites du framebuffer.
+    for (int16_t dstX = 0; dstX < kScreenSize; ++dstX) {
+      const uint16_t color = src[nesXMap[dstX]];
+      dst0[dstX] = color;
+      dst1[dstX] = color;
     }
   }
+  // Le panneau RGB lit le framebuffer en DMA : publier chaque bande evite
+  // l'ecran noir/tearing observe avec un unique flush de 480x480.
   const int16_t firstDstY = static_cast<int16_t>(kScreenSize - 1 - (sourceTop * 2 + 15));
   esp_cache_msync(framebuffer + firstDstY * kScreenSize, static_cast<size_t>(16) * kScreenSize * sizeof(uint16_t),
                   ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  // La frame NES peut enchainer 30 bandes sans repasser par loop(). Ceder
+  // regulierement la main evite le timeout du watchdog sur le Core 1.
+  if ((bandIndex & 3) == 3) yield();
 }
 
 void drawRetroPage() {
@@ -6858,6 +6883,9 @@ void handleTeensyLine(const String &line) {
       if (currentScreen == Screen::NesRetro && nesIsLoaded() && index < 2) {
         nesSetButton(static_cast<NesButton>(index), pressed);
       }
+      if (currentScreen == Screen::NesRetro && nesIsLoaded() && letter == 'D' && pressed) {
+        nesSaveRam();
+      }
 #endif
       // Page JEUX, liste de ROM (pas encore charge) : A charge la ROM
       // choisie par la croix -- meme convention que le tactile
@@ -8652,6 +8680,9 @@ void setup() {
   // gbBandReadyQueue (vide) jusqu'au premier gbBlitLine() d'une vraie
   // partie, bien apres l'init ecran plus bas dans ce setup().
   gbBlitDualCoreInit();
+#endif
+#ifdef AZ2_NES_DUAL_CORE
+  nesInitDualCore();
 #endif
   restoreSaverSettings();
 

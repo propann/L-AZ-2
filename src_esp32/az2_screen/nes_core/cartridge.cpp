@@ -1,3 +1,5 @@
+#pragma GCC optimize("Ofast", "unroll-loops", "rename-registers")
+
 #include "cartridge.h"
 #include "bus.h"
 #include "ppu2C02.h"
@@ -25,6 +27,7 @@ Cartridge::Cartridge(const char* filename, ROMBackend backend)
     if (header.mapper1 & 0x04) rom.seek(rom.position() + 512);
 
     mapper_ID = (header.mapper2 & 0xF0) | header.mapper1 >> 4;
+    battery_backed = (header.mapper1 & 0x02) != 0;
     hardware_mirror = (header.mapper1 & 0x01) ? MIRROR::VERTICAL : MIRROR::HORIZONTAL;
 
     uint8_t number_PRG_banks = 0;
@@ -77,15 +80,6 @@ void Cartridge::ppuScanline()
     switch (mapper_ID)
     {
     case 4: return mapper004_scanline(&mapper);
-    default: return;
-    }
-}
-
-void Cartridge::cpuCycle(int cycles)
-{
-    switch (mapper_ID)
-    {
-    case 69: return mapper069_cycle(&mapper, cycles);
     default: return;
     }
 }
@@ -185,6 +179,42 @@ void Cartridge::loadState(File& state)
     case 69: return mapper069_loadState(&mapper, state);
     default: return;
     }
+}
+
+bool Cartridge::hasBatteryRam() const
+{
+    return battery_backed && (mapper_ID == 1 || mapper_ID == 4 || mapper_ID == 69);
+}
+
+size_t Cartridge::batteryRamSize() const
+{
+    return hasBatteryRam() ? 8U * 1024U : 0U;
+}
+
+bool Cartridge::dumpBatteryRam(File& state)
+{
+    size_t written = 0;
+    switch (mapper_ID)
+    {
+    case 1: written = mapper001_dumpBatteryRam(&mapper, state); break;
+    case 4: written = mapper004_dumpBatteryRam(&mapper, state); break;
+    case 69: written = mapper069_dumpBatteryRam(&mapper, state); break;
+    default: return false;
+    }
+    return written == batteryRamSize();
+}
+
+bool Cartridge::loadBatteryRam(File& state)
+{
+    size_t read = 0;
+    switch (mapper_ID)
+    {
+    case 1: read = mapper001_loadBatteryRam(&mapper, state); break;
+    case 4: read = mapper004_loadBatteryRam(&mapper, state); break;
+    case 69: read = mapper069_loadBatteryRam(&mapper, state); break;
+    default: return false;
+    }
+    return read == batteryRamSize();
 }
 
 bool Cartridge::isValid()

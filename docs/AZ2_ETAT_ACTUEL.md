@@ -5,20 +5,21 @@ Ce document est la source de vérité de l’état courant. Les audits datés da
 
 ## Production active
 
-- Branche : `research/peanut-gb-prototype`.
+- Branche de travail : `nes-emulation`.
 - Teensy 4.1 : maître audio, séquenceur, moteurs locaux, SD et DAC I²S.
 - ESP32-S3 écran : interface tactile, page EMULATEURS (3 cartes) et Peanut-GB.
 - Firmware audio de référence : `master_teensy_rack_lab`.
-- Firmware écran de référence : `screen_esp_peanut_gb_core_task` (remplace
-  `screen_esp_peanut_gb_lab` -- meme moteur Peanut-GB, plus le blit sur
-  l’autre coeur, voir "Game Boy" ci-dessous). `screen_esp_peanut_gb_lab`
-  reste buildable (filet de secours) mais n’est plus la cible flashee.
+- Firmware écran de référence pour la passe actuelle : `screen_esp`.
+  Les variantes GB/GBC séparées restent buildables pour les essais de cœur,
+  mais `screen_esp` est la cible flashee qui regroupe le menu et le support
+  NES.
 - Navigation : le bouton JEUX du menu principal ouvre directement la page
   EMULATEURS (Screen::EmuPicker) au lieu de passer par une sous-liste a un
   seul choix -- categorie a un seul item sautee automatiquement
   (`enterMenuCategory()`). 3 cartes : GAME BOY (Peanut-GB, seule cible
   reellement jouable sur CE firmware), GAME BOY COLOR (Walnut-CGB, labo
-  separe, voir plus bas), NES (pas commence, etude faite).
+  separe, voir plus bas), NES (support intégré et validé en jeu, voir le
+  compte rendu dédié).
 
 ## Rack audio
 
@@ -87,19 +88,22 @@ Ce document est la source de vérité de l’état courant. Les audits datés da
   ROM testée), session longue (30 min), aller-retour sauvegarde complet,
   confirmation visuelle utilisateur détaillée (couleurs/scintillement).
 
+## NES
+
+- Support intégré dans `screen_esp` : chargement ROM, contrôleur, audio APU,
+  sauvegardes SRAM et rendu 256×240 vers l’écran 480×480.
+- Mesure matérielle de référence : 49–50 FPS d’émulation stable, avec
+  `FRAMESKIP` actif ; la cible NTSC reste 60,1 FPS.
+- Le reboot watchdog et le débordement du blit vidéo ont été corrigés.
+- Le pipeline d’affichage Core 0 a été essayé puis retiré après une mesure
+  régressive à 36,8 FPS. Les détails sont dans
+  `docs/AZ2_NES_VALIDATION_2026-09-27.md`.
+
 ## Cœurs archivés / étudiés
 
 - GNUBOY : probe séparée, non retenue pour la production.
-- **NES (étude faite, pas commencé)** : candidat identifié —
-  [Anemoia-ESP32](https://github.com/Shim06/Anemoia-ESP32), licence GPLv3
-  (compatible, contrairement à Nofrendo/`esp32-nesemu` qui est GPLv2-only).
-  Cœur bien séparé du matériel (`src/core/` : cpu6502, ppu2C02, apu2A03,
-  bus, cartridge, mapper000-004+069, ~4450 lignes) ; `ppu2C02` expose
-  `connectFramebuffer(uint8_t*)`, découplé de tout pilote d’écran
-  (`TFT_eSPI` n’apparaît que dans le wrapper optionnel `nes.cpp`, pas dans
-  le cœur). 256×240, 60fps natif mesuré, pas de PSRAM requise, 6 mappers
-  (~79% de la ludothèque), son + save states (format SD/CRC32 déjà
-  compatible avec notre `SD.h`). Prochaine grosse session de travail.
+- Neo Geo Pocket / Color : prochaine étude avant intégration ; aucun cœur
+  n’est encore choisi ni compilé dans le firmware de production.
 
 ## MIDI
 

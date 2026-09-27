@@ -38,6 +38,14 @@ void nesRunFrame();
 
 bool nesUnload();
 
+// Sauvegarde SRAM de la cartouche dans /games/<rom>.sav.
+bool nesSaveRam();
+
+#ifdef AZ2_NES_DUAL_CORE
+// Lance la tache APU sur le core 0. Le core 1 garde CPU/PPU et l'interface.
+void nesInitDualCore();
+#endif
+
 const char *nesRomTitle();
 
 // Meme ordre de bits que le registre controleur NES standard ($4016) :

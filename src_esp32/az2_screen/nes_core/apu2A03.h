@@ -39,8 +39,17 @@ public:
     void cpuWrite(uint16_t addr, uint8_t data);
     uint8_t cpuRead(uint16_t addr);
     void setVolume(uint8_t vol);
-    void clock();
+    void clock(uint16_t cycles = 1);
     void reset();
+#ifdef AZ2_NES_DUAL_CORE
+    // Le CPU publie seulement son nombre de cycles ; la tache audio du
+    // core 0 rattrape l'APU hors du chemin chaud CPU/PPU.
+    void scheduleCycles(uint32_t cycles);
+    uint32_t scheduledCycles() const;
+    uint32_t completedCycles() const;
+    void markCyclesComplete(uint32_t cycles);
+    void resetScheduler();
+#endif
     static uint16_t audio_buffer[AUDIO_BUFFER_SIZE * 2];
 
     uint8_t DMC_sample_byte = 0;
@@ -53,6 +62,8 @@ private:
     Cpu6502* cpu = nullptr;
     uint32_t clock_counter = 0;
     uint32_t pulse_hz = 0;
+    volatile uint32_t scheduled_cycles = 0;
+    volatile uint32_t completed_cycles = 0;
     uint16_t prev_sample = 0;
     bool four_step_sequence_mode = true;
 
@@ -207,7 +218,7 @@ private:
     DMCChannel DMC;
     bool DMC_enable = false;
 
-    void generateSample();
+    bool generateSample();
     void writeBuffer();
 
     void pulseChannelClock(sequencerUnit& seq, bool enable);
