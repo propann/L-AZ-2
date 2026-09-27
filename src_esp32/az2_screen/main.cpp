@@ -4591,8 +4591,8 @@ void drawEmuCard(uint8_t index, int16_t y, const char *sub, const char *cta, uin
 void drawEmuPickerPage() {
   drawSubHeader("EMULATEURS", kPalette[2]);
   drawEmuCard(0, kEmuCardGbY, "Peanut-GB DMG - 59,7fps X3 valide", "JOUER >", kPalette[2], true);
-  drawEmuCard(1, kEmuCardGbcY, "Walnut-CGB - firmware labo separe, 59,7fps", "EN COURS", kWarnAmber,
-              false);
+  drawEmuCard(1, kEmuCardGbcY, "Walnut-CGB - valide 59,7fps, firmware labo separe", "VALIDE (labo)",
+              kWarnAmber, false);
   drawEmuCard(2, kEmuCardNesY, "6502 - etude faite (Anemoia-ESP32, GPLv3)", "PROCHAINEMENT", kFaint,
               false);
   drawEmuCard(3, kEmuCardNeoY, "TLCS-900H - a etudier plus tard", "PROCHAINEMENT", kFaint, false);
@@ -4625,7 +4625,7 @@ void emuPickerActivate(uint8_t index) {
   uint16_t color;
   switch (index) {
     case 1:
-      msg = "GBC : disponible sur le firmware labo separe (reflash requis)";
+      msg = "GBC : valide (59,7fps) - firmware labo separe, reflash requis";
       color = kWarnAmber;
       break;
     case 2:
