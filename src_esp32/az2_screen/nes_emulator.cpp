@@ -1,15 +1,11 @@
 // AZ-2 - Pont entre le coeur NES (nes_core/, Anemoia-ESP32) et le reste du
 // firmware -- SD, boutons, telemetrie. Voir nes_emulator.h.
 //
-// [2026-09-27] Premiere passe fonctionnelle : chargement ROM + rendu +
-// manette. PAS encore fait (voir docs/AZ2_ETAT_ACTUEL.md) :
-// - sauvegarde SRAM a pile (Cartridge::dumpState/loadState existent mais
-//   pas encore branches ici, contrairement a la Game Boy) ;
-// - decoupage double coeur (AZ2_GB_DUAL_CORE_BLIT) -- gbBlitLine() et
-//   nesBlitBand() partagent le meme motif "bande de 8 lignes + callback",
-//   reutilisable plus tard, pas fait dans cette premiere passe ;
-// - paquets audio vers le Teensy (nesAudioBufferReady() est un point
-//   d'accroche vide pour l'instant, voir plus bas).
+// [2026-09-27] Passe fonctionnelle : chargement ROM, rendu, manette, audio
+// APU, sauvegarde SRAM et télémétrie sont raccordés. La cible courante active
+// aussi AZ2_NES_DUAL_CORE pour exécuter l’APU sur le core 0. Restent à
+// qualifier : matrice de mappers/ROMs, sessions longues, compatibilité des
+// sauvegardes et optimisation du budget vidéo (49-50 fps mesurés, FRAMESKIP).
 #include "nes_emulator.h"
 
 #include <SD.h>

@@ -7,7 +7,8 @@ Ce document est la source de vérité de l’état courant. Les audits datés da
 
 - Branche de travail : `nes-emulation`.
 - Teensy 4.1 : maître audio, séquenceur, moteurs locaux, SD et DAC I²S.
-- ESP32-S3 écran : interface tactile, page EMULATEURS (3 cartes) et Peanut-GB.
+- ESP32-S3 écran : interface tactile, page EMULATEURS (4 cartes) et les
+  backends Walnut-CGB, NES et NGP RACE intégrés dans la cible courante.
 - Firmware audio de référence : `master_teensy_rack_lab`.
 - Firmware écran de référence pour la passe actuelle : `screen_esp`.
   Les variantes GB/GBC séparées restent buildables pour les essais de cœur,
@@ -16,10 +17,9 @@ Ce document est la source de vérité de l’état courant. Les audits datés da
 - Navigation : le bouton JEUX du menu principal ouvre directement la page
   EMULATEURS (Screen::EmuPicker) au lieu de passer par une sous-liste a un
   seul choix -- categorie a un seul item sautee automatiquement
-  (`enterMenuCategory()`). 3 cartes : GAME BOY (Peanut-GB, seule cible
-  reellement jouable sur CE firmware), GAME BOY COLOR (Walnut-CGB, labo
-  separe, voir plus bas), NES (support intégré et validé en jeu, voir le
-  compte rendu dédié).
+  (`enterMenuCategory()`). 4 cartes : GAME BOY, GAME BOY COLOR, NES et NEO
+  GEO POCKET. Le build flashé reste le `screen_esp` standard restauré après
+  la sonde d’affichage direct ; aucune sonde expérimentale n’est active.
 
 ## Rack audio
 
@@ -35,17 +35,16 @@ Ce document est la source de vérité de l’état courant. Les audits datés da
 
 ## Game Boy
 
-- Cœur actif : Peanut-GB, DMG-only.
-- **Blit sur l’autre cœur (2026-09-27, `AZ2_GB_DUAL_CORE_BLIT`)** : la copie+
-  flush du framebuffer (~16,4ms) tourne maintenant sur une tâche FreeRTOS
-  dédiée au core 0 (libre, ce firmware n’utilise ni WiFi ni BT), en
-  parallèle du cœur CPU+PPU sur le core 1. Double buffer + 2 files FreeRTOS,
-  toutes les attentes sont **bornées** (`kGbBandWaitTicks`, 50ms, pas
-  `portMAX_DELAY`) pour qu’un déséquilibre ne puisse plus jamais geler
-  `loop()` (tactile/boutons restent réactifs même en cas de souci
-  d’affichage).
-- **X3 : validé à 59,76 fps sur matériel réel** (contre ~40-50 avant) —
-  n’est plus "plus lent", X2 et X3 tournent tous les deux plein débit.
+- Cœur de la cible courante : Walnut-CGB (`gb_emulator.cpp`). Le backend
+  Peanut-GB (`gb_emulator_peanut.cpp`) reste disponible dans les
+  environnements labo mais est explicitement exclu de `screen_esp`.
+- La sonde `AZ2_GB_DUAL_CORE_BLIT` déporte la copie+flush du framebuffer sur
+  le core 0 avec double buffer et attentes bornées. Elle est validée dans les
+  environnements labo core-task, mais n’est pas activée dans le build standard
+  actuellement flashé.
+- **X3 : validé à 59,76 fps sur matériel réel** dans le backend Peanut-GB de
+  labo (référence 59,73 fps, soit **100,1 %**). Cette mesure ne doit pas être
+  attribuée automatiquement au backend Walnut de la cible courante.
   X2 reste dispo si besoin d’une marge supplémentaire.
 - Boutons AFFICHAGE (X2/X3) agrandis (150×34, texte taille 2) sur la page
   JEUX.
@@ -58,14 +57,12 @@ Ce document est la source de vérité de l’état courant. Les audits datés da
   restent à qualifier plus largement (une seule ROM en session longue à ce
   jour).
 
-## Game Boy Color (labo, pas en production)
+## Game Boy Color
 
 - Cœur : Walnut-CGB (`WALNUT_FULL_GBC_SUPPORT=1`), même découpage double
-  cœur que Peanut-GB ci-dessus. Firmware séparé :
-  `screen_esp_walnut_gbc_core_task` -- **ne peut pas être compilé dans le
-  même binaire que Peanut-GB** (collision de symboles, `gb_emulator.cpp` vs
-  `gb_emulator_peanut.cpp`) ; le flasher remplace temporairement le firmware
-  GAME BOY validé sur la carte, à reflasher explicitement après usage.
+  cœur que Peanut-GB ci-dessus. Firmware de validation séparé :
+  `screen_esp_walnut_gbc_core_task` reste une sonde de validation du blit sur
+  l’autre cœur ; **il ne faut pas le flasher pendant cette pause**.
 - Bug de blocage trouvé et corrigé (2026-09-27) : `gb_run_frame_dualfetch()`
   saute `gbBlitLine()` entièrement quand `gb->lcd_blank` est vrai
   (walnut_cgb.h) ; si ça arrive en plein milieu d’une bande de 8 lignes, le
@@ -82,8 +79,7 @@ Ce document est la source de vérité de l’état courant. Les audits datés da
   de la cartouche, pas un bug AZ-2) : `core_avg_us` grimpe à ~16,4-17,2ms
   pendant l’intro puis redescend en jeu normal.
 - Page EMULATEURS : la carte GAME BOY COLOR lance réellement une partie sur
-  CE firmware (`#ifndef AZ2_GB_CORE_PEANUT`) ; sur le firmware stable
-  Peanut-GB, elle reste un message informatif (pas de moteur GBC compilé).
+  la cible courante (`#ifndef AZ2_GB_CORE_PEANUT`).
 - Reste à qualifier : matrice de compatibilité ROM plus large (une seule
   ROM testée), session longue (30 min), aller-retour sauvegarde complet,
   confirmation visuelle utilisateur détaillée (couleurs/scintillement).
@@ -93,17 +89,34 @@ Ce document est la source de vérité de l’état courant. Les audits datés da
 - Support intégré dans `screen_esp` : chargement ROM, contrôleur, audio APU,
   sauvegardes SRAM et rendu 256×240 vers l’écran 480×480.
 - Mesure matérielle de référence : 49–50 FPS d’émulation stable, avec
-  `FRAMESKIP` actif ; la cible NTSC reste 60,1 FPS.
+  `FRAMESKIP` actif ; la cible NTSC reste 60,1 FPS, soit **81,5–83,2 %**.
 - Le reboot watchdog et le débordement du blit vidéo ont été corrigés.
 - Le pipeline d’affichage Core 0 a été essayé puis retiré après une mesure
   régressive à 36,8 FPS. Les détails sont dans
   `docs/AZ2_NES_VALIDATION_2026-09-27.md`.
 
+## Neo Geo Pocket / Color
+
+- Le cœur RACE est maintenant compilé dans `screen_esp` avec son adaptateur
+  AZ-2 (`src_esp32/az2_screen/ngp_emulator.cpp`) et le bouton jaune NEO GEO
+  POCKET est raccordé à la navigation, aux commandes, au son et aux fichiers
+  de sauvegarde.
+- Le firmware standard a été restauré après la sonde Core 0 / framebuffer
+  direct. L’intégration NGP compilée n’est **pas encore qualifiée en
+  production** ; la seule mesure reproductible est la cible labo isolée :
+  environ 17 fps, soit **28,3 %** d’une cadence 60 Hz.
+- Le pipeline NGP double cœur/direct est désactivé dans `screen_esp` après
+  régression d’affichage et de commandes. Il reste du code conditionnel pour
+  une reprise séparée, mais il ne fait pas partie du firmware flashé.
+- RACE est GPLv2-only : la présence de ses sources dans le build courant est
+  un point juridique à traiter avant une diffusion de production. Voir
+  l’audit et `docs/AZ2_NGP_ETUDE_2026-09-27.md`.
+
 ## Cœurs archivés / étudiés
 
 - GNUBOY : probe séparée, non retenue pour la production.
-- Neo Geo Pocket / Color : prochaine étude avant intégration ; aucun cœur
-  n’est encore choisi ni compilé dans le firmware de production.
+- RACE conserve aussi une cible labo isolée `screen_esp_ngp_race_lab`, utile
+  pour reproduire la mesure des 17 fps sans toucher aux autres émulateurs.
 
 ## MIDI
 
@@ -140,6 +153,9 @@ câblage de production.
   matériel réel (59,76fps X3, boutons/tactile confirmés).
 - `pio run -e screen_esp_walnut_gbc_core_task` : OK, flashé et validé sur
   matériel réel (voir "Game Boy Color" ci-dessus).
+- `pio run -e screen_esp` : OK après restauration du build standard ; le
+  firmware a redémarré avec `DISPLAY:ALIVE:TICK`, audio prêt et événements de
+  boutons confirmés sur le port série.
 - `pio run -e master_teensy_rack_lab` : OK.
 - `pio test -e native` : 21/21 tests réussis lors de la dernière campagne.
 - Bug d'entrelacement série trouvé (des lignes `GB:PERF`/`TOUCH:...` se

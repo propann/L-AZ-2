@@ -38,8 +38,9 @@ donc être rangées par console dans des sous-dossiers :
 ```
 
 Les extensions `.gb`, `.gbc` et `.nes` doivent rester en minuscules pour
-faciliter la détection. Les ROMs Neo Geo Pocket peuvent être archivées dans
-un dossier séparé, mais elles ne sont pas encore jouables par le firmware.
+faciliter la détection. Le code NGP cherche aussi `.ngp`, `.NGP`, `.ngc` et
+`.NGC` sous `/games/`. L’intégration est encore en qualification et ne doit
+pas être annoncée comme un émulateur de production validé.
 
 Les WAV et samples ne vont pas sur cette carte : ils appartiennent à la carte
 SD du Teensy, dans `/samples/`.
@@ -51,9 +52,8 @@ SD du Teensy, dans `/samples/`.
   World/USA lorsque la version française n’existe pas.
 - NES : archive `.nes` ; exclure les entrées Pirate, doublons et hacks
   multiples ; privilégier Europe/France, World puis USA.
-- Neo Geo Pocket : collection NGPC ; le cœur NGPC n’est pas encore intégré
-  au firmware AZ-2, les fichiers peuvent être archivés mais ne sont pas
-  encore jouables sur la machine.
+- Neo Geo Pocket : collection NGPC ; conserver les ROMs dans `/games/` et
+  valider séparément le chargement, l’audio et les sauvegardes.
 
 Les archives originales de `Downloads/` ne doivent pas être supprimées.
 

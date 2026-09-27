@@ -1,5 +1,19 @@
 # AZ-2 — étude Neo Geo Pocket / Color (2026-09-27)
 
+## Mise à jour de clôture de session
+
+Le prototype RACE a finalement été raccordé au firmware `screen_esp` pour
+aligner le bouton jaune, les commandes, le rendu, l’audio et la sauvegarde
+avec les autres émulateurs. Cette intégration est compilée, mais elle n’est
+pas encore acceptée comme production : la validation matérielle a été
+suspendue après une sonde d’affichage direct qui a été retirée, puis le
+firmware standard a été restauré. La sonde double cœur NGP reste désactivée.
+
+La mesure disponible reste celle de la cible labo isolée : environ 17 fps,
+soit 28,3 % d’une cadence 60 Hz. Il ne faut pas présenter cette valeur comme
+la vitesse de l’intégration `screen_esp` tant qu’un test dédié n’a pas été
+refait.
+
 ## Résultat court
 
 Le candidat technique le plus adapté à l’ESP32-S3 est **RACE** : il possède
@@ -16,7 +30,7 @@ Sources de référence : [RACE Libretro](https://github.com/libretro/RACE),
 
 | Cœur | Avantage | Limite pour AZ-2 | Décision |
 | --- | --- | --- | --- |
-| RACE | Déjà optimisé pour petits systèmes et déjà adapté à ESP32-S3 | GPLv2-only ; ne peut pas être lié directement au firmware AZ-2 GPLv3 sans clarification de licence | meilleur prototype de performance, dans une cible séparée |
+| RACE | Déjà optimisé pour petits systèmes et déjà adapté à ESP32-S3 | GPLv2-only ; statut juridique à clarifier avant diffusion | prototype intégré techniquement, qualification et décision de licence en attente |
 | Beetle NeoPop / Mednafen | Mature, NGP + NGPC, sauvegardes et états | GPLv2 ; plus lourd et aucune preuve ESP32-S3 dans notre cible | écarté pour le premier port |
 | NgpCraft | MIT, cœur C++ moderne avec ABI C et audio/vidéo séparés | espace mémoire plat de 16 Mo, `std::vector`, environ 9 600 lignes C++ ; dépassement direct de la contrainte 8 Mo PSRAM | seule voie juridiquement simple pour `screen_esp`, mais nécessite une vraie refonte mémoire |
 
@@ -32,21 +46,23 @@ sans garder un firmware séparé sous GPLv2.
 - contrôleur AZ-2 : croix, A, B, Select/Start et sortie dédiée ;
 - audio : même chaîne Teensy que NES/GB, mais le cœur RACE produit son propre
   flux PSG à convertir en paquets AZ-2 ;
-- sauvegarde : fichier `.sav` par ROM, avec rotation `.tmp`/`.bak` comme NES ;
+- sauvegarde : fichier `.ngf` par ROM dans l’adaptateur actuel ; la rotation
+  atomique et la compatibilité avec les autres formats restent à qualifier ;
 - mémoire : conserver les buffers vidéo en DRAM/PSRAM selon les besoins DMA,
   sans modifier le moteur GB/GBC.
 
 ## Décision de travail
 
-1. **Prototype performance** : RACE dans une cible firmware NGPC séparée,
-   basée sur le port ESP32-S3 Nano-S3, pour vérifier l’affichage AZ-2, les
-   boutons, le son et les sauvegardes sans contaminer `screen_esp`.
-2. **Intégration production** : uniquement après validation du prototype et
-   clarification de licence. Si l’intégration doit rester dans `screen_esp`,
-   partir sur NgpCraft MIT avec une mémoire paginée/sparse adaptée à l’ESP32-S3,
-   plutôt que de copier son espace plat de 16 Mo.
-3. Le bouton Neo Geo Pocket reste visuellement présent mais ne sera pas rendu
-   jouable tant qu’un cœur réellement intégré et testé n’existe pas.
+1. **Référence performance** : conserver la cible firmware NGPC séparée,
+   basée sur le port ESP32-S3 Nano-S3, pour reproduire les mesures sans
+   perturber le firmware standard.
+2. **Intégration production** : la branche technique RACE existe dans
+   `screen_esp`, mais son acceptation dépend encore de la qualification
+   matérielle et de la clarification de licence. Si RACE est écarté, étudier
+   NgpCraft MIT avec une mémoire paginée/sparse adaptée à l’ESP32-S3.
+3. Le bouton Neo Geo Pocket est intégré en jaune dans `screen_esp` et ouvre
+   le navigateur NGP ; la cible labo reste disponible pour reproduire la
+   mesure de performance sans toucher au firmware standard.
 
 ## Plan de port du prototype RACE
 
@@ -60,6 +76,10 @@ sans garder un firmware séparé sous GPLv2.
 
 ## État
 
-Étude terminée, candidat technique choisi : **RACE en prototype isolé**.
-L’intégration dans le firmware de production attend la décision de licence
-entre firmware NGPC séparé et port MIT NgpCraft.
+Étude technique terminée, candidat choisi : **RACE**. Le cœur et son
+adaptateur sont maintenant présents dans le code de `screen_esp`, et la
+cible labo compile toujours séparément. Le premier test matériel de la cible
+labo charge une ROM `.ngp/.ngc`, reconnaît la PSRAM et produit environ 17 fps
+avec le rendu 3×. Restent la qualification de l’intégration standard, la
+validation audio/contrôles/sauvegarde sur plusieurs ROMs et la décision de
+licence GPLv2.
