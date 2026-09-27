@@ -36,6 +36,7 @@
 #include <SD.h>
 #include <Preferences.h>
 #include "gb_emulator.h"
+#include "nes_emulator.h"
 #ifdef AZ2_DIRECT_PANEL
 #include "AZ2_RGB_Direct.h"
 #endif
@@ -289,7 +290,7 @@ bool inBox(int16_t x, int16_t y, int16_t bx, int16_t by, int16_t bw, int16_t bh)
 // ---------------------------------------------------------------------
 // Etat partage entre les pages / le lien Teensy
 // ---------------------------------------------------------------------
-enum class Screen : uint8_t { Menu, Controls, Audio, Sampler, Sequencer, Engines, Retro, Config, Links, About, Patch, Song, Project, Mixer, StepSeq, EmuPicker };
+enum class Screen : uint8_t { Menu, Controls, Audio, Sampler, Sequencer, Engines, Retro, Config, Links, About, Patch, Song, Project, Mixer, StepSeq, EmuPicker, NesRetro };
 Screen currentScreen = Screen::Menu;
 // "Retour" (2026-09-19, "il faut pas que ca revienne aux menu general
 // il faut que ca revienne d'un etage seulement") -- UN SEUL niveau
@@ -4611,6 +4612,12 @@ void drawEmuPickerPage() {
 // n'est integre, message honnete dans les 2 cas.
 void emuPickerActivate(uint8_t index) {
   emuPickerSelected = static_cast<int8_t>(index);
+#ifdef AZ2_NES_ENABLED
+  if (index == 2) {
+    goTo(Screen::NesRetro);
+    return;
+  }
+#endif
   if (index == 0) {
     goTo(Screen::Retro);
     return;
@@ -4642,6 +4649,89 @@ void emuPickerActivate(uint8_t index) {
   gfx->setTextColor(color);
   gfx->setCursor(kMargin, 5);
   gfx->print(msg);
+}
+
+// [2026-09-27] Page NES : premiere passe fonctionnelle (voir nes_emulator.cpp
+// pour ce qui manque encore -- sauvegarde SRAM, double coeur, audio). Volontairement
+// minimale (pas de X2/X3, pas de pagination, pas de menu en jeu) pour valider
+// le coeur d'abord, comme la toute premiere version de la page JEUX GB.
+char nesRomNames[kNesMaxRoms][kNesRomNameLen];
+uint8_t nesRomCount = 0;
+int8_t nesRomScroll = 0;
+uint8_t nesSelectedRomIndex = 0;
+constexpr uint8_t kNesVisibleRows = 10;
+constexpr int16_t kNesRowH = 36;
+constexpr int16_t kNesRowTop = 70;
+// Image NES agrandie sur toute la dalle 480x480. Le ratio est legerement
+// etire (480/256 contre 480/240), mais la lecture est bien plus confortable
+// et reste coherente avec le framebuffer RGB direct.
+constexpr int16_t kNesScreenLeft = 0;
+constexpr int16_t kNesScreenTop = 0;
+
+void drawNesPage() {
+  if (nesIsLoaded()) {
+    gfx->fillRect(0, 0, kScreenSize, kNesScreenTop, RGB565_BLACK);
+    gfx->fillRect(0, static_cast<int16_t>(kNesScreenTop + 240), kScreenSize,
+                  static_cast<int16_t>(kScreenSize - kNesScreenTop - 240), RGB565_BLACK);
+    gfx->fillRect(0, 0, kNesScreenLeft, kScreenSize, RGB565_BLACK);
+    gfx->fillRect(static_cast<int16_t>(kNesScreenLeft + 256), 0,
+                  static_cast<int16_t>(kScreenSize - kNesScreenLeft - 256), kScreenSize, RGB565_BLACK);
+    gfx->setTextSize(1);
+    gfx->setTextColor(kDim);
+    gfx->setCursor(kMargin, 4);
+    gfx->print(nesRomTitle());
+    gfx->setCursor(static_cast<int16_t>(kScreenSize - kMargin - 66), 4);
+    gfx->print("C:QUITTER");
+    return;
+  }
+  drawSubHeader("NES - choisis une ROM", kPalette[2]);
+  if (nesRomCount == 0) {
+    gfx->setTextSize(1);
+    gfx->setTextColor(kDim);
+    gfx->setCursor(kMargin, 80);
+    gfx->print("Aucune ROM trouvee dans /nes.");
+    return;
+  }
+  gfx->fillRect(kMargin, kNesRowTop, static_cast<int16_t>(kScreenSize - 2 * kMargin),
+                static_cast<int16_t>(kNesVisibleRows * kNesRowH), RGB565_BLACK);
+  const uint8_t visible =
+      static_cast<uint8_t>(min<int>(kNesVisibleRows, nesRomCount - nesRomScroll));
+  for (uint8_t i = 0; i < visible; ++i) {
+    const uint8_t idx = static_cast<uint8_t>(nesRomScroll + i);
+    const int16_t y = static_cast<int16_t>(kNesRowTop + i * kNesRowH);
+    gfx->fillRect(kMargin, y, static_cast<int16_t>(kScreenSize - 2 * kMargin),
+                  static_cast<int16_t>(kNesRowH - 6), RGB565_BLACK);
+    gfx->drawRect(kMargin, y, static_cast<int16_t>(kScreenSize - 2 * kMargin),
+                  static_cast<int16_t>(kNesRowH - 6),
+                  idx == nesSelectedRomIndex ? RGB565_WHITE : kPalette[idx % kPaletteCount]);
+    gfx->setTextSize(1);
+    gfx->setTextColor(RGB565_WHITE);
+    gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(y + 10));
+    gfx->print(nesRomNames[idx]);
+  }
+}
+
+// Bande de 8 lignes NES (256px RGB565), agrandie en 480x480 -- meme principe
+// que gbBlitLine(), avec flip 180 degres (meme panneau physique que la GB).
+void nesBlitBandImpl(int bandIndex, const uint16_t *pixels) {
+  uint16_t *framebuffer = gfx->getFramebuffer();
+  if (framebuffer == nullptr) return;
+  constexpr int16_t kBandLines = 8;
+  const int16_t sourceTop = static_cast<int16_t>(bandIndex * kBandLines);
+  for (int16_t row = 0; row < kBandLines; ++row) {
+    const uint16_t *src = pixels + row * 256;
+    for (int16_t dy = 0; dy < 2; ++dy) {
+      const int16_t dstY = static_cast<int16_t>(kScreenSize - 1 - ((sourceTop + row) * 2 + dy));
+      uint16_t *dst = framebuffer + dstY * kScreenSize;
+      for (int16_t dstX = 0; dstX < kScreenSize; ++dstX) {
+        const int16_t sourceX = static_cast<int16_t>(((kScreenSize - 1 - dstX) * 256) / kScreenSize);
+        dst[dstX] = src[sourceX];
+      }
+    }
+  }
+  const int16_t firstDstY = static_cast<int16_t>(kScreenSize - 1 - (sourceTop * 2 + 15));
+  esp_cache_msync(framebuffer + firstDstY * kScreenSize, static_cast<size_t>(16) * kScreenSize * sizeof(uint16_t),
+                  ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 }
 
 void drawRetroPage() {
@@ -5754,6 +5844,11 @@ void drawScreen(Screen s) {
     case Screen::Sequencer: drawSequencerPage(); break;
     case Screen::Engines: drawEnginesPage(); break;
     case Screen::EmuPicker: drawEmuPickerPage(); break;
+#ifdef AZ2_NES_ENABLED
+    case Screen::NesRetro: drawNesPage(); break;
+#else
+    case Screen::NesRetro: break;
+#endif
     case Screen::Retro: drawRetroPage(); break;
     case Screen::Config: drawConfigPage(); break;
     case Screen::Links: drawLinksPage(); break;
@@ -5812,6 +5907,13 @@ void goTo(Screen s) {
     gbRomScroll = 0;
     selectedRomIndex = 0;
   }
+#ifdef AZ2_NES_ENABLED
+  if (s == Screen::NesRetro && !nesIsLoaded()) {
+    nesRomCount = nesScanRoms(nesRomNames);
+    nesRomScroll = 0;
+    nesSelectedRomIndex = 0;
+  }
+#endif
   if (s == Screen::EmuPicker) {
     emuPickerSelected = 0;
   }
@@ -6163,6 +6265,25 @@ void handleTeensyLine(const String &line) {
             gbSetButton(static_cast<GbButton>(index), pressed);
           }
         }
+#ifdef AZ2_NES_ENABLED
+        if (currentScreen == Screen::NesRetro && nesIsLoaded()) {
+          if (index <= 3) nesSetButton(static_cast<NesButton>(index + 4), pressed);
+          if (index == 1) nesSetButton(NesButton::Select, pressed);
+          if (index == 2) nesSetButton(NesButton::Start, pressed);
+          if ((index == 1 || index == 2) && encSwState[1] && encSwState[2]) {
+            goTo(navPrevious);
+          }
+        }
+        if (pressed && currentScreen == Screen::NesRetro && !nesIsLoaded() && nesRomCount > 0 &&
+            (index == 0 || index == 1)) {
+          if (index == 1 && nesSelectedRomIndex + 1 < nesRomCount) ++nesSelectedRomIndex;
+          if (index == 0 && nesSelectedRomIndex > 0) --nesSelectedRomIndex;
+          if (nesSelectedRomIndex < nesRomScroll) nesRomScroll = nesSelectedRomIndex;
+          if (nesSelectedRomIndex >= nesRomScroll + kNesVisibleRows)
+            nesRomScroll = nesSelectedRomIndex - kNesVisibleRows + 1;
+          drawNesPage();
+        }
+#endif
         // Page JEUX, liste de ROM (pas encore charge) : HAUT/BAS
         // deplacent la selection surlignee (voir selectedRomIndex plus
         // haut, demande 2026-09-17 -- "je peux pas selectionner une rom
@@ -6683,6 +6804,9 @@ void handleTeensyLine(const String &line) {
   } else if (line.startsWith("BTN:") && line.length() >= 6) {
     const char letter = line.charAt(4);
     const bool pressed = line.endsWith("DOWN");
+    // Snapshot avant les actions de cet appui : ouvrir la carte NES avec A
+    // ne doit pas reutiliser le meme A pour lancer sa premiere ROM.
+    const Screen screenAtButton = currentScreen;
     if (pressed) {
       noteActivity();
       if (screensaverActive) {
@@ -6728,6 +6852,13 @@ void handleTeensyLine(const String &line) {
           gbSetButton(kGbMap[index], pressed);
         }
       }
+#ifdef AZ2_NES_ENABLED
+      if (currentScreen == Screen::NesRetro && nesIsLoaded() && index < 4) {
+        // La NES n'a pas de gachettes : C/D doublent A/B et ne quittent
+        // jamais la partie. La sortie reste reservee au combo START+SELECT.
+        nesSetButton(static_cast<NesButton>(index == 2 ? 0 : index == 3 ? 1 : index), pressed);
+      }
+#endif
       // Page JEUX, liste de ROM (pas encore charge) : A charge la ROM
       // choisie par la croix -- meme convention que le tactile
       // (toucher une ligne), et que A pour confirmer ailleurs (menu).
@@ -6817,6 +6948,12 @@ void handleTeensyLine(const String &line) {
       if (pressed && letter == 'A' && currentScreen == Screen::EmuPicker) {
         emuPickerActivate(static_cast<uint8_t>(emuPickerSelected));
       }
+#ifdef AZ2_NES_ENABLED
+      if (pressed && letter == 'A' && screenAtButton == Screen::NesRetro &&
+          currentScreen == Screen::NesRetro && !nesIsLoaded() && nesRomCount > 0) {
+        if (nesLoadRom(nesRomNames[nesSelectedRomIndex])) drawNesPage();
+      }
+#endif
       if (pressed && letter == 'A' && currentScreen == Screen::Menu) {
         if (menuCategory < 0) {
           enterMenuCategory(static_cast<uint8_t>(menuSelected));
@@ -6901,7 +7038,8 @@ void handleTeensyLine(const String &line) {
         snprintf(msg, sizeof(msg), "STEP:%d:%d:%d", track, step, newState ? 1 : 0);
         sendToTeensy(msg);
         drawStepSeqPage();
-      } else if (pressed && letter == 'C' && currentScreen != Screen::Menu && !inGbGame) {
+      } else if (pressed && letter == 'C' && currentScreen != Screen::Menu && !inGbGame &&
+                 !(currentScreen == Screen::NesRetro && nesIsLoaded())) {
         // Toute page ouverte depuis une catégorie revient à cette
         // catégorie, même après un détour par MOTEURS, PATCH ou AUDIO.
         // Les pages ouvertes hors menu gardent le retour d'un niveau.
@@ -6911,6 +7049,11 @@ void handleTeensyLine(const String &line) {
           goTo(enginesReturnScreen);
         } else if (currentScreen == Screen::Retro) {
           goTo(Screen::EmuPicker);
+#ifdef AZ2_NES_ENABLED
+        } else if (currentScreen == Screen::NesRetro) {
+          nesUnload();
+          goTo(Screen::EmuPicker);
+#endif
         } else if (menuReturnCategory >= 0) {
           goTo(Screen::Menu);
         } else {
@@ -7283,6 +7426,15 @@ void handleTeensyLine(const String &line) {
             }
           }
         }
+#ifdef AZ2_NES_ENABLED
+        if (currentScreen == Screen::NesRetro && nesIsLoaded()) {
+          if (index == 1) {
+            nesSetButton(NesButton::Select, pressed);
+          } else if (index == 2) {
+            nesSetButton(NesButton::Start, pressed);
+          }
+        }
+#endif
         if (currentScreen == Screen::Audio && index == 1 && !pressed) {
           const bool longPress = (millis() - encPressStartedMs[index]) >= kEncoderLongPressMs;
           if (longPress) {
@@ -8083,6 +8235,13 @@ void runIntro() {
 }
 
 }  // namespace
+
+// Public trampoline required by nes_emulator.cpp. The UI helpers above live
+// in the private translation-unit namespace; keep the emulator callback
+// interface global without exposing the display object to the NES core.
+void nesBlitBand(int bandIndex, const uint16_t *pixels) {
+  nesBlitBandImpl(bandIndex, pixels);
+}
 
 // Rendu Game Boy (voir gb_emulator.h/.cpp) : hors namespace anonyme pour
 // avoir un lien externe (appelee depuis gb_emulator.cpp, autre unite de
@@ -9379,6 +9538,12 @@ void loop() {
     gbMissedFrames = 0;
     gbFpsWindowStartMs = now;
   }
+
+#ifdef AZ2_NES_ENABLED
+  if (currentScreen == Screen::NesRetro && nesIsLoaded() && !screensaverActive) {
+    nesRunFrame();
+  }
+#endif
 
   if (now - lastHeartbeatMs >= 1000) {
     lastHeartbeatMs = now;
