@@ -21,6 +21,7 @@
 - [Audit des émulateurs, vitesses et code dormant du 27 septembre 2026](AZ2_AUDIT_EMULATEURS_2026-09-27.md)
 - [Étude Neo Geo Pocket / Color du 27 septembre 2026](AZ2_NGP_ETUDE_2026-09-27.md)
 - [Prototype NGPC RACE labo et test des contrôles](AZ2_NGP_RACE_LAB_2026-09-27.md)
+- [Bip parasite périodique — journal de diagnostic du 28 septembre 2026](AZ2_BIP_PARASITE_2026-09-28.md)
 
 La référence matérielle actuelle est le couple Teensy 4.1 + écran VIEWE
 UEDX48480040E-WB-V1.3. Les commandes sont raccordées directement au Teensy.

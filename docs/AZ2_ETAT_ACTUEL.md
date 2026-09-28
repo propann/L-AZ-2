@@ -120,13 +120,38 @@ Ce document est la source de vérité de l’état courant. Les audits datés da
 
 ## MIDI
 
-- USB MIDI : désactivé dans le firmware de production pour éviter les
-  déclenchements parasites et les perturbations audio ; USB reste réservé
-  aux commandes série AZ2.
-- MIDI DIN : désactivé tant que les composants MIDI ne sont pas soudés et
-  validés électriquement.
-- RX MIDI est maintenu dans un état fixe pour éviter les déclenchements
-  parasites.
+- Le composant MIDI (6N138) n'est PAS monté. Tant qu'il ne l'est pas, le
+  firmware ne contient plus aucun code MIDI : le code USB MIDI et le parseur
+  MIDI DIN ont été supprimés, pas seulement désactivés par un `#ifdef`.
+- USB reste un port série de commandes AZ2 uniquement ; `usbMIDI` n'est
+  jamais lu.
+- MIDI DIN : `Serial8` n'est **jamais ouvert**. L'UART n'échantillonne donc
+  même pas la broche — aucun octet ne peut devenir une note, même si la
+  broche du 6N138 absent capte du bruit électrique.
+- Les deux broches du circuit absent sont figées par pull-down interne :
+  pin 34 (RX8) et pin 35 (TX8), dans `setup()`. Une entrée CMOS laissée
+  flottante oscille au gré du bruit et injecte du courant de commutation
+  dans l'alimentation partagée avec le PCM5102A.
+- Réactivation : seulement après montage **et** validation électrique du
+  6N138 (voir `docs/AZ2_RACK_PINOUT.md`). Le code MIDI supprimé reste
+  consultable dans l'historique git.
+
+## Bip parasite périodique — NON RÉSOLU
+
+- Bip d'environ une fois par seconde, présent dans **toute** l'application
+  (pas seulement les émulateurs), qui survit à STOP et à PANIC et que **seule
+  une coupure d'alimentation** fait disparaître.
+- Absent sur la version figée du 28 septembre 2026, après redémarrage. **La
+  cause n'est pas identifiée.**
+- C'est un état **verrouillé** : `panicAllAudio()` ne coupe que les voix,
+  aucun chemin logiciel ne remet le bus audio à zéro (anneau GB,
+  rééchantillonneur, reverb, delay, retour rack).
+- Trois tentatives sont épuisées et ne doivent pas être recommencées
+  (métronome, MIDI, retour rack). Le MIDI est **définitivement écarté**.
+- À la prochaine occurrence : relever `RACK:STATUS` et `GB:AUDIO_RX`
+  **avant** de redémarrer — le redémarrage détruit la preuve.
+- Détail complet, mesures et étapes suivantes :
+  `docs/AZ2_BIP_PARASITE_2026-09-28.md`.
 
 ## Audio et sampleur
 
