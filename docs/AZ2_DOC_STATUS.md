@@ -18,6 +18,12 @@ obsolètes.
 
 ## Archivé
 
+Le **MIDI** est archivé depuis le 28 septembre 2026 : la puce 6N138 n'est pas
+soudée et tout le code MIDI a été supprimé du firmware (commit `bbb584c`,
+vérifié sur le binaire lié). Les sections MIDI de
+`AZ2_ARCHITECTURE_MIDI_ET_MOTEURS_EXTERNES.md` et de `AZ2_RACK_PINOUT.md`
+portent un bandeau d'archivage et ne décrivent plus le firmware réel.
+
 Les documents Pico/LED (`AZ2_CABLAGE_PICO*.md`, `AZ2_TODO_PICO.md`) décrivent un
 chantier abandonné. Ils sont conservés pour traçabilité et ne doivent pas être
 utilisés comme plan de câblage de production.

@@ -23,7 +23,23 @@ SPECTRAL -> S3 agrégateur envisagé -> I2S Teensy
                                       -> mixage/effets -> PCM5102A
 ```
 
-## 2. MIDI DIN avec 6N138
+## 2. MIDI DIN avec 6N138 — ARCHIVÉ, NON MONTÉ
+
+> **Section archivée le 28 septembre 2026. Ne pas l'utiliser comme référence.**
+>
+> Le 6N138 **n'est pas soudé**. Tout le code MIDI a été **supprimé** du
+> firmware au commit `bbb584c` : ni USB MIDI, ni parseur DIN, et `Serial8`
+> n'est jamais ouvert. Vérifié sur le binaire lié (`firmware.elf`) : aucun
+> symbole `usb_midi`/`usbMIDI`/`MIDIDevice`, aucune trace de `Serial8`,
+> aucune chaîne MIDI dans le descripteur USB.
+>
+> Les pins 34 (RX8) et 35 (TX8) sont figées par pull-down interne dans
+> `setup()`. Le texte ci-dessous décrit un firmware **qui n'existe plus** ; il
+> est conservé uniquement pour le jour où la puce sera montée. Le code
+> supprimé reste consultable dans l'historique git.
+>
+> Voir `AZ2_BIP_PARASITE_2026-09-28.md` : le MIDI a été écarté comme cause du
+> bip parasite, preuve par le binaire.
 
 Le 6N138 est réservé à une **entrée MIDI DIN isolée du Teensy**. Il ne doit
 pas être raccordé au S3. Le schéma devra garantir : UART 31250 bit/s 8-N-1,

@@ -146,7 +146,14 @@ mixage, la sélection indépendante et la coupure générale sont validés. Avan
 l'intégration UI, les moteurs doivent passer d'un rendu continu de benchmark
 à des voix déclenchées par `NOTE_ON`/`NOTE_OFF` avec hauteur et enveloppe.
 
-## MIDI DIN IN réservé au Teensy
+## MIDI DIN IN réservé au Teensy — ARCHIVÉ, NON MONTÉ
+
+> **Section archivée le 28 septembre 2026.** Le 6N138 n'est pas soudé et tout
+> le code MIDI a été supprimé du firmware (commit `bbb584c`). Les pins 34 et
+> 35 sont figées par pull-down interne. Ce câblage n'est à réaliser que le
+> jour où le MIDI sera réellement remonté, et il faudra alors retirer ces
+> pull-downs.
+
 
 | Signal | Connexion |
 |---|---|
