@@ -8,7 +8,7 @@ Ce guide explique comment **jouer avec la machine**, pas comment la construire o
 
 L'AZ-2 est une groovebox distribuée sur quatre cartes programmables :
 
-- **Teensy 4.1** (le master audio) : tracker, sept moteurs locaux, mixage, MIDI et sortie PCM5102A.
+- **Teensy 4.1** (le master audio) : tracker, neuf moteurs locaux, mixage, MIDI et sortie PCM5102A.
 - **ESP32-S3 écran** : interface tactile 480×480 et prototypes GB/GBC non validés.
 - **ESP32-S3 N16R8** : moteur GRANULAR et agrégation du rack audio.
 - **ESP-WROOM-32D** : moteur SPECTRAL.
@@ -134,7 +134,7 @@ Vue d'ensemble du volume de toutes les pistes à la fois.
 | **DEXED** | Synthèse FM (compatible DX7) | 255 (banques ROM Yamaha officielles) |
 | **EPIANO** | Piano électrique (mda ePiano) | 5 presets réels |
 | **BRAIDS** | Oscillateur macro (Mutable Instruments) | 43 formes d'onde |
-| **KARPLUS** | Corde pincée (Karplus-Strong) | — |
+| **KARPLUS** | Corde pincée (Karplus-Strong) | 8 presets (nylon, acier, harpe, basse, pluck…) |
 | **ANALOG** | Oscillateur + ADSR classique | 11 formes d'onde |
 | **SAMPLER** | Lecture d'échantillons PCM | Kick, Snare et GB Capture expérimental |
 | **DRUM** | Percussions synthétiques Teensy | 6 programmes |

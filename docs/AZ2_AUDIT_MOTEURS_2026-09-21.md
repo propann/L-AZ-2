@@ -5,17 +5,19 @@
 
 ## État vérifié dans le code
 
-Le protocole partagé expose sept moteurs :
+Le protocole partagé expose neuf moteurs :
 
 | ID | Moteur | Patches exposés | État actuel |
 |---:|---|---:|---|
 | 0 | DEXED | 255 | quarantaine : souffle confirmé sur le matériel |
 | 1 | EPIANO | 5 | intégré, à valider à l'écoute |
 | 2 | BRAIDS | 43 formes | intégré, comportement note tenu simulé par coupure du canal |
-| 3 | KARPLUS | 1 | intégré, aucun paramètre de patch dans `AudioSynthKarplusStrong` |
+| 3 | KARPLUS | 8 | intégré, presets de chaine (excitation, enveloppe, filtre) autour de `AudioSynthKarplusStrong` |
 | 4 | ANALOG | 11 formes | moteur de référence confirmé propre |
 | 5 | SAMPLER | Kick, Snare, GB Capture | intégré, banque embarquée et capture GB |
 | 6 | DRUM | Kick, Snare, Tom, Hi Tom, Click, Zap | ajouté avec `AudioSynthSimpleDrum`, léger et sans sample externe |
+| 7 | GRANULAR | 8 presets rack | disponible avec `AZ2_EXTERNAL_RACK`, relayé vers le rack ESP32-S3 |
+| 8 | SPECTRAL | 8 presets rack | disponible avec `AZ2_EXTERNAL_RACK`, relayé vers le rack ESP32-S3 |
 
 Les sélections sont synchronisées par `AZ2_Protocol.h`, puis envoyées par
 `ENGINE:<piste>:<moteur>` et `PATCH:<piste>:<patch>`. L'écran utilise les mêmes
@@ -50,7 +52,7 @@ séparée et ne change pas avec le moteur de piste.
 
 ## Points propres
 
-- Les sept moteurs sont sélectionnables par piste et le patch est remis à zéro
+- Les neuf moteurs sont sélectionnables par piste et le patch est remis à zéro
   lors du changement.
 - Les huit pistes sont toutes raccordées aux deux groupes puis au mix final.
 - Les effets dédiés par piste sont transparents au démarrage : bitcrusher à
@@ -73,8 +75,9 @@ séparée et ne change pas avec le moteur de piste.
    même enveloppe que les synthés. Pour les one-shots, le `noteOff()` ne coupe
    pas le sample ; la durée naturelle doit être testée avec l'enveloppe et le
    delay. Il faut prévoir un mode one-shot/gate explicite.
-3. **Paramètres incomplets :** Karplus n'expose encore ni decay, ni damping,
-   ni brightness. Analog n'expose que la forme, tandis que filtre/ADSR sont
+3. **Paramètres incomplets :** Karplus n'expose pas de paramètres internes
+   (decay/damping/brightness), mais ses 8 presets utilisent désormais
+   l'excitation, l'enveloppe et le filtre communs. Analog n'expose que la forme, tandis que filtre/ADSR sont
    génériques. Les commandes CRUSH/DELAY existent côté Teensy mais n'ont pas
    encore de panneau écran dédié.
 4. **Validation audio partielle :** Analog est confirmé à l'écoute. EPiano,

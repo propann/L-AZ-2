@@ -104,7 +104,9 @@ AudioSynthEPiano trackEPianoEngine[kTrackCount] = {
 // evite de consommer la RAM1 critique du Teensy (le DSP reste execute par le
 // CPU, seule la memoire d'etat est deplacee).
 EXTMEM AudioSynthBraids trackBraidsEngine[kTrackCount];  // pas de parametre de constructeur
-AudioSynthKarplusStrong trackKarplusEngine[kTrackCount];  // corde pincee, pas de parametre non plus
+AudioSynthKarplusStrong trackKarplusEngine[kTrackCount];  // corde pincee; presets dans la chaine commune
+float trackKarplusVelocityScale[kTrackCount] = {1.0f, 1.0f, 1.0f, 1.0f,
+                                                1.0f, 1.0f, 1.0f, 1.0f};
 // Moteur "Analogique" = oscillateur continu (comme Braids) + enveloppe
 // ADSR standard -- 2 objets chaines en permanence par piste (le "moteur"
 // selectionnable, cote patchTrackIn[], c'est la SORTIE de l'enveloppe,
@@ -639,6 +641,52 @@ const float kDrumFrequencyValues[az2::kDrumPatchCount] = {55.0f, 180.0f, 110.0f,
 const int32_t kDrumLengthValues[az2::kDrumPatchCount] = {420, 260, 360, 180, 90, 140};
 const float kDrumPitchModValues[az2::kDrumPatchCount] = {0.95f, 0.35f, 0.55f, 0.25f, 0.05f, 0.8f};
 const float kDrumSecondMixValues[az2::kDrumPatchCount] = {0.0f, 0.8f, 0.15f, 0.9f, 0.25f, 0.65f};
+
+// Presets KARPLUS. AudioSynthKarplusStrong fixe sa ligne de retard et son
+// amortissement en interne ; on exploite donc les elements deja presents
+// dans chaque piste pour donner une vraie identite a chaque patch :
+// excitation (velocity), enveloppe et filtre resonant.
+struct KarplusPatchPreset {
+  uint8_t attack;
+  uint8_t decay;
+  uint8_t sustain;
+  uint8_t release;
+  uint8_t cutoff;
+  uint8_t resonance;
+  float velocityScale;
+};
+
+const KarplusPatchPreset kKarplusPatchPresets[az2::kKarplusPatchCount] = {
+    {2, 34, 92, 12, 104, 18, 0.92f},  // Corde pincee
+    {8, 66, 78, 28, 82, 8, 0.68f},   // Nylon doux
+    {1, 20, 100, 8, 122, 24, 1.00f}, // Acier brillant
+    {2, 42, 62, 14, 68, 12, 0.74f},  // Guitare mutee
+    {0, 28, 86, 20, 114, 5, 0.58f},  // Harpe courte
+    {4, 92, 72, 34, 48, 7, 0.96f},   // Basse bois
+    {1, 12, 100, 5, 116, 30, 1.00f}, // Pluck vintage
+    {14, 127, 100, 68, 58, 18, 0.52f}, // Drone resonant
+};
+
+float karplusEnvelopeMs(uint8_t value) {
+  const float normalized = static_cast<float>(value) / 127.0f;
+  return normalized * normalized * 2000.0f;
+}
+
+void applyKarplusPatch(uint8_t track, uint8_t patch) {
+  const KarplusPatchPreset &preset = kKarplusPatchPresets[patch % az2::kKarplusPatchCount];
+  trackKarplusVelocityScale[track] = preset.velocityScale;
+
+  trackAnalogEnv[track].attack(karplusEnvelopeMs(preset.attack));
+  trackAnalogEnv[track].decay(karplusEnvelopeMs(preset.decay));
+  trackAnalogEnv[track].sustain(static_cast<float>(preset.sustain) / 127.0f);
+  trackAnalogEnv[track].release(karplusEnvelopeMs(preset.release));
+
+  const float ratio = static_cast<float>(preset.cutoff) / 127.0f;
+  const float frequency = 20.0f * powf(15000.0f / 20.0f, ratio);
+  trackFilter[track].frequency(frequency);
+  trackFilter[track].resonance(
+      0.7f + (static_cast<float>(preset.resonance) / 127.0f) * (5.0f - 0.7f));
+}
 
 // Charge le patch courant (trackPatch[track]) dans le moteur actuellement
 // actif de la piste (trackEngine[track]). Partagee avec liveVoice (voir
@@ -1313,7 +1361,8 @@ void applyTrackPatch(uint8_t track) {
       trackBraidsEngine[track].set_braids_shape(kBraidsShapeValues[patch % az2::kBraidsPatchCount]);
       break;
     case az2::kEngineKarplus:
-      break;  // AudioSynthKarplusStrong n'a pas de parametre de forme, rien a faire
+      applyKarplusPatch(track, patch);
+      break;
     case az2::kEngineAnalog:
       trackAnalogWave[track].begin(kAnalogWaveformValues[patch % az2::kAnalogPatchCount]);
       break;
@@ -1814,7 +1863,9 @@ void trackNoteOn(uint8_t track, uint8_t note, uint8_t velocity) {
       applyGroupGainNow(track);
       break;
     case az2::kEngineKarplus:
-      trackKarplusEngine[track].noteOn(midiNoteToFreq(note), static_cast<float>(velocity) / 127.0f);
+      trackKarplusEngine[track].noteOn(
+          midiNoteToFreq(note),
+          (static_cast<float>(velocity) / 127.0f) * trackKarplusVelocityScale[track]);
       break;
     case az2::kEngineAnalog:
       trackAnalogWave[track].frequency(midiNoteToFreq(note));

@@ -101,8 +101,9 @@ abrupt, coherent avec son usage typique.
      Saw, Toy, Vosim, FM, Plucked, Saw Swarm).
    - **[FAIT, 2026-09-15]** 2 moteurs de plus, suite a "on voit si on
      peut ajouter des moteurs audio si oui lesquels" : **KARPLUS**
-     (`AudioSynthKarplusStrong`, corde pincee physique, 1 seul patch --
-     l'objet n'expose aucun parametre de forme) et **ANALOG**
+     (`AudioSynthKarplusStrong`, corde pincee physique, 8 presets de chaine
+     -- l'objet n'expose aucun parametre de forme, les presets pilotent
+     excitation/enveloppe/filtre) et **ANALOG**
      (`AudioSynthWaveform` + `AudioEffectEnvelope` chaines en
      permanence, patch = forme d'onde : Sinus/Dent de scie/Carre/
      Triangle). Les deux sont des objets STANDARD de la lib Audio

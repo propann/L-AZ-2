@@ -150,7 +150,7 @@ continue de jouer le reste du morceau.
 ### Phase 1 — abstraction logicielle locale
 
 - extraire l'interface commune Engine ;
-- encapsuler les sept moteurs existants ;
+- encapsuler les neuf moteurs existants ;
 - supprimer progressivement les allocations par huit inutiles ;
 - ajouter des tests de changement de moteur et PANIC.
 

@@ -573,10 +573,15 @@ constexpr const char *kBraidsPatchNames[kBraidsPatchCount] = {
     "Digital Mod",
 };
 
-// AudioSynthKarplusStrong n'expose aucun parametre de forme (juste
-// noteOn(freq,vel)/noteOff()) -- un seul "patch" possible avec cet objet.
-constexpr uint8_t kKarplusPatchCount = 1;
-constexpr const char *kKarplusPatchNames[kKarplusPatchCount] = {"Corde pincee"};
+// AudioSynthKarplusStrong n'expose pas de parametre de forme (seulement
+// noteOn(freq,vel)/noteOff()). Les patches KARPLUS sont donc des presets de
+// la chaine partagee autour de l'objet : excitation, enveloppe et filtre.
+// Ils restent de vrais patches sonores, sans modifier la bibliotheque Audio.
+constexpr uint8_t kKarplusPatchCount = 8;
+constexpr const char *kKarplusPatchNames[kKarplusPatchCount] = {
+    "Corde pincee", "Nylon doux", "Acier brillant", "Guitare mutee",
+    "Harpe courte", "Basse bois", "Pluck vintage", "Drone resonant",
+};
 
 // AudioSynthWaveform : la forme d'onde EST le patch (WAVEFORM_* dans
 // synth_waveform.h). 11 depuis le 2026-09-18 ("recuperer un max de
