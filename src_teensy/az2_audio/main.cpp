@@ -189,6 +189,7 @@ AudioMixer4 mixOutputL;
 AudioMixer4 mixOutputR;
 // Diagnostic temporaire : coupe uniquement le retour audio du rack externe
 // pour isoler le bip parasite sans dessouder la liaison I2S.
+// Le retour I2S externe reste actif dans la version rack de production.
 constexpr bool kMuteExternalRackAudio = false;
 #endif
 
@@ -388,22 +389,6 @@ AudioConnection patchLiveIn(mixLiveAndPads, 0, mixFinal, 2);
 // de noteOff() explicite) declenche depuis advanceTick() a chaque
 // debut de temps (currentStep % stepsPerBeat == 0), accentue (plus
 // aigu) sur le premier temps du pattern.
-AudioSynthWaveform metroClick;
-AudioEffectEnvelope metroEnv;
-AudioConnection patchMetroEnv(metroClick, 0, metroEnv, 0);
-AudioConnection patchMetroOut(metroEnv, 0, mixFinal, 3);
-bool metronomeEnabled = false;
-
-void triggerMetronome(bool accent) {
-  // Le clic de metronome est coupe en production : aucun bip periodique ne
-  // doit etre injecte dans la sortie audio.
-  if (!metronomeEnabled) {
-    return;
-  }
-  metroClick.frequency(accent ? 1800.0f : 1200.0f);
-  metroClick.amplitude(0.5f);
-  metroEnv.noteOn();
-}
 AudioConnection patchFinalToMaster(mixFinal, 0, mixMaster, 0);  // signal sec
 AudioConnection patchFinalToReverb(mixFinal, 0, reverbUnit, 0);
 AudioConnection patchReverbToMaster(reverbUnit, 0, mixMaster, 1);
@@ -1275,8 +1260,8 @@ void serviceGranularSampleTransfer() {
 }
 
 void serviceRackReplies() {
-  // Borne le nombre d'octets draines par appel (2026-09-24, meme bug que
-  // le MIDI DIN du 2026-09-23 : depuis que master_teensy_rack_lab est le
+  // Borne le nombre d'octets draines par appel : depuis que
+  // master_teensy_rack_lab est le
   // firmware de PRODUCTION, Serial7 est toujours initialise meme quand le
   // module rack physique n'est pas branche -- RX7 flotte alors et peut
   // capter du bruit electrique lu comme un flux quasi continu d'octets
@@ -1997,8 +1982,8 @@ void allTrackNotesOff() {
 }
 
 // Arret d'urgence global. Contrairement a allTrackNotesOff(), qui suit
-// seulement les notes connues du sequenceur, PANIC doit aussi couvrir les
-// pads de piste, le MIDI USB, la voix live et les one-shots encore actifs.
+// seulement les notes connues du sequenceur, PANIC couvre aussi les pads,
+// la voix live et les one-shots encore actifs.
 void panicAllAudio() {
   playing = false;
   for (uint8_t t = 0; t < kTrackCount; ++t) {
@@ -2092,12 +2077,6 @@ void advanceTick() {
     ticksForCurrentStep = (currentStep % 2 == 0)
                               ? static_cast<uint8_t>(kTicksPerStep - swingAmount)
                               : static_cast<uint8_t>(kTicksPerStep + swingAmount);
-    // Metronome (voir triggerMetronome()) -- un temps commence tous les
-    // stepsPerBeat pas ; accentue (plus aigu) sur le tout premier temps
-    // du pattern. no-op silencieux si metronomeEnabled est faux.
-    if (currentStep % stepsPerBeat == 0) {
-      triggerMetronome(currentStep == 0);
-    }
     if (currentStep == 0) {
       ++currentBar;
       // Compteur de passages du pattern (2026-09-17, PROB:/COND:) -- avance
@@ -3620,122 +3599,6 @@ void handlePadCommand(const String &line) {
   }
 }
 
-// MIDI USB est volontairement neutralise dans le firmware de production.
-// Le port USB reste un port serie de controle ; aucun message MIDI ne doit
-// pouvoir declencher liveVoice ni ajouter de travail dans la boucle audio.
-void updateMidiIn() {
-#if !defined(AZ2_DISABLE_MIDI)
-  while (usbMIDI.read()) {
-    const uint8_t type = usbMIDI.getType();
-    const uint8_t note = usbMIDI.getData1();
-    const uint8_t velocity = usbMIDI.getData2();
-    if (type == usbMIDI.NoteOn && velocity > 0) {
-      liveVoice.keydown(note, velocity);
-    } else if (type == usbMIDI.NoteOff || (type == usbMIDI.NoteOn && velocity == 0)) {
-      // velocity 0 sur un NoteOn = note-off (convention MIDI standard,
-      // beaucoup de controleurs l'envoient ainsi plutot qu'un vrai
-      // message NoteOff).
-      liveVoice.keyup(note);
-    }
-  }
-#endif
-}
-
-// MIDI DIN IN isole par 6N138 -> Serial8 RX pin 34, 31250 bit/s.
-// Les canaux 1..8 pilotent directement les pistes 1..8 : le meme chemin
-// trackNoteOn/Off route donc aussi correctement GRANULAR et SPECTRAL vers le
-// rack. Les autres canaux conservent la voix live, comme le MIDI USB actuel.
-// Ce petit parseur supporte le running status et laisse passer les messages
-// temps reel sans casser un message canal en cours.
-struct MidiDinParser {
-  uint8_t runningStatus = 0;
-  uint8_t data[2] = {};
-  uint8_t count = 0;
-  uint8_t needed = 0;
-};
-MidiDinParser midiDin;
-
-uint8_t midiChannelDataBytes(uint8_t status) {
-  const uint8_t command = status & 0xF0;
-  return (command == 0xC0 || command == 0xD0) ? 1 : 2;
-}
-
-void handleMidiDinChannel(uint8_t status, uint8_t data1, uint8_t data2) {
-  const uint8_t command = status & 0xF0;
-  const uint8_t channel = status & 0x0F;  // 0..15 = canaux MIDI 1..16
-  const bool routedTrack = channel < kTrackCount;
-  if (command == 0x90 && data2 > 0) {
-    if (routedTrack) trackNoteOn(channel, data1, data2);
-    else liveVoice.keydown(data1, data2);
-  } else if (command == 0x80 || (command == 0x90 && data2 == 0)) {
-    if (routedTrack) trackNoteOff(channel, data1);
-    else liveVoice.keyup(data1);
-  } else if (command == 0xB0 && (data1 == 120 || data1 == 123)) {
-    // CC120 All Sound Off / CC123 All Notes Off : securite globale, y
-    // compris moteurs externes, afin qu'aucune note ne reste accrochee.
-#ifdef AZ2_EXTERNAL_RACK
-    Serial7.println("RACK:PANIC");
-#endif
-    panicAllAudio();
-  }
-}
-
-void handleMidiDinRealtime(uint8_t value) {
-  if (value == 0xFA) {          // Start
-    startSequencer();
-    announceStatus(az2::kStatusPlaying);
-  } else if (value == 0xFC) {   // Stop
-    stopSequencer();
-    liveVoice.notesOff();
-    announceStatus(az2::kStatusStopped);
-  } else if (value == 0xFF) {   // System Reset
-#ifdef AZ2_EXTERNAL_RACK
-    Serial7.println("RACK:PANIC");
-#endif
-    panicAllAudio();
-    announceStatus(az2::kStatusStopped);
-  }
-  // 0xF8 Clock est volontairement ignore tant que l'asservissement 24 PPQN
-  // (tempo + phase) n'est pas valide sur banc. Le parser reste synchronise.
-}
-
-void updateMidiDin() {
-  // Borne le nombre d'octets draines par appel : si rien n'est branche sur
-  // l'entree DIN, la broche RX du 6N138 flotte et le bruit electrique peut
-  // etre lu comme un flux quasi continu d'octets parasites par l'UART. Un
-  // "while (Serial8.available())" sans limite pouvait alors monopoliser
-  // loop() et retarder updateDigitalControls() (boutons/croix) de facon
-  // intermittente -- suspecte le 2026-09-23 apres un signalement de
-  // controles qui repondent mal.
-  uint8_t drained = 0;
-  while (Serial8.available() > 0 && drained < 64) {
-    ++drained;
-    const uint8_t value = static_cast<uint8_t>(Serial8.read());
-    if (value >= 0xF8) {
-      handleMidiDinRealtime(value);
-      continue;
-    }
-    if (value & 0x80) {
-      if ((value & 0xF0) == 0xF0) {
-        midiDin.runningStatus = 0;  // message system commun non pris en charge
-        midiDin.count = 0;
-        continue;
-      }
-      midiDin.runningStatus = value;
-      midiDin.needed = midiChannelDataBytes(value);
-      midiDin.count = 0;
-      continue;
-    }
-    if (midiDin.runningStatus == 0 || midiDin.needed == 0) continue;
-    midiDin.data[midiDin.count++] = value & 0x7F;
-    if (midiDin.count >= midiDin.needed) {
-      handleMidiDinChannel(midiDin.runningStatus, midiDin.data[0],
-                           midiDin.needed > 1 ? midiDin.data[1] : 0);
-      midiDin.count = 0;  // running status : le prochain groupe reutilise le statut
-    }
-  }
-}
-
 void handleMacroCommand(const String &line) {
   const int firstColon = line.indexOf(':');
   const int secondColon = line.indexOf(':', firstColon + 1);
@@ -3999,8 +3862,6 @@ void handleCommand(const String &line) {
   }
 
   if (line.startsWith("METRO:")) {
-    // Desactive en production pour supprimer tout bip periodique de sortie.
-    metronomeEnabled = false;
     relayLine("METRO:0");
     return;
   }
@@ -4235,7 +4096,12 @@ void handleCommand(const String &line) {
 // ce qui ajoutait des marches/aliasing audibles. On interpole desormais
 // lineairement entre deux echantillons en arithmetique Q16 : cout faible
 // sur Teensy 4.1 et aucune modification du protocole UART.
-constexpr size_t kGbRingCapacity = 2048;  // ~46ms a 44.1kHz
+// Le flux UART arrive par rafales : readStream() peut recevoir plusieurs
+// paquets avant que loop() ne revienne au remplissage de la queue audio.
+// 2048 echantillons (~46 ms) debordait alors regulierement, ce qui produisait
+// des trous/clics audibles dans l'emulation. 16K (~371 ms) absorbe le pire
+// burst du tampon UART de 2K tout en restant une petite allocation RAM.
+constexpr size_t kGbRingCapacity = 16384;
 int16_t gbRing[kGbRingCapacity];
 size_t gbRingHead = 0;
 size_t gbRingTail = 0;
@@ -4473,6 +4339,11 @@ void handleGbAudioPacket(const uint8_t *pcm, uint8_t len) {
   }
 }
 
+// Declaration avancee : le parseur doit pouvoir vider la ring pendant qu'il
+// consomme une rafale UART, sinon il remplit la ring avant le retour dans
+// loop().
+void feedGbAudioQueue();
+
 // Vide l'anneau vers gbAudioQueue par blocs complets -- appelee depuis
 // loop(), independamment du rythme d'arrivee des paquets serie.
 void feedGbAudioQueue() {
@@ -4592,8 +4463,10 @@ void readStream(Stream &in, String &lineBuffer, AudioRxState *audioState) {
     audioState->pos = 0;
   }
 
+  uint16_t bytesSinceAudioFeed = 0;
   while (in.available() > 0) {
     const uint8_t b = static_cast<uint8_t>(in.read());
+    ++bytesSinceAudioFeed;
 
     if (audioState != nullptr) {
       if (az2::kGbAudioV2PilotEnabled && gbAudioV2InPacket) {
@@ -4632,6 +4505,10 @@ void readStream(Stream &in, String &lineBuffer, AudioRxState *audioState) {
           handleGbAudioPacket(audioState->buf, audioState->len);
           audioState->inPacket = false;
         }
+        if (bytesSinceAudioFeed >= 64) {
+          feedGbAudioQueue();
+          bytesSinceAudioFeed = 0;
+        }
         continue;
       }
       if (az2::kGbAudioV2PilotEnabled && b == az2::kGbAudioV2Magic) {
@@ -4647,6 +4524,11 @@ void readStream(Stream &in, String &lineBuffer, AudioRxState *audioState) {
         audioState->lastByteMs = millis();
         continue;
       }
+    }
+
+    if (audioState != nullptr && bytesSinceAudioFeed >= 64) {
+      feedGbAudioQueue();
+      bytesSinceAudioFeed = 0;
     }
 
     const char c = static_cast<char>(b);
@@ -4829,11 +4711,20 @@ void setup() {
   static uint8_t serial1RxBuf[2048];
   Serial1.addMemoryForRead(serial1RxBuf, sizeof(serial1RxBuf));
   Serial1.begin(az2::kControlBaud);
-  // MIDI DIN IN totalement neutralise tant que le 6N138 n'est pas soude.
-  // Le RX8 (pin 34) est tire au bas pour qu'aucun bruit ne puisse devenir
-  // une commande MIDI parasite. Reactiver Serial8 et updateMidiDin()
-  // uniquement apres montage reel du circuit MIDI.
-  pinMode(34, INPUT_PULLDOWN);
+  // MIDI : circuit NON MONTE (6N138 non soude, voir docs/AZ2_RACK_PINOUT.md
+  // "MIDI DIN IN reserve au Teensy"). Plus aucun code MIDI ne tourne dans ce
+  // firmware -- ni USB (usbMIDI n'est jamais lu) ni DIN (Serial8 n'est JAMAIS
+  // ouvert, donc l'UART n'echantillonne meme pas la broche : aucun octet ne
+  // peut devenir une note, meme si la broche capte du bruit).
+  // Les deux broches du circuit absent sont malgre tout figees dans un etat
+  // defini plutot que laissees en l'air : une entree CMOS flottante oscille
+  // au gre du bruit et injecte du courant de commutation dans l'alimentation
+  // partagee avec le PCM5102A. Le pull-down de la pin 34 existait deja, il a
+  // ete retire par accident en supprimant le code MIDI -- retabli ici, et
+  // etendu a la pin 35 pour la meme raison.
+  // A REACTIVER seulement apres montage ET validation electrique du 6N138.
+  pinMode(34, INPUT_PULLDOWN);  // RX8 <- sortie du 6N138 absent
+  pinMode(35, INPUT_PULLDOWN);  // TX8, reserve a un MIDI OUT jamais monte
 #ifdef AZ2_EXTERNAL_RACK
   // RX7 (pin 28) reste physiquement connecte au rack, mais peut flotter
   // quand le S3 est eteint/non branche. Le pull-down interne evite que le
@@ -4935,7 +4826,6 @@ void setup() {
   mixFinal.gain(0, 0.8f);  // groupe pistes 0-3 (deja attenuees par groupMixer, voir setTrackEngine())
   mixFinal.gain(1, 0.8f);  // groupe pistes 4-7
   mixFinal.gain(2, 0.5f);  // voix live + bus pads (mixLiveAndPads, voir plus haut)
-  mixFinal.gain(3, 0.0f);  // metronome coupe en production : aucun bip
 
   // Marge de tete du bus pads (2026-09-19, audit de code -- aucun gain
   // n'etait regle sur ces 6 nouveaux mixeurs, tous restaient au defaut
@@ -4952,15 +4842,6 @@ void setup() {
     mixPadsC.gain(ch, 0.7f);
     mixPadsD.gain(ch, 0.7f);
   }
-
-  // Enveloppe "clic" du metronome : pas de sustain, decay seul ramene
-  // a zero -- une seule noteOn() par temps suffit, pas de noteOff() a
-  // gerer (voir triggerMetronome()).
-  metroClick.begin(WAVEFORM_SINE);
-  metroEnv.attack(1.0f);
-  metroEnv.decay(30.0f);
-  metroEnv.sustain(0.0f);
-  metroEnv.release(5.0f);
 
   // Bus d'effets maitre : sec a fond, reverb/delay a 0 par defaut tant
   // que les potards n'ont pas ete lus une premiere fois (voir
@@ -5002,8 +4883,6 @@ void loop() {
   serviceGranularSampleTransfer();
 #endif
   reportGbAudioHealth();
-  updateMidiIn();  // no-op avec AZ2_DISABLE_MIDI
-  // updateMidiDin();  // desactive : voir la note pres de Serial8.begin() dans setup()
   feedGbAudioQueue();
   updateScope();
   updateSequencer();
