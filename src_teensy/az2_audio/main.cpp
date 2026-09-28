@@ -395,6 +395,8 @@ AudioConnection patchMetroOut(metroEnv, 0, mixFinal, 3);
 bool metronomeEnabled = false;
 
 void triggerMetronome(bool accent) {
+  // Le clic de metronome est coupe en production : aucun bip periodique ne
+  // doit etre injecte dans la sortie audio.
   if (!metronomeEnabled) {
     return;
   }
@@ -3997,8 +3999,9 @@ void handleCommand(const String &line) {
   }
 
   if (line.startsWith("METRO:")) {
-    metronomeEnabled = line.substring(6).toInt() != 0;
-    relayLine(line);
+    // Desactive en production pour supprimer tout bip periodique de sortie.
+    metronomeEnabled = false;
+    relayLine("METRO:0");
     return;
   }
 
@@ -4932,7 +4935,7 @@ void setup() {
   mixFinal.gain(0, 0.8f);  // groupe pistes 0-3 (deja attenuees par groupMixer, voir setTrackEngine())
   mixFinal.gain(1, 0.8f);  // groupe pistes 4-7
   mixFinal.gain(2, 0.5f);  // voix live + bus pads (mixLiveAndPads, voir plus haut)
-  mixFinal.gain(3, 0.6f);  // metronome (voir triggerMetronome())
+  mixFinal.gain(3, 0.0f);  // metronome coupe en production : aucun bip
 
   // Marge de tete du bus pads (2026-09-19, audit de code -- aucun gain
   // n'etait regle sur ces 6 nouveaux mixeurs, tous restaient au defaut
