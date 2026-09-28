@@ -3618,15 +3618,11 @@ void handlePadCommand(const String &line) {
   }
 }
 
-// MIDI IN (priorite #6 de la liste indispensable,
-// AZ2_BENCHMARK_CONCURRENCE.md) -- USB_MIDI_SERIAL deja actif dans
-// platformio.ini (usbtype du Teensy), rien a cabler, `usbMIDI` est
-// fourni par le core des que ce mode USB est choisi. MVP volontairement
-// modeste : notes MIDI (n'importe quel canal) declenchent la voix live
-// `liveVoice`, meme chemin que les pads tactiles/ecran -- pas de
-// synchro d'horloge MIDI, pas de MIDI OUT, pas de routage vers une
-// piste du sequenceur pour l'instant (voir AZ2_FEUILLE_DE_ROUTE.md).
+// MIDI USB est volontairement neutralise dans le firmware de production.
+// Le port USB reste un port serie de controle ; aucun message MIDI ne doit
+// pouvoir declencher liveVoice ni ajouter de travail dans la boucle audio.
 void updateMidiIn() {
+#if !defined(AZ2_DISABLE_MIDI)
   while (usbMIDI.read()) {
     const uint8_t type = usbMIDI.getType();
     const uint8_t note = usbMIDI.getData1();
@@ -3640,6 +3636,7 @@ void updateMidiIn() {
       liveVoice.keyup(note);
     }
   }
+#endif
 }
 
 // MIDI DIN IN isole par 6N138 -> Serial8 RX pin 34, 31250 bit/s.
@@ -5002,7 +4999,7 @@ void loop() {
   serviceGranularSampleTransfer();
 #endif
   reportGbAudioHealth();
-  updateMidiIn();
+  updateMidiIn();  // no-op avec AZ2_DISABLE_MIDI
   // updateMidiDin();  // desactive : voir la note pres de Serial8.begin() dans setup()
   feedGbAudioQueue();
   updateScope();

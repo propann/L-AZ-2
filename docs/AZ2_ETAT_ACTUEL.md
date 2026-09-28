@@ -120,7 +120,9 @@ Ce document est la source de vérité de l’état courant. Les audits datés da
 
 ## MIDI
 
-- USB MIDI : conservé.
+- USB MIDI : désactivé dans le firmware de production pour éviter les
+  déclenchements parasites et les perturbations audio ; USB reste réservé
+  aux commandes série AZ2.
 - MIDI DIN : désactivé tant que les composants MIDI ne sont pas soudés et
   validés électriquement.
 - RX MIDI est maintenu dans un état fixe pour éviter les déclenchements
