@@ -321,7 +321,9 @@ void pushLog(const String &line) {
 
 void sendToTeensy(const String &message) {
   Serial.println(message);
+  nesSerial1Lock();
   Serial1.println(message);
+  nesSerial1Unlock();
 }
 
 // ---------------------------------------------------------------------

@@ -46,6 +46,12 @@ bool nesSaveRam();
 void nesInitDualCore();
 #endif
 
+// Serial1 est partage entre les commandes UI et les paquets audio NES.
+// Ces deux petites fonctions serialisent les ecritures quand l'APU est sur
+// l'autre coeur ; elles sont no-op sur une cible mono-coeur.
+void nesSerial1Lock();
+void nesSerial1Unlock();
+
 const char *nesRomTitle();
 
 // Meme ordre de bits que le registre controleur NES standard ($4016) :

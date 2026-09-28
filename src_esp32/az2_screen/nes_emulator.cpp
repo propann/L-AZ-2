@@ -12,6 +12,7 @@
 
 #ifdef AZ2_NES_DUAL_CORE
 #include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <freertos/task.h>
 #endif
 
@@ -42,6 +43,7 @@ char nesSavePath[kNesSavePathCapacity] = {};
 
 #ifdef AZ2_NES_DUAL_CORE
 TaskHandle_t nesApuTaskHandle = nullptr;
+SemaphoreHandle_t nesSerial1Mutex = nullptr;
 
 void nesApuTask(void *) {
   // Les blocs courts limitent le temps pendant lequel l'APU verrouille ses
@@ -82,9 +84,26 @@ bool endsWithNes(const String &name) {
 
 }  // namespace
 
+void nesSerial1Lock() {
+#ifdef AZ2_NES_DUAL_CORE
+  if (nesSerial1Mutex != nullptr) {
+    xSemaphoreTake(nesSerial1Mutex, portMAX_DELAY);
+  }
+#endif
+}
+
+void nesSerial1Unlock() {
+#ifdef AZ2_NES_DUAL_CORE
+  if (nesSerial1Mutex != nullptr) {
+    xSemaphoreGive(nesSerial1Mutex);
+  }
+#endif
+}
+
 #ifdef AZ2_NES_DUAL_CORE
 void nesInitDualCore() {
   if (nesApuTaskHandle != nullptr) return;
+  nesSerial1Mutex = xSemaphoreCreateMutex();
   xTaskCreatePinnedToCore(nesApuTask, "NES_APU", 6144, nullptr, 2,
                           &nesApuTaskHandle, 0);
   Serial.println("NES:DUAL_CORE:APU=CORE0:CPU_PPU=CORE1");
@@ -117,9 +136,13 @@ void nesAudioBufferReady(const uint16_t *buffer, size_t count) {
     const uint8_t centered = static_cast<uint8_t>(128u + (amplitude > 127u ? 127u : amplitude));
     nesAudioPacket[nesAudioPacketSize++] = centered;
     if (nesAudioPacketSize == az2::kGbAudioSamplesPerPacket) {
-      Serial1.write(az2::kGbAudioPacketMagic);
-      Serial1.write(nesAudioPacketSize);
-      Serial1.write(nesAudioPacket, nesAudioPacketSize);
+      uint8_t wire[az2::kGbAudioSamplesPerPacket + 2] = {};
+      wire[0] = az2::kGbAudioPacketMagic;
+      wire[1] = nesAudioPacketSize;
+      memcpy(wire + 2, nesAudioPacket, nesAudioPacketSize);
+      nesSerial1Lock();
+      Serial1.write(wire, sizeof(wire));
+      nesSerial1Unlock();
       nesAudioPacketSize = 0;
     }
   }
