@@ -175,11 +175,22 @@ câblage de production.
   bloquée par des erreurs du lecteur Broadcom interne du MacBook Pro pendant
   les transferts (`ADMA`, timeout et remount FAT en lecture seule).
 
-- `pio run -e screen_esp_peanut_gb_lab` : OK.
-- `pio run -e screen_esp_peanut_gb_core_task` : OK, flashé et validé sur
-  matériel réel (59,76fps X3, boutons/tactile confirmés).
-- `pio run -e screen_esp_walnut_gbc_core_task` : OK, flashé et validé sur
-  matériel réel (voir "Game Boy Color" ci-dessus).
+- **Campagne de compilation des 22 environnements du 28 septembre 2026 :
+  18 OK, 4 en échec.** Détail et causes dans
+  `docs/AZ2_AUDIT_FIRMWARE_ET_FEUILLE_DE_ROUTE_2026-09-28.md`.
+- `pio run -e screen_esp_peanut_gb_lab` : **ÉCHEC** — assertion statique
+  `gb_emulator_peanut.cpp:109` ; `kSavePathCapacity` est resté à 96 dans le
+  backend Peanut alors que Walnut est passé à 192 pour `kGbRomNameLen = 160`.
+- `pio run -e screen_esp_peanut_gb_core_task` : **ÉCHEC**, même cause.
+  La mesure de référence **59,76 fps en X3** vient de cette cible : elle
+  n'est **pas reproductible** tant que le build n'est pas réparé.
+- `pio run -e screen_esp_walnut_gbc_core_task` : **ÉCHEC** — `dram0_0_seg`
+  dépassé de 6 488 octets. Pas une erreur de code : `screen_esp` occupe déjà
+  76,7 % de la DRAM et l'intégration NES puis NGP a consommé la marge. La
+  validation GBC citée plus haut n'est donc pas reproductible en l'état.
+- `pio run -e screen_esp_gb_direct` : **ÉCHEC** — `z80.h` introuvable ; son
+  filtre de sources prend `ngp_emulator.cpp` sans inclure le cœur RACE ni
+  définir `CZ80`.
 - `pio run -e screen_esp` : OK après restauration du build standard ; le
   firmware a redémarré avec `DISPLAY:ALIVE:TICK`, audio prêt et événements de
   boutons confirmés sur le port série.
