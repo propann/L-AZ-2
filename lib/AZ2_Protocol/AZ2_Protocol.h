@@ -577,10 +577,29 @@ constexpr const char *kBraidsPatchNames[kBraidsPatchCount] = {
 // noteOn(freq,vel)/noteOff()). Les patches KARPLUS sont donc des presets de
 // la chaine partagee autour de l'objet : excitation, enveloppe et filtre.
 // Ils restent de vrais patches sonores, sans modifier la bibliotheque Audio.
-constexpr uint8_t kKarplusPatchCount = 8;
+constexpr uint8_t kKarplusPatchCount = 100;
 constexpr const char *kKarplusPatchNames[kKarplusPatchCount] = {
     "Corde pincee", "Nylon doux", "Acier brillant", "Guitare mutee",
     "Harpe courte", "Basse bois", "Pluck vintage", "Drone resonant",
+    "NYLON 01", "NYLON 02", "NYLON 03", "NYLON 04", "NYLON 05",
+    "NYLON 06", "NYLON 07", "NYLON 08", "NYLON 09", "NYLON 10",
+    "ACIER 01", "ACIER 02", "ACIER 03", "ACIER 04", "ACIER 05",
+    "ACIER 06", "ACIER 07", "ACIER 08", "ACIER 09", "ACIER 10",
+    "MUTEE 01", "MUTEE 02", "MUTEE 03", "MUTEE 04", "MUTEE 05",
+    "MUTEE 06", "MUTEE 07", "MUTEE 08", "MUTEE 09", "MUTEE 10",
+    "HARPE 01", "HARPE 02", "HARPE 03", "HARPE 04", "HARPE 05",
+    "HARPE 06", "HARPE 07", "HARPE 08", "HARPE 09", "HARPE 10",
+    "BASSE 01", "BASSE 02", "BASSE 03", "BASSE 04", "BASSE 05",
+    "BASSE 06", "BASSE 07", "BASSE 08", "BASSE 09", "BASSE 10",
+    "PLUCK 01", "PLUCK 02", "PLUCK 03", "PLUCK 04", "PLUCK 05",
+    "PLUCK 06", "PLUCK 07", "PLUCK 08", "PLUCK 09", "PLUCK 10",
+    "BOWED 01", "BOWED 02", "BOWED 03", "BOWED 04", "BOWED 05",
+    "BOWED 06", "BOWED 07", "BOWED 08", "BOWED 09", "BOWED 10",
+    "CLOCHE 01", "CLOCHE 02", "CLOCHE 03", "CLOCHE 04", "CLOCHE 05",
+    "CLOCHE 06", "CLOCHE 07", "CLOCHE 08", "CLOCHE 09", "CLOCHE 10",
+    "DRONE 01", "DRONE 02", "DRONE 03", "DRONE 04", "DRONE 05",
+    "DRONE 06", "DRONE 07", "DRONE 08", "DRONE 09", "DRONE 10",
+    "FX 01", "FX 02",
 };
 
 // AudioSynthWaveform : la forme d'onde EST le patch (WAVEFORM_* dans

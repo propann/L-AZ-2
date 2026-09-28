@@ -208,10 +208,12 @@ void test_engine_patch_count_and_name() {
   // pas" ailleurs dans le protocole (stepPatch/seqStepPatch), voir le
   // commentaire de kDexedPatchCount dans AZ2_Protocol.h.
   TEST_ASSERT_EQUAL_UINT16(255, az2::enginePatchCount(az2::kEngineDexed));
-  TEST_ASSERT_EQUAL_UINT16(8, az2::enginePatchCount(az2::kEngineKarplus));
+  TEST_ASSERT_EQUAL_UINT16(100, az2::enginePatchCount(az2::kEngineKarplus));
   TEST_ASSERT_EQUAL_STRING("Corde pincee", az2::enginePatchName(az2::kEngineKarplus, 0));
   TEST_ASSERT_EQUAL_STRING("Drone resonant", az2::enginePatchName(az2::kEngineKarplus, 7));
-  TEST_ASSERT_EQUAL_STRING("?", az2::enginePatchName(az2::kEngineKarplus, 8));
+  TEST_ASSERT_EQUAL_STRING("NYLON 01", az2::enginePatchName(az2::kEngineKarplus, 8));
+  TEST_ASSERT_EQUAL_STRING("FX 02", az2::enginePatchName(az2::kEngineKarplus, 99));
+  TEST_ASSERT_EQUAL_STRING("?", az2::enginePatchName(az2::kEngineKarplus, 100));
   // 4 depuis le 2026-09-23 ("fusion" du moteur SAMPLER d'une piste avec le
   // navigateur SD des pads -- voir kSamplerCustomPatch dans AZ2_Protocol.h) :
   // Kick/Snare/GB Capture (fixes) + CUSTOM (WAV libre charge par piste,

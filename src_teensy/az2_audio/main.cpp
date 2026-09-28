@@ -656,7 +656,7 @@ struct KarplusPatchPreset {
   float velocityScale;
 };
 
-const KarplusPatchPreset kKarplusPatchPresets[az2::kKarplusPatchCount] = {
+const KarplusPatchPreset kKarplusCorePresets[8] = {
     {2, 34, 92, 12, 104, 18, 0.92f},  // Corde pincee
     {8, 66, 78, 28, 82, 8, 0.68f},   // Nylon doux
     {1, 20, 100, 8, 122, 24, 1.00f}, // Acier brillant
@@ -667,13 +667,54 @@ const KarplusPatchPreset kKarplusPatchPresets[az2::kKarplusPatchCount] = {
     {14, 127, 100, 68, 58, 18, 0.52f}, // Drone resonant
 };
 
+// Bases des 9 banques de 10 variations (patches 8..97). Les deux derniers
+// patches sont des FX et utilisent la dixieme base. La variation dans chaque
+// banque est appliquee de maniere deterministe afin de garder le firmware
+// leger tout en donnant 100 presets distincts au navigateur.
+const KarplusPatchPreset kKarplusFamilyPresets[10] = {
+    {5, 58, 82, 24, 86, 8, 0.68f},  // NYLON
+    {1, 28, 96, 10, 120, 22, 0.96f}, // ACIER
+    {2, 36, 58, 12, 64, 10, 0.72f}, // MUTEE
+    {0, 24, 88, 18, 110, 5, 0.56f}, // HARPE
+    {4, 90, 74, 34, 46, 7, 0.94f},  // BASSE
+    {1, 16, 100, 6, 114, 26, 0.98f}, // PLUCK
+    {18, 110, 92, 58, 72, 14, 0.58f}, // BOWED
+    {0, 18, 86, 22, 126, 34, 0.62f}, // CLOCHE
+    {22, 127, 100, 82, 54, 16, 0.48f}, // DRONE
+    {0, 8, 100, 4, 127, 42, 1.00f}, // FX
+};
+
+uint8_t clampKarplusByte(int value) {
+  return static_cast<uint8_t>(value < 0 ? 0 : value > 127 ? 127 : value);
+}
+
+KarplusPatchPreset karplusPatchPreset(uint8_t patch) {
+  if (patch < 8) return kKarplusCorePresets[patch];
+
+  const uint8_t family = static_cast<uint8_t>((patch - 8) / 10);
+  const uint8_t variation = static_cast<uint8_t>((patch - 8) % 10);
+  KarplusPatchPreset preset = kKarplusFamilyPresets[family];
+  const int centered = static_cast<int>(variation) - 4;
+
+  preset.attack = clampKarplusByte(static_cast<int>(preset.attack) + centered * 2);
+  preset.decay = clampKarplusByte(static_cast<int>(preset.decay) + centered * 5);
+  preset.sustain = clampKarplusByte(static_cast<int>(preset.sustain) + centered * 3);
+  preset.release = clampKarplusByte(static_cast<int>(preset.release) + centered * 4);
+  preset.cutoff = clampKarplusByte(static_cast<int>(preset.cutoff) + centered * 5);
+  preset.resonance = clampKarplusByte(static_cast<int>(preset.resonance) + centered * 3);
+  preset.velocityScale += static_cast<float>(centered) * 0.025f;
+  if (preset.velocityScale < 0.25f) preset.velocityScale = 0.25f;
+  if (preset.velocityScale > 1.0f) preset.velocityScale = 1.0f;
+  return preset;
+}
+
 float karplusEnvelopeMs(uint8_t value) {
   const float normalized = static_cast<float>(value) / 127.0f;
   return normalized * normalized * 2000.0f;
 }
 
 void applyKarplusPatch(uint8_t track, uint8_t patch) {
-  const KarplusPatchPreset &preset = kKarplusPatchPresets[patch % az2::kKarplusPatchCount];
+  const KarplusPatchPreset preset = karplusPatchPreset(patch % az2::kKarplusPatchCount);
   trackKarplusVelocityScale[track] = preset.velocityScale;
 
   trackAnalogEnv[track].attack(karplusEnvelopeMs(preset.attack));

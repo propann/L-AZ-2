@@ -134,7 +134,7 @@ Vue d'ensemble du volume de toutes les pistes à la fois.
 | **DEXED** | Synthèse FM (compatible DX7) | 255 (banques ROM Yamaha officielles) |
 | **EPIANO** | Piano électrique (mda ePiano) | 5 presets réels |
 | **BRAIDS** | Oscillateur macro (Mutable Instruments) | 43 formes d'onde |
-| **KARPLUS** | Corde pincée (Karplus-Strong) | 8 presets (nylon, acier, harpe, basse, pluck…) |
+| **KARPLUS** | Corde pincée (Karplus-Strong) | 100 presets (nylon, acier, harpe, basse, pluck, drone, FX…) |
 | **ANALOG** | Oscillateur + ADSR classique | 11 formes d'onde |
 | **SAMPLER** | Lecture d'échantillons PCM | Kick, Snare et GB Capture expérimental |
 | **DRUM** | Percussions synthétiques Teensy | 6 programmes |

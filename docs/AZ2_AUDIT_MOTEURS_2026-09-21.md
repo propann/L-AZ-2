@@ -12,7 +12,7 @@ Le protocole partagé expose neuf moteurs :
 | 0 | DEXED | 255 | quarantaine : souffle confirmé sur le matériel |
 | 1 | EPIANO | 5 | intégré, à valider à l'écoute |
 | 2 | BRAIDS | 43 formes | intégré, comportement note tenu simulé par coupure du canal |
-| 3 | KARPLUS | 8 | intégré, presets de chaine (excitation, enveloppe, filtre) autour de `AudioSynthKarplusStrong` |
+| 3 | KARPLUS | 100 | intégré, banque de presets de chaine (excitation, enveloppe, filtre) autour de `AudioSynthKarplusStrong` |
 | 4 | ANALOG | 11 formes | moteur de référence confirmé propre |
 | 5 | SAMPLER | Kick, Snare, GB Capture | intégré, banque embarquée et capture GB |
 | 6 | DRUM | Kick, Snare, Tom, Hi Tom, Click, Zap | ajouté avec `AudioSynthSimpleDrum`, léger et sans sample externe |
@@ -76,7 +76,7 @@ séparée et ne change pas avec le moteur de piste.
    pas le sample ; la durée naturelle doit être testée avec l'enveloppe et le
    delay. Il faut prévoir un mode one-shot/gate explicite.
 3. **Paramètres incomplets :** Karplus n'expose pas de paramètres internes
-   (decay/damping/brightness), mais ses 8 presets utilisent désormais
+   (decay/damping/brightness), mais ses 100 presets utilisent désormais
    l'excitation, l'enveloppe et le filtre communs. Analog n'expose que la forme, tandis que filtre/ADSR sont
    génériques. Les commandes CRUSH/DELAY existent côté Teensy mais n'ont pas
    encore de panneau écran dédié.
