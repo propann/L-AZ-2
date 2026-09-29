@@ -139,11 +139,11 @@ AudioSynthDexed liveVoice(kLiveNotes, SAMPLE_RATE);   // voix live (pads/ecran),
 
 constexpr float kBraidsActiveGain = 0.5f;  // meme niveau que les autres pistes
 
-float midiNoteToFreq(uint8_t note) {
+float noteToFreq(uint8_t note) {
   return 440.0f * powf(2.0f, (static_cast<float>(note) - 69.0f) / 12.0f);
 }
 
-// AZ2_ROLE_AUDIO -> az2_sampler.h utilise midiNoteToFreq() defini
+// AZ2_ROLE_AUDIO -> az2_sampler.h utilise noteToFreq() defini
 // juste au-dessus, doit donc etre inclus APRES (voir le commentaire
 // en tete de ce header). Les 2 tableaux PROGMEM de depart (Kick/Snare)
 // sont dans un header de donnees separe -- purement des tableaux
@@ -1581,7 +1581,7 @@ bool playing = false;
 // (encodeur/gachette C-D) n'est pas branche dessus.
 int8_t transposeSemitones = 0;
 
-uint8_t padToMidiNote(uint8_t pad) {
+uint8_t padToNote(uint8_t pad) {
   return static_cast<uint8_t>(az2::kPadBaseNote + pad + transposeSemitones);
 }
 
@@ -1892,11 +1892,11 @@ void trackNoteOn(uint8_t track, uint8_t note, uint8_t velocity) {
       break;
     case az2::kEngineKarplus:
       trackKarplusEngine[track].noteOn(
-          midiNoteToFreq(note),
+          noteToFreq(note),
           (static_cast<float>(velocity) / 127.0f) * trackKarplusVelocityScale[track]);
       break;
     case az2::kEngineAnalog:
-      trackAnalogWave[track].frequency(midiNoteToFreq(note));
+      trackAnalogWave[track].frequency(noteToFreq(note));
       trackAnalogWave[track].amplitude(0.8f);
       break;
     case az2::kEngineSampler:
@@ -2222,7 +2222,7 @@ void handleStepCommand(const String &line) {
   relayLine(line);  // confirme tel quel, utile pour que l'UI ESP32 se resynchronise
 }
 
-// NOTE:<piste>:<pas>:<note MIDI 0-127> -- edition de note par pas (voir
+// NOTE:<piste>:<pas>:<note 0-127> -- edition de note par pas (voir
 // SequencerTrack::stepNote), independante de STEP: (on/off). Portee de
 // MicroDexed-touch (seq.note_data[pattern][step], voir sequencer.cpp).
 void handleNoteCommand(const String &line) {
@@ -3527,7 +3527,7 @@ void handlePadCommand(const String &line) {
     return;
   }
 
-  const uint8_t note = padToMidiNote(pad);
+  const uint8_t note = padToNote(pad);
   const bool pressed = line.indexOf(":DOWN") > 0;
 
   // Un pad ouvert depuis le tracker porte toujours la piste cible : dans
@@ -3866,7 +3866,7 @@ void handleCommand(const String &line) {
     return;
   }
 
-  // TEST:<piste>:<note MIDI>:<0|1> -- declenche/coupe une note
+  // TEST:<piste>:<note 0-127>:<0|1> -- declenche/coupe une note
   // DIRECTEMENT sur une piste, HORS sequenceur (2026-09-19, "il faut
   // utiliser le bouton B pour jouer une note qu'on entende les
   // modifications" -- la page PATCH n'avait aucun moyen d'entendre le
@@ -4856,20 +4856,6 @@ void setup() {
   static uint8_t serial1RxBuf[2048];
   Serial1.addMemoryForRead(serial1RxBuf, sizeof(serial1RxBuf));
   Serial1.begin(az2::kControlBaud);
-  // MIDI : circuit NON MONTE (6N138 non soude, voir docs/AZ2_RACK_PINOUT.md
-  // "MIDI DIN IN reserve au Teensy"). Plus aucun code MIDI ne tourne dans ce
-  // firmware -- ni USB (usbMIDI n'est jamais lu) ni DIN (Serial8 n'est JAMAIS
-  // ouvert, donc l'UART n'echantillonne meme pas la broche : aucun octet ne
-  // peut devenir une note, meme si la broche capte du bruit).
-  // Les deux broches du circuit absent sont malgre tout figees dans un etat
-  // defini plutot que laissees en l'air : une entree CMOS flottante oscille
-  // au gre du bruit et injecte du courant de commutation dans l'alimentation
-  // partagee avec le PCM5102A. Le pull-down de la pin 34 existait deja, il a
-  // ete retire par accident en supprimant le code MIDI -- retabli ici, et
-  // etendu a la pin 35 pour la meme raison.
-  // A REACTIVER seulement apres montage ET validation electrique du 6N138.
-  pinMode(34, INPUT_PULLDOWN);  // RX8 <- sortie du 6N138 absent
-  pinMode(35, INPUT_PULLDOWN);  // TX8, reserve a un MIDI OUT jamais monte
 #ifdef AZ2_EXTERNAL_RACK
   // RX7 (pin 28) reste physiquement connecte au rack, mais peut flotter
   // quand le S3 est eteint/non branche. Le pull-down interne evite que le

@@ -245,7 +245,7 @@ constexpr uint8_t kScopePacketMagic = 0x02;
 constexpr uint8_t kScopeSamplesPerPacket = 32;
 constexpr uint8_t kPadCount = 16;
 // Gamme chromatique des 16 pads (voix live) : pad 0 = kPadBaseNote
-// (MIDI), pad 15 = kPadBaseNote+15. 48 = C3. Partage entre les deux
+// pad 15 = kPadBaseNote+15. 48 = C3. Partage entre les deux
 // cartes depuis le 2026-09-17 (avant : duplique en dur cote Teensy
 // seulement -- l'ESP32 en a besoin pour "poser" une note de pad
 // directement sur un pas du sequenceur, voir padEditsStep dans
@@ -355,8 +355,7 @@ inline void printBtn(Print &out, char button, bool pressed) {
 }
 
 // Potentiometre : valeur ABSOLUE (pas un delta comme printMacro/l'ancien
-// encodeur Pico) -- 0-127, format compatible MIDI CC en vue d'une
-// eventuelle sortie MIDI plus tard. Depuis le 2026-09-15, les 3
+// encodeur Pico) -- 0-127. Depuis le 2026-09-15, les 3
 // "potards" sont en realite des encodeurs rotatifs incrementaux (voir
 // AZ2_CABLAGE_MASTER.md) -- POT: reste le meme protocole (valeur
 // absolue accumulee cote Teensy a chaque cran), rien a changer cote

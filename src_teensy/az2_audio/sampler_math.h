@@ -5,8 +5,8 @@
 namespace az2_sampler_math {
 
 // Calcul pur, independant d'Arduino/AudioStream, utilise par le sampleur et
-// couvert par les tests natifs. noteHz/rootHz sont separes du calcul MIDI
-// pour conserver une seule implementation de midiNoteToFreq() dans le
+// couvert par les tests natifs. noteHz/rootHz sont separes du calcul de hauteur
+// pour conserver une seule implementation de noteToFreq() dans le
 // firmware.
 inline float samplerPlaybackStep(uint32_t sourceRate, uint32_t outputRate,
                                  float noteHz, float rootHz) {

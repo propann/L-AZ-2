@@ -11,7 +11,7 @@
 // mettre en route le sampleur"), voir docs/AZ2_SAMPLEUR.md.
 //
 // A INCLURE DEPUIS main.cpp, DANS le meme bloc "namespace { ... }" et
-// APRES la definition de midiNoteToFreq() -- cette classe l'utilise
+// APRES la definition de noteToFreq() -- cette classe l'utilise
 // directement (pas de re-declaration ici, evite de dupliquer la
 // formule).
 //
@@ -29,7 +29,7 @@ class AudioPlaySampler : public AudioStream {
   AudioPlaySampler() : AudioStream(0, nullptr) {}
 
   // sampleData/sampleLen : buffer PCM 16 bits mono 44.1kHz (flash
-  // PROGMEM OU PSRAM). rootNote : note MIDI a laquelle ce sample doit
+  // PROGMEM OU PSRAM). rootNote : note 0-127 a laquelle ce sample doit
   // jouer a sa vitesse d'origine (pas de resampling, step=1.0).
   void setSample(const int16_t *data, uint32_t len, uint8_t rootNote,
                  uint32_t sampleRate = 44100) {
@@ -47,7 +47,7 @@ class AudioPlaySampler : public AudioStream {
     }
     pos_ = 0.0f;
     step_ = az2_sampler_math::samplerPlaybackStep(
-        sampleRate_, 44100, midiNoteToFreq(note), midiNoteToFreq(rootNote_));
+        sampleRate_, 44100, noteToFreq(note), noteToFreq(rootNote_));
     amp_ = static_cast<float>(velocity) / 127.0f;
     playing_ = true;
   }

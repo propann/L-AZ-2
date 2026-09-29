@@ -1269,7 +1269,7 @@ const char *const kStepFxNames[] = {"---", "ARP", "CUT", "RET", "CRUSH", "DELAY"
 constexpr uint8_t kStepFxCount = sizeof(kStepFxNames) / sizeof(kStepFxNames[0]);
 
 void formatNoteName(uint8_t note, char *out, size_t outSize) {
-  const int octave = static_cast<int>(note) / 12 - 1;  // MIDI 60 = C4, convention M8/LSDJ
+  const int octave = static_cast<int>(note) / 12 - 1;  // note 60 = C4, convention M8/LSDJ
   snprintf(out, outSize, "%s%d", kNoteNames[note % 12], octave);
 }
 
@@ -5868,10 +5868,10 @@ void drawSaverDashboard() {
   for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
     const uint8_t step = seqCurrentStep % kSeqStepCount;
     const bool on = seqStepOn[currentPattern][t][step];
-    const uint8_t midi = seqStepNote[currentPattern][t][step];
+    const uint8_t noteNum = seqStepNote[currentPattern][t][step];
     static const char *const notes[12] = {"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};
     char line[44];
-    snprintf(line, sizeof(line), "T%u %-3s %s", t + 1, on ? notes[midi % 12] : "---",
+    snprintf(line, sizeof(line), "T%u %-3s %s", t + 1, on ? notes[noteNum % 12] : "---",
              az2::engineName(trackEngine[t]));
     gfx->setTextColor(on ? RGB565(100, 190, 120) : RGB565(65, 100, 75));
     gfx->setCursor(24, static_cast<int16_t>(165 + t * 32));
@@ -7208,7 +7208,7 @@ void handleTeensyLine(const String &line) {
       // piste affichee (2026-09-19, "il faut utiliser le bouton B pour
       // jouer une note qu'on entende les modifications") -- indispensable
       // pour entendre l'effet d'un reglage en cours d'edition sans
-      // devoir lancer PLAY/le sequenceur. Note fixe (MIDI 60 = C4,
+      // devoir lancer PLAY/le sequenceur. Note fixe (note 60 = C4,
       // meme note utilisee pour tous les tests manuels ce soir) ;
       // TIENT tant que B reste enfonce (relachement = TEST:...:0,
       // jamais filtre par ecran -- meme raison que FILL: sur D plus

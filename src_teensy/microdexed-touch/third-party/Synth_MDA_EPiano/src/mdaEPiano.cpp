@@ -505,7 +505,7 @@ FLASHMEM void mdaEPiano::noteOff(int32_t note)
 	noteOn(note,0);
 }
 
-FLASHMEM bool mdaEPiano::processMidiController(uint8_t data1, uint8_t data2)
+FLASHMEM bool mdaEPiano::processController(uint8_t data1, uint8_t data2)
 {
   float* param = programs[ 0].param;
 

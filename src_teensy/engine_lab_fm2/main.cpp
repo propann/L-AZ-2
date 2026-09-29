@@ -22,7 +22,7 @@ static float ratio = 2.0f;
 static float modIndex = 2.0f;
 static bool noteHeld = false;
 
-static float midiToHz(int note) {
+static float noteToHz(int note) {
   return 440.0f * powf(2.0f, (static_cast<float>(note) - 69.0f) / 12.0f);
 }
 
@@ -44,7 +44,7 @@ static void handleLine(String line) {
   line.trim();
   if (line.startsWith("LAB:NOTE:")) {
     const int note = constrain(line.substring(9).toInt(), 0, 127);
-    carrierHz = midiToHz(note);
+    carrierHz = noteToHz(note);
     noteHeld = true;
     applyFm();
     fmEnvelope.noteOn();
