@@ -1570,6 +1570,7 @@ void setTrackEngine(uint8_t track, uint8_t engine) {
 String usbLine;
 String espLine;
 uint32_t lastStatusMs = 0;
+uint32_t statusIntervalMs = 1000;  // STATUS_MS:<ms>, 0 = coupe
 bool playing = false;
 
 // Gamme chromatique sur les 16 pads (voix live) -- kPadBaseNote
@@ -3856,6 +3857,14 @@ void handleCommand(const String &line) {
     return;
   }
 
+  if (line.startsWith("STATUS_MS:")) {
+    const long v = line.substring(10).toInt();
+    statusIntervalMs = (v < 0) ? 0 : static_cast<uint32_t>(v);
+    Serial.print("AZ2:STATUS_MS:");
+    Serial.println(statusIntervalMs);
+    return;
+  }
+
   if (line.startsWith("SWING:")) {
     handleSwingCommand(line);
     return;
@@ -4834,8 +4843,17 @@ void checkHeapTest(uint32_t bytes) {
 }
 
 void sendStatus() {
+  // Intervalle pilotable (STATUS_MS:<ms>, 0 = coupe). Diagnostic du bip
+  // periodique du 2026-09-29 : c'est le SEUL evenement a 1 Hz de la machine,
+  // et il emet une trame sur l'USB ET sur Serial1 vers l'ecran, qui redessine
+  // en reponse. Une dalle RGB 480x480 qui se rafraichit a 1 Hz est une pointe
+  // de courant periodique dans l'alimentation partagee avec le PCM5102A.
+  // Couper cet intervalle permet de tester ce couplage sans reflasher.
+  if (statusIntervalMs == 0) {
+    return;
+  }
   const uint32_t now = millis();
-  if (now - lastStatusMs < 1000) {
+  if (now - lastStatusMs < statusIntervalMs) {
     return;
   }
 
