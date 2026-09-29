@@ -4101,7 +4101,20 @@ void handleCommand(const String &line) {
 // 2048 echantillons (~46 ms) debordait alors regulierement, ce qui produisait
 // des trous/clics audibles dans l'emulation. 16K (~371 ms) absorbe le pire
 // burst du tampon UART de 2K tout en restant une petite allocation RAM.
-constexpr size_t kGbRingCapacity = 16384;
+// [2026-09-29] 4096 (~93 ms) et non 16384 : depuis que readStream() alimente
+// la queue toutes les 64 octets pendant une rafale, l'anneau n'a plus besoin
+// d'absorber un tampon UART entier. Grossir la capacite ne corrigeait de
+// toute facon PAS la derive moyenne (voir l'asservissement plus bas), ca ne
+// faisait qu'espacer les trous en ajoutant de la latence.
+constexpr size_t kGbRingCapacity = 4096;
+// Niveau de remplissage vise, et seuil de demarrage : ~23 ms a 44,1 kHz.
+// C'est la reserve dans laquelle l'asservissement puise pour encaisser la
+// gigue de frame de l'ESP32 (fps_x100 mesure entre 5900 et 6000).
+constexpr size_t kGbTargetFillSamples = 1024;
+// Stock tampon vise, toutes files confondues : ~100 ms a 44,1 kHz. Assez pour
+// encaisser la gigue de frame de l'ESP32 (fps mesure entre 59,0 et 60,0) sans
+// ajouter une latence genante en jeu.
+constexpr int32_t kGbTargetBufferedSamples = 4410;
 int16_t gbRing[kGbRingCapacity];
 size_t gbRingHead = 0;
 size_t gbRingTail = 0;
@@ -4109,6 +4122,46 @@ uint32_t gbRingDrops = 0;
 uint32_t gbAudioPacketsRx = 0;
 uint32_t gbAudioBadLengths = 0;
 uint32_t gbAudioTimeouts = 0;
+// Famine : la lib audio reclame un bloc que l'anneau ne peut pas fournir,
+// donc 2,9 ms de silence inserees dans une forme d'onde continue -- un clic.
+// AUCUN compteur ne mesurait ca jusqu'ici : reportGbAudioHealth() ne voyait
+// que le debordement (ring_drop), si bien que le rapport affichait "tout va
+// bien" pendant que ca claquait une fois par seconde. C'est la raison pour
+// laquelle ce defaut a survecu a quatre tentatives de correction.
+uint32_t gbRingDryEvents = 0;
+uint32_t gbAudioLastPacketMs = 0;
+// [2026-09-29] AudioPlayQueue::MAX_BUFFERS vaut 80 sur Teensy 4.x, soit 80
+// blocs = 10240 echantillons = 232 ms de tampon EN AVAL de l'anneau. Comme
+// feedGbAudioQueue() y deverse tout des qu'il peut, gbRingFill() vaut ~0 en
+// permanence : c'est une mesure inutilisable pour asservir. On estime donc le
+// vrai stock tampon par la DERIVE entre ce qu'on a livre a la queue et ce que
+// l'I2S a consomme depuis le demarrage. millis() et l'horloge audio derivent
+// du MEME quartz Teensy, donc cette estimation ne derive pas dans le temps.
+uint32_t gbBlocksDelivered = 0;
+uint32_t gbFeedStartMs = 0;
+bool gbFeedRunning = false;
+int32_t gbBufferedLast = 0;
+bool gbFeedStarted = false;          // pre-remplissage atteint ?
+size_t gbRingFillMin = kGbRingCapacity;
+size_t gbRingFillMax = 0;
+
+inline size_t gbRingFill() {
+  return (gbRingHead >= gbRingTail) ? (gbRingHead - gbRingTail)
+                                    : (kGbRingCapacity - gbRingTail + gbRingHead);
+}
+
+// Stock tampon reel, en echantillons a 44,1 kHz : ce qui attend encore dans
+// l'anneau, plus ce qui a ete livre a la queue mais pas encore sorti par
+// l'I2S. C'est CETTE grandeur qu'il faut maintenir constante.
+inline int32_t gbBufferedSamples() {
+  if (!gbFeedRunning) return 0;
+  const uint32_t elapsedMs = millis() - gbFeedStartMs;
+  const int32_t consumed =
+      static_cast<int32_t>((static_cast<uint64_t>(elapsedMs) * 44100ULL) / 1000ULL);
+  const int32_t delivered =
+      static_cast<int32_t>(gbBlocksDelivered * AUDIO_BLOCK_SAMPLES);
+  return delivered - consumed + static_cast<int32_t>(gbRingFill());
+}
 
 void gbRingPush(int16_t sample) {
   const size_t next = (gbRingHead + 1) % kGbRingCapacity;
@@ -4312,11 +4365,54 @@ bool gbResampleHavePrev = false;
 int16_t gbResamplePrev = 0;
 uint32_t gbResamplePhaseQ16 = 0;
 constexpr uint32_t kGbResampleOneQ16 = 1u << 16;
-constexpr uint32_t kGbResampleStepQ16 =
+// Pas NOMINAL. Il suppose que la source emet exactement kGbAudioSampleRate
+// (14000 Hz) -- ce qui est FAUX par construction : l'ESP32 envoie
+// kGbAudioSamplesPerPacket (234, tronque depuis 234,398 par le cast uint8_t)
+// echantillons par frame, a sa propre cadence. A 59,70 fps mesures sur
+// materiel reel, ca fait 234 x 59,70 = 13 969,8 Hz, soit 44 005 ech/s apres
+// suréchantillonnage pour 44 100 consommes par l'I2S : un deficit permanent
+// de 95 ech/s, donc un trou de 128 echantillons toutes les ~1,3 s.
+constexpr uint32_t kGbResampleNominalQ16 =
     (az2::kGbAudioSampleRate * kGbResampleOneQ16 + 22050u) / 44100u;
+// Autorite de correction : +/-0,5 %, soit ~220 ech/s a 44,1 kHz. Large devant
+// les 95 ech/s de deficit nominal et devant la gigue de fps observee.
+constexpr int32_t kGbResampleMaxDevQ16 =
+    static_cast<int32_t>(kGbResampleNominalQ16) / 200;
+uint32_t gbResampleStepQ16 = kGbResampleNominalQ16;
+
+// Asservissement : deux horloges independantes (le quartz de l'ESP32 et celui
+// du Teensy) derivent forcement l'une par rapport a l'autre. Aucun arrondi
+// entier ne sauve ca -- 235 ech/paquet donnerait un EXCEDENT de 36 Hz au lieu
+// d'un deficit. La seule sortie est de rendre le pas variable et de le
+// corriger doucement sur le remplissage de l'anneau.
+//
+// Plus le pas est GRAND, moins on produit d'echantillons par echantillon
+// source, donc plus l'anneau se vide. Anneau trop plein -> augmenter le pas ;
+// trop vide -> le diminuer. Appele une fois par paquet (~60 Hz) : boucle de
+// controle volontairement lente, elle corrige une derive, pas une transitoire.
+void gbUpdateResampleStep() {
+  const int32_t buffered = gbBufferedSamples();
+  gbBufferedLast = buffered;
+  const int32_t error = buffered - kGbTargetBufferedSamples;
+  int32_t adj = (error * kGbResampleMaxDevQ16) / kGbTargetBufferedSamples;
+  if (adj > kGbResampleMaxDevQ16) adj = kGbResampleMaxDevQ16;
+  if (adj < -kGbResampleMaxDevQ16) adj = -kGbResampleMaxDevQ16;
+  gbResampleStepQ16 =
+      static_cast<uint32_t>(static_cast<int32_t>(kGbResampleNominalQ16) + adj);
+}
 
 void handleGbAudioPacket(const uint8_t *pcm, uint8_t len) {
   ++gbAudioPacketsRx;
+  // Reprise apres un arret (changement de page, ROM dechargee) : l'estimation
+  // de derive n'a plus de sens, on repart d'une base propre.
+  if (gbAudioLastPacketMs != 0 && (millis() - gbAudioLastPacketMs) > 500) {
+    gbFeedRunning = false;
+    gbFeedStarted = false;
+    gbBlocksDelivered = 0;
+    gbResampleStepQ16 = kGbResampleNominalQ16;
+  }
+  gbAudioLastPacketMs = millis();
+  gbUpdateResampleStep();
   for (uint8_t i = 0; i < len; ++i) {
     const int16_t current = static_cast<int16_t>((static_cast<int>(pcm[i]) - 128) << 8);
     gbRecPush(current);  // capture au taux natif AVANT re-echantillonnage
@@ -4332,7 +4428,7 @@ void handleGbAudioPacket(const uint8_t *pcm, uint8_t len) {
       const int32_t interp = static_cast<int32_t>(gbResamplePrev) +
           ((delta * static_cast<int32_t>(gbResamplePhaseQ16)) >> 16);
       gbRingPush(static_cast<int16_t>(interp));
-      gbResamplePhaseQ16 += kGbResampleStepQ16;
+      gbResamplePhaseQ16 += gbResampleStepQ16;
     }
     gbResamplePhaseQ16 -= kGbResampleOneQ16;
     gbResamplePrev = current;
@@ -4348,9 +4444,39 @@ void feedGbAudioQueue();
 // loop(), independamment du rythme d'arrivee des paquets serie.
 void feedGbAudioQueue() {
   while (gbAudioQueue.available()) {
-    const size_t ready = (gbRingHead >= gbRingTail) ? (gbRingHead - gbRingTail)
-                                                     : (kGbRingCapacity - gbRingTail + gbRingHead);
+    const size_t ready = gbRingFill();
+    if (ready < gbRingFillMin) gbRingFillMin = ready;
+    if (ready > gbRingFillMax) gbRingFillMax = ready;
+
+    // Pre-remplissage. Sans lui le feeder vidait l'anneau des qu'il avait un
+    // bloc, si bien que l'anneau tournait EN PERMANENCE quasi vide : sa
+    // capacite n'amortissait rien, et la moindre frame en retard cote ESP32
+    // creusait un trou. On attend kGbTargetFillSamples avant de demarrer,
+    // puis l'asservissement maintient ce niveau.
+    if (!gbFeedStarted) {
+      if (ready < kGbTargetFillSamples) break;
+      gbFeedStarted = true;
+      if (!gbFeedRunning) {
+        // Demarre l'horloge de derive en meme temps que le premier bloc livre.
+        gbFeedRunning = true;
+        gbFeedStartMs = millis();
+        gbBlocksDelivered = 0;
+      }
+    }
+
     if (ready < AUDIO_BLOCK_SAMPLES) {
+      // Famine reelle. On ne compte que les TRANSITIONS (feedGbAudioQueue()
+      // est appelee des milliers de fois par seconde) et uniquement quand la
+      // source emet vraiment, sinon un emulateur a l'arret gonflerait le
+      // compteur. On re-arme le pre-remplissage : une resynchronisation
+      // propre vaut mieux qu'un clic a chaque bloc.
+      // Famine AUDIBLE : l'anneau est vide ET le stock aval (queue) est
+      // epuise. Anneau vide seul n'est pas un defaut -- la queue tient 232 ms.
+      if (gbAudioLastPacketMs != 0 && (millis() - gbAudioLastPacketMs) < 250 &&
+          gbBufferedSamples() < static_cast<int32_t>(AUDIO_BLOCK_SAMPLES)) {
+        ++gbRingDryEvents;
+        gbFeedStarted = false;  // re-armer le pre-remplissage
+      }
       break;
     }
     int16_t *buf = gbAudioQueue.getBuffer();
@@ -4362,6 +4488,7 @@ void feedGbAudioQueue() {
       gbRingTail = (gbRingTail + 1) % kGbRingCapacity;
     }
     gbAudioQueue.playBuffer();
+    ++gbBlocksDelivered;
   }
 }
 
@@ -4570,6 +4697,24 @@ void reportGbAudioHealth() {
   Serial.print(gbAudioTimeouts);
   Serial.print(":ring_drop=");
   Serial.print(gbRingDrops);
+  // Les quatre champs qui manquaient pour voir la famine plutot que de la
+  // deviner. dry = nombre de trous audibles depuis le boot ; fill_min/max =
+  // excursion du remplissage sur la fenetre ; step = pas de reechantillonnage
+  // courant (nominal kGbResampleNominalQ16, +/-0,5 % d'autorite).
+  Serial.print(":dry=");
+  Serial.print(gbRingDryEvents);
+  Serial.print(":fill_min=");
+  Serial.print(gbRingFillMin == kGbRingCapacity ? 0 : gbRingFillMin);
+  Serial.print(":fill_max=");
+  Serial.print(gbRingFillMax);
+  Serial.print(":buffered=");
+  Serial.print(gbBufferedLast);
+  Serial.print(":step=");
+  Serial.print(gbResampleStepQ16);
+  Serial.print("/");
+  Serial.print(kGbResampleNominalQ16);
+  gbRingFillMin = kGbRingCapacity;
+  gbRingFillMax = 0;
   Serial.print(":v2_ok=");
   Serial.print(gbAudioV2Accepted);
   Serial.print(":v2_crc=");
