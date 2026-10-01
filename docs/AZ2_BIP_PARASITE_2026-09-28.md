@@ -180,3 +180,18 @@ Les deux firmwares de production compilent sur cette version :
 
 - `pio run -e master_teensy_rack_lab` : SUCCESS
 - `pio run -e screen_esp` : SUCCESS
+
+## Mise à jour du 1er octobre 2026
+
+Commit `ecca553` : la source audio GB est désormais tirée directement par
+l'ISR audio (`AudioGbRingSource`), l'asservissement se fait sur le vrai
+remplissage de l'anneau, et PANIC vide enfin le chemin audio GB
+(`gbAudioResetStream()`). Les pull-downs des broches 34/35 sont rétablis.
+
+Validé à l'écoute sur matériel après flash du Teensy : émulation GB sans bug
+de son, séquenceur et moteurs fonctionnels, plus de bruit parasite.
+
+**Prudence :** le bip disparaissait déjà après chaque coupure d'alimentation.
+L'absence de bip sur cette session ne prouve donc pas que sa cause racine
+est trouvée. À la prochaine occurrence, appliquer la procédure « mesurer
+AVANT de redémarrer » ci-dessus, puis redémarrer les cartes une par une.
