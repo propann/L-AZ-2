@@ -807,8 +807,9 @@ struct gb_s
 		uint8_t window_clear;
 		uint8_t WY;
 
-		/* Only support 30fps frame skip. */
+		/* AZ-2 : frame skip 1 sur N (voir direct.frame_skip_ratio). */
 		bool frame_skip_count : 1;
+		uint8_t frame_skip_phase;
 		bool interlace_count : 1;
 	} display;
 
@@ -851,6 +852,10 @@ struct gb_s
 		 */
 		bool interlace : 1;
 		bool frame_skip : 1;
+		/* AZ-2 (2026-10-01) : dessine 1 frame sur frame_skip_ratio quand
+		 * frame_skip est actif (0 ou 1 = 2, comportement d'origine). Permet
+		 * 1 sur 3 en X3 pour alleger la PSRAM partagee avec l'ecran RGB. */
+		uint8_t frame_skip_ratio;
 
 		union
 		{
@@ -5338,8 +5343,12 @@ static inline void __gb_step_cpu(struct gb_s *gb)
 				 * the frame or skip it. */
 				if(gb->direct.frame_skip)
 				{
+					const uint8_t ratio = gb->direct.frame_skip_ratio > 1 ?
+						gb->direct.frame_skip_ratio : 2;
+					if(++gb->display.frame_skip_phase >= ratio)
+						gb->display.frame_skip_phase = 0;
 					gb->display.frame_skip_count =
-						!gb->display.frame_skip_count;
+						(gb->display.frame_skip_phase == 0);
 				}
 
 				/* If interlaced is activated, change which lines get
@@ -7267,8 +7276,12 @@ static inline void __gb_step_cpu(struct gb_s *gb)
 				 * the frame or skip it. */
 				if(gb->direct.frame_skip)
 				{
+					const uint8_t ratio = gb->direct.frame_skip_ratio > 1 ?
+						gb->direct.frame_skip_ratio : 2;
+					if(++gb->display.frame_skip_phase >= ratio)
+						gb->display.frame_skip_phase = 0;
 					gb->display.frame_skip_count =
-						!gb->display.frame_skip_count;
+						(gb->display.frame_skip_phase == 0);
 				}
 
 				/* If interlaced is activated, change which lines get
@@ -7752,6 +7765,7 @@ void gb_init_lcd(struct gb_s *gb,
 	gb->display.interlace_count = false;
 	gb->direct.frame_skip = false;
 	gb->display.frame_skip_count = false;
+	gb->display.frame_skip_phase = 0;
 
 	gb->display.window_clear = 0;
 	gb->display.WY = 0;
@@ -9778,8 +9792,12 @@ void __gb_step_cpu_x(struct gb_s *gb)
 				 * the frame or skip it. */
 				if(gb->direct.frame_skip)
 				{
+					const uint8_t ratio = gb->direct.frame_skip_ratio > 1 ?
+						gb->direct.frame_skip_ratio : 2;
+					if(++gb->display.frame_skip_phase >= ratio)
+						gb->display.frame_skip_phase = 0;
 					gb->display.frame_skip_count =
-						!gb->display.frame_skip_count;
+						(gb->display.frame_skip_phase == 0);
 				}
 
 				/* If interlaced is activated, change which lines get

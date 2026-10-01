@@ -1101,6 +1101,11 @@ void gbRunFrame() {
   // chaine de dispatch et les transferts DMA 32 bits restent actifs. Les
   // optimisations 16 bits experimentales connues pour casser des jeux
   // restent, elles, desactivees dans walnut_cgb.h.
+  // X3 ecrit 2,25 fois plus de pixels qu'X2 dans la PSRAM que l'ecran RGB
+  // lit en continu et ou vit la ROM : 1 image dessinee sur 3 (20 Hz) au lieu
+  // d'1 sur 2 (30 Hz) soulage le bus. Logique et son restent a 59,7 Hz.
+  extern uint8_t gbDisplayScale;
+  gb.direct.frame_skip_ratio = (gbDisplayScale >= 3) ? 3 : 2;
   gb_run_frame_dualfetch(&gb);
   // Filet de securite double-coeur (voir le commentaire pres de
   // gGbBandCheckedOut dans main.cpp) : recupere un buffer de bande laisse
