@@ -290,7 +290,9 @@ bool nesLoadRom(const char *filename) {
     loadNesSaveIfPresent();
   }
 
-  strncpy(romTitle, filename, sizeof(romTitle) - 1);
+  // Titre court : nom de fichier sans le sous-dossier de /games.
+  const char *titleBase = strrchr(filename, '/');
+  strncpy(romTitle, titleBase != nullptr ? titleBase + 1 : filename, sizeof(romTitle) - 1);
   romTitle[sizeof(romTitle) - 1] = '\0';
 
   stats = NesRuntimeStats();

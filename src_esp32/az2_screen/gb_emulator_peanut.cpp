@@ -82,7 +82,7 @@ bool cartRamRecoveredFromBackup = false;
 bool cartHasRtc = false;
 bool rtcRecoveredFromBackup = false;
 uint8_t rtcLastSaved[5] = {0};
-char rtcPath[96] = {0};
+char rtcPath[192] = {0};
 
 uint32_t gbLastAutosaveMs = 0;
 GbRuntimeStats runtimeStats;
@@ -105,7 +105,7 @@ constexpr uint8_t kStatsSamplesCapacity = 64;
 uint32_t statsWorkSamples[kStatsSamplesCapacity] = {};
 uint8_t statsWorkSampleCount = 0;
 char romTitle[17] = {0};
-constexpr size_t kSavePathCapacity = 96;
+constexpr size_t kSavePathCapacity = 192;
 static_assert(kGbRomNameLen + sizeof("/games/") <= kSavePathCapacity,
               "GB: ROM filename capacity exceeds save path capacity");
 char saveRamPath[kSavePathCapacity] = {0};
@@ -766,6 +766,32 @@ void sortRomNames(char names[][kGbRomNameLen], uint8_t count) {
 // (contrairement a gb_emulator.cpp qui liste .gb ET .gbc). Une ROM .gbc
 // chargee sur ce coeur ne demarrerait pas dans le mode attendu -- refus
 // net des le scan plutot qu'un mauvais mode silencieux.
+// Meme parcours recursif que gb_emulator.cpp (Walnut, 2026-09-27) : les ROM
+// sont rangees dans des sous-dossiers de /games (GB/, ...). Peanut-GB est
+// DMG seul : on ne liste que les .gb, les .gbc restent pour Walnut-CGB.
+void scanGbDir(File &dir, const String &prefix, char names[][kGbRomNameLen],
+               uint8_t &count) {
+  for (File entry = dir.openNextFile(); entry && count < kGbMaxRoms;
+       entry = dir.openNextFile()) {
+    const String fullName = entry.name();
+    const int slash = fullName.lastIndexOf('/');
+    const String base = (slash >= 0) ? fullName.substring(slash + 1) : fullName;
+    const String relative = prefix.length() ? prefix + "/" + base : base;
+    if (entry.isDirectory()) {
+      scanGbDir(entry, relative, names, count);
+    } else if (fullName.endsWith(".gb") || fullName.endsWith(".GB")) {
+      if (relative.length() >= kGbRomNameLen) {
+        Serial.print("GB:ROM_PATH_TOO_LONG:");
+        Serial.println(relative);
+      } else {
+        strncpy(names[count], relative.c_str(), kGbRomNameLen);
+        ++count;
+      }
+    }
+    entry.close();
+  }
+}
+
 uint8_t gbScanRoms(char names[][kGbRomNameLen]) {
   uint8_t count = 0;
 
@@ -779,21 +805,7 @@ uint8_t gbScanRoms(char names[][kGbRomNameLen]) {
     return 0;
   }
 
-  for (File entry = dir.openNextFile(); entry && count < kGbMaxRoms; entry = dir.openNextFile()) {
-    const String name = entry.name();
-    if (!entry.isDirectory() && (name.endsWith(".gb") || name.endsWith(".GB"))) {
-      const int slash = name.lastIndexOf('/');
-      const String base = (slash >= 0) ? name.substring(slash + 1) : name;
-      if (base.length() >= kGbRomNameLen) {
-        Serial.print("GB:ROM_NAME_TOO_LONG:");
-        Serial.println(base);
-      } else {
-        strncpy(names[count], base.c_str(), kGbRomNameLen);
-        ++count;
-      }
-    }
-    entry.close();
-  }
+  scanGbDir(dir, "", names, count);
   dir.close();
 
   if (count == 0) {
@@ -805,9 +817,9 @@ uint8_t gbScanRoms(char names[][kGbRomNameLen]) {
 }
 
 bool gbLoadRom(const char *filename) {
-  if (filename == nullptr || filename[0] == '\0' || strchr(filename, '/') != nullptr ||
-      strchr(filename, '\\') != nullptr || strcmp(filename, ".") == 0 ||
-      strcmp(filename, "..") == 0) {
+  // Chemin relatif a /games, sous-dossiers autorises (voir scanGbDir()).
+  if (filename == nullptr || filename[0] == '\0' || filename[0] == '/' ||
+      strchr(filename, '\\') != nullptr || strstr(filename, "..") != nullptr) {
     Serial.println("GB:ROM_INVALID_NAME");
     return false;
   }

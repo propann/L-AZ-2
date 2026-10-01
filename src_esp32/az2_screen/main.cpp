@@ -4315,6 +4315,41 @@ void romRowRect(uint8_t visibleRow, int16_t &y) {
 
 // index : absolu dans gbRomNames[], pas relatif a la page -- ne dessine
 // rien s'il tombe hors de la fenetre visible actuelle (gbRomScroll).
+// Libelle lisible d'une ROM pour les listes JEUX / NES / NGP : garde le nom
+// du jeu seul (sans dossier, sans extension, sans les tags No-Intro du type
+// "(France) (Rev 1) [!]"), puis tronque avec ".." pour tenir dans le cadre.
+// L'identifiant SD complet reste intact dans les tableaux *RomNames[].
+constexpr size_t kRomLabelChars = 33;  // taille de texte 2 = 12 px/caractere
+void formatRomLabel(const char *fullName, char *out, size_t outSize) {
+  const char *start = strrchr(fullName, '/');
+  start = (start != nullptr) ? start + 1 : fullName;
+  size_t len = strlen(start);
+  const char *dot = strrchr(start, '.');
+  if (dot != nullptr) len = static_cast<size_t>(dot - start);
+  // Coupe au premier tag "(" ou "[" s'il reste un nom devant.
+  for (size_t i = 1; i < len; ++i) {
+    if (start[i] == '(' || start[i] == '[') {
+      len = i;
+      break;
+    }
+  }
+  while (len > 0 && (start[len - 1] == ' ' || start[len - 1] == '_')) --len;
+  if (len == 0) {  // nom entierement entre crochets : garder le nom brut
+    start = fullName;
+    len = strlen(fullName);
+  }
+  const size_t maxChars = min(kRomLabelChars, outSize - 1);
+  if (len <= maxChars) {
+    memcpy(out, start, len);
+    out[len] = '\0';
+  } else {
+    memcpy(out, start, maxChars - 2);
+    out[maxChars - 2] = '.';
+    out[maxChars - 1] = '.';
+    out[maxChars] = '\0';
+  }
+}
+
 void drawRomRow(uint8_t index) {
   if (index < gbRomScroll || index >= gbRomScroll + kRomVisibleRows) {
     return;
@@ -4335,19 +4370,8 @@ void drawRomRow(uint8_t index) {
   gfx->setTextSize(2);
   gfx->setTextColor(selected ? RGB565_BLACK : RGB565_WHITE);
   gfx->setCursor(static_cast<int16_t>(kMargin + 10), static_cast<int16_t>(y + 6));
-  // L'identifiant SD reste complet dans gbRomNames[]. On tronque
-  // uniquement le LIBELLE visible pour ne jamais dessiner hors cadre.
-  constexpr size_t kRomLabelChars = 32;
   char label[kRomLabelChars + 1];
-  const size_t fullLen = strlen(gbRomNames[index]);
-  if (fullLen <= kRomLabelChars) {
-    strncpy(label, gbRomNames[index], sizeof(label));
-    label[kRomLabelChars] = '\0';
-  } else {
-    memcpy(label, gbRomNames[index], kRomLabelChars - 3);
-    memcpy(label + kRomLabelChars - 3, "...", 3);
-    label[kRomLabelChars] = '\0';
-  }
+  formatRomLabel(gbRomNames[index], label, sizeof(label));
   gfx->print(label);
 }
 
@@ -4717,10 +4741,12 @@ void drawNesPage() {
     gfx->drawRect(kMargin, y, static_cast<int16_t>(kScreenSize - 2 * kMargin),
                   static_cast<int16_t>(kNesRowH - 6),
                   selected ? kPalette[1] : kPalette[idx % kPaletteCount]);
-    gfx->setTextSize(1);
+    gfx->setTextSize(2);
     gfx->setTextColor(selected ? RGB565_BLACK : RGB565_WHITE);
-    gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(y + 10));
-    gfx->print(nesRomNames[idx]);
+    gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(y + 8));
+    char label[kRomLabelChars + 1];
+    formatRomLabel(nesRomNames[idx], label, sizeof(label));
+    gfx->print(label);
   }
 }
 
@@ -4843,10 +4869,12 @@ void drawNgpPage() {
                   static_cast<int16_t>(kNgpRowH - 6), selected ? kPalette[1] : RGB565_BLACK);
     gfx->drawRect(kMargin, y, static_cast<int16_t>(kScreenSize - 2 * kMargin),
                   static_cast<int16_t>(kNgpRowH - 6), selected ? kPalette[1] : kPalette[idx % kPaletteCount]);
-    gfx->setTextSize(1);
+    gfx->setTextSize(2);
     gfx->setTextColor(selected ? RGB565_BLACK : RGB565_WHITE);
-    gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(y + 10));
-    gfx->print(ngpRomNames[idx]);
+    gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(y + 8));
+    char label[kRomLabelChars + 1];
+    formatRomLabel(ngpRomNames[idx], label, sizeof(label));
+    gfx->print(label);
   }
 }
 

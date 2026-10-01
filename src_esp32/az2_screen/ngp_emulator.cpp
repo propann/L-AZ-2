@@ -234,7 +234,9 @@ bool ngpLoadRom(const char *filename) {
   if (bgSelect) *bgSelect |= 0x80;
   if (frame0Pri) *frame0Pri |= 0xC0;
   finscan = 198;
-  strncpy(romTitle, filename, sizeof(romTitle) - 1);
+  // Titre court : nom de fichier sans le sous-dossier de /games.
+  const char *titleBase = strrchr(filename, '/');
+  strncpy(romTitle, titleBase != nullptr ? titleBase + 1 : filename, sizeof(romTitle) - 1);
   romTitle[sizeof(romTitle) - 1] = '\0';
   buttonState = 0;
   mapButtons();
