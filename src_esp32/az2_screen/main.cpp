@@ -4284,7 +4284,10 @@ void drawLinksPage() {
 // dechargee en quittant la page. PAS DE SON pour l'instant (voir
 // gb_emulator.cpp).
 // ---------------------------------------------------------------------
-char gbRomNames[kGbMaxRoms][kGbRomNameLen];
+// Listes de ROM en PSRAM (2026-10-01) : 3 x 16 Ko de simples libelles d'UI
+// qui manquaient en RAM interne (firmware Walnut + coeur 0 : DRAM depassee de
+// 6,5 Ko). Alloues dans allocRomNameLists(), en tete de setup().
+char (*gbRomNames)[kGbRomNameLen] = nullptr;
 uint8_t gbRomCount = 0;
 
 bool gbSettingsMenuOpen = false;
@@ -4698,7 +4701,7 @@ void emuPickerActivate(uint8_t index) {
 // pour ce qui manque encore -- sauvegarde SRAM, double coeur, audio). Volontairement
 // minimale (pas de X2/X3, pas de pagination, pas de menu en jeu) pour valider
 // le coeur d'abord, comme la toute premiere version de la page JEUX GB.
-char nesRomNames[kNesMaxRoms][kNesRomNameLen];
+char (*nesRomNames)[kNesRomNameLen] = nullptr;  // PSRAM, voir gbRomNames
 uint8_t nesRomCount = 0;
 int8_t nesRomScroll = 0;
 uint8_t nesSelectedRomIndex = 0;
@@ -4837,7 +4840,7 @@ void nesBlitBandImpl(int bandIndex, const uint16_t *pixels) {
 #endif
 }
 
-char ngpRomNames[kNgpMaxRoms][kNgpRomNameLen];
+char (*ngpRomNames)[kNgpRomNameLen] = nullptr;  // PSRAM, voir gbRomNames
 uint8_t ngpRomCount = 0;
 int8_t ngpRomScroll = 0;
 uint8_t ngpSelectedRomIndex = 0;
@@ -8641,17 +8644,26 @@ void drawGbViewportFrame() {
 // de remplir une bande (bloque si les 2 sont encore chez le consommateur --
 // c'est le seul point de contre-pression, aucune donnee n'est ecrasee en
 // cours de lecture).
+// [2026-10-01] Le coeur 1 ne transmet plus des bandes deja agrandies
+// (480 px x 24 lignes, 2 tampons seulement) mais les lignes SOURCE du coeur
+// (160 px x 8 lignes) : 9 fois plus petites, donc une image entiere (18
+// bandes) tient dans la meme RAM. Avant, avec 2 tampons, le coeur 1 attendait
+// le coeur 0 a chaque bande des que l'affichage depassait la cadence : mesure
+// Walnut X3, 15,2 ms de coeur en X2 -> 18,7 ms en X3, 47-50 fps. Desormais le
+// coeur 0 fait l'agrandissement ET la copie, avec tout le temps d'une image
+// affichee (Walnut n'en dessine qu'une sur deux) pour la finir.
+constexpr int16_t kGbSourceRowsPerBand = 8;
+constexpr uint8_t kGbBandPool = 18;  // 144 / 8 : une image GB complete
 struct GbBandJob {
-  uint16_t *buf;
-  int16_t y;
-  int16_t outputRows;
-  int16_t scaledW;
-  int16_t screenLeft;
+  uint8_t idx;          // tampon source dans gbSrcBandBuf
+  int16_t sourceStart;  // premiere ligne GB (0-143) de la bande
+  int16_t sourceRows;   // lignes valides dans la bande (8, ou moins en fin)
+  uint8_t scale;        // X2/X3 fige a l'emission (peut changer entre 2 frames)
   bool lastOfFrame;
 };
 QueueHandle_t gbBandReadyQueue = nullptr;
 QueueHandle_t gbBandFreeQueue = nullptr;
-uint16_t gbBandBuf[2][kGbMaxScaledW * kGbMaxScaledRowsPerBand];
+uint16_t gbSrcBandBuf[kGbBandPool][160 * kGbSourceRowsPerBand];
 // [2026-09-27] Bug reel trouve sur Walnut-CGB (GBC) : gb_run_frame_dualfetch()
 // saute __gb_draw_line()/gbBlitLine() entierement quand gb->lcd_blank est
 // vrai (walnut_cgb.h, "if(!gb->lcd_blank) __gb_draw_line(gb);") -- si le LCD
@@ -8700,41 +8712,63 @@ void gbBlitConsumerTask(void *) {
   extern volatile uint32_t gGbBlitFlushLastUs;
   extern volatile bool gGbDisplayHappenedThisFrame;
   static uint32_t consumerDisplayUs = 0;
+  static uint32_t consumerScaleUs = 0;
   static uint32_t consumerCopyUs = 0;
   static uint32_t consumerFlushUs = 0;
   GbBandJob job;
   for (;;) {
     if (xQueueReceive(gbBandReadyQueue, &job, portMAX_DELAY) != pdTRUE) continue;
     const uint32_t drawStartUs = micros();
-    const uint32_t copyStartUs = micros();
+    const int16_t scale = job.scale;
+    const int16_t scaledW = static_cast<int16_t>(160 * scale);
+    const int16_t screenLeft = static_cast<int16_t>((kScreenSize - scaledW) / 2);
+    const int16_t scaledTop = static_cast<int16_t>((kScreenSize - 144 * scale) / 2);
+    const int16_t y = static_cast<int16_t>(scaledTop + job.sourceStart * scale);
+    const int16_t outputRows = static_cast<int16_t>(job.sourceRows * scale);
     uint16_t *framebuffer = gfx->getFramebuffer();
+    // Ligne agrandie preparee en RAM interne puis recopiee par memcpy
+    // contigu en PSRAM (plus rapide que des ecritures PSRAM pixel a pixel,
+    // voir AZ2_AUDIT_PILOTE_RGB_2026-09-20.md).
+    static uint16_t scaledRow[kGbMaxScaledW];
+    uint32_t scaleUs = 0;
+    const uint32_t copyStartUs = micros();
     if (framebuffer != nullptr) {
-      for (int16_t srcY = 0; srcY < job.outputRows; ++srcY) {
-        const int16_t dstY = static_cast<int16_t>(kScreenSize - 1 - (job.y + srcY));
-        uint16_t *dst = framebuffer + dstY * kScreenSize + job.screenLeft;
-        const uint16_t *src = job.buf + srcY * job.scaledW;
-        memcpy(dst, src, job.scaledW * sizeof(uint16_t));
+      for (int16_t r = 0; r < job.sourceRows; ++r) {
+        const uint32_t scaleStartUs = micros();
+        const uint16_t *src = gbSrcBandBuf[job.idx] + r * 160;
+        uint16_t *dst = scaledRow;
+        // Panneau monte tete-en-bas : x inverse ici, y inverse a la copie.
+        for (int x = 159; x >= 0; --x) {
+          const uint16_t c = src[x];
+          for (int16_t k = 0; k < scale; ++k) *dst++ = c;
+        }
+        scaleUs += micros() - scaleStartUs;
+        for (int16_t dy = 0; dy < scale; ++dy) {
+          const int16_t dstY = static_cast<int16_t>(kScreenSize - 1 - (y + r * scale + dy));
+          memcpy(framebuffer + dstY * kScreenSize + screenLeft, scaledRow,
+                 scaledW * sizeof(uint16_t));
+        }
       }
     }
-    consumerCopyUs += micros() - copyStartUs;
+    consumerCopyUs += micros() - copyStartUs - scaleUs;
+    consumerScaleUs += scaleUs;
     const uint32_t flushStartUs = micros();
     if (framebuffer != nullptr) {
-      const int16_t firstDstY = static_cast<int16_t>(kScreenSize - 1 - (job.y + job.outputRows - 1));
+      const int16_t firstDstY = static_cast<int16_t>(kScreenSize - 1 - (y + outputRows - 1));
       esp_cache_msync(framebuffer + firstDstY * kScreenSize,
-                      static_cast<size_t>(job.outputRows) * kScreenSize * sizeof(uint16_t),
+                      static_cast<size_t>(outputRows) * kScreenSize * sizeof(uint16_t),
                       ESP_CACHE_MSYNC_FLAG_DIR_C2M);
     }
     consumerFlushUs += micros() - flushStartUs;
     consumerDisplayUs += micros() - drawStartUs;
-    // Rendu du buffer APRES le flush : le producteur ne doit pas pouvoir le
-    // reecrire tant que le panneau n'a pas vu les donnees.
-    const uint8_t freedIndex = (job.buf == gbBandBuf[0]) ? 0 : 1;
-    xQueueSend(gbBandFreeQueue, &freedIndex, kGbBandWaitTicks);
+    xQueueSend(gbBandFreeQueue, &job.idx, kGbBandWaitTicks);
     if (job.lastOfFrame) {
+      gGbBlitScaleLastUs = consumerScaleUs;
       gGbBlitCopyLastUs = consumerCopyUs;
       gGbBlitFlushLastUs = consumerFlushUs;
-      gGbDisplayLastUs = gGbBlitScaleLastUs + consumerDisplayUs;
+      gGbDisplayLastUs = consumerDisplayUs;
       gGbDisplayHappenedThisFrame = true;
+      consumerScaleUs = 0;
       consumerDisplayUs = 0;
       consumerCopyUs = 0;
       consumerFlushUs = 0;
@@ -8744,11 +8778,11 @@ void gbBlitConsumerTask(void *) {
 
 void gbBlitDualCoreInit() {
   if (gbBandReadyQueue != nullptr) return;
-  gbBandReadyQueue = xQueueCreate(2, sizeof(GbBandJob));
-  gbBandFreeQueue = xQueueCreate(2, sizeof(uint8_t));
-  uint8_t idx0 = 0, idx1 = 1;
-  xQueueSend(gbBandFreeQueue, &idx0, 0);
-  xQueueSend(gbBandFreeQueue, &idx1, 0);
+  gbBandReadyQueue = xQueueCreate(kGbBandPool, sizeof(GbBandJob));
+  gbBandFreeQueue = xQueueCreate(kGbBandPool, sizeof(uint8_t));
+  for (uint8_t i = 0; i < kGbBandPool; ++i) {
+    xQueueSend(gbBandFreeQueue, &i, 0);
+  }
   // [2026-09-27] 4096 -> 8192 par prudence : la carte a fige/perdu l'USB
   // apres une session de jeu avec ce prototype, cause pas encore identifiee
   // avec certitude -- pile un peu large ecarte cette hypothese a peu de
@@ -8763,6 +8797,32 @@ void gbBlitEndOfFrame() {}
 #endif
 
 void gbBlitLine(int line, const uint16_t *row) {
+#ifdef AZ2_GB_DUAL_CORE_BLIT
+  // Coeur 1 : simple copie de la ligne source (320 o) dans le tampon de la
+  // bande courante, envoi au coeur 0 en fin de bande. Agrandissement, copie
+  // framebuffer et writeback cache : gbBlitConsumerTask() sur le coeur 0.
+  const int16_t rowInBand = static_cast<int16_t>(line % kGbSourceRowsPerBand);
+  if (rowInBand == 0) {
+    // Attente BORNEE : le pool couvre une image entiere, on n'attend que si
+    // le coeur 0 a plus d'une image de retard.
+    if (xQueueReceive(gbBandFreeQueue, &gCurrentBandBufIdx, kGbBandWaitTicks) == pdTRUE) {
+      gGbBandCheckedOut = true;
+    }
+  }
+  memcpy(gbSrcBandBuf[gCurrentBandBufIdx] + rowInBand * 160, row, 160 * sizeof(uint16_t));
+  if (rowInBand == kGbSourceRowsPerBand - 1 || line == 143) {
+    GbBandJob job{gCurrentBandBufIdx, static_cast<int16_t>(line - rowInBand),
+                  static_cast<int16_t>(rowInBand + 1), static_cast<uint8_t>(gbDisplayScale),
+                  line == 143};
+    if (xQueueSend(gbBandReadyQueue, &job, kGbBandWaitTicks) != pdTRUE) {
+      // Coeur 0 bloque : rendre le tampon plutot que de le perdre (bande
+      // non affichee, mais le pool reste complet).
+      xQueueSend(gbBandFreeQueue, &gCurrentBandBufIdx, 0);
+    }
+    gGbBandCheckedOut = false;
+  }
+  return;
+#else
   // [2026-09-25] Essaye a 16 (bandes deux fois plus grandes, 9 flushs/frame
   // au lieu de 18) pour reduire le cout esp_cache_msync() -- confirme
   // scintillant sur materiel reel, comme le regroupement total deja
@@ -8943,6 +9003,7 @@ void gbBlitLine(int line, const uint16_t *row) {
     }
 #endif
   }
+#endif  // AZ2_GB_DUAL_CORE_BLIT
 }
 
 volatile uint32_t gGbDisplayLastUs = 0;
@@ -8957,7 +9018,32 @@ volatile uint32_t gGbBlitFlushLastUs = 0;
 // soustraire son cout et isoler le cœur pur (voir gbRunFrame()).
 volatile bool gGbDisplayHappenedThisFrame = false;
 
+// PSRAM d'abord, RAM interne en repli : la liste doit exister quoi qu'il
+// arrive, les pages JEUX/NES/NGP l'indexent sans test.
+template <size_t N>
+char (*allocRomNameList(size_t rows))[N] {
+  const size_t bytes = rows * N;
+  void *p = heap_caps_calloc(1, bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (p == nullptr) p = calloc(1, bytes);
+  return static_cast<char (*)[N]>(p);
+}
+
+void allocRomNameLists() {
+  gbRomNames = allocRomNameList<kGbRomNameLen>(kGbMaxRoms);
+#ifdef AZ2_NES_ENABLED
+  nesRomNames = allocRomNameList<kNesRomNameLen>(kNesMaxRoms);
+#endif
+  ngpRomNames = allocRomNameList<kNgpRomNameLen>(kNgpMaxRoms);
+}
+
 void setup() {
+  allocRomNameLists();
+  // Tampon d'envoi pour le port de debug (2026-10-01). Sans lui, chaque
+  // Serial.print() attend que la FIFO materielle de 128 o se vide : la
+  // ligne GB:PERF (~250 o a 230400 bauds) bloquait loop() ~11 ms une fois
+  // par seconde, soit une image GB perdue chaque seconde ("pause toutes les
+  // secondes" en GBC). Doit etre appele AVANT begin().
+  Serial.setTxBufferSize(2048);
   Serial.begin(230400);
   delay(300);
   Serial.println("AZ2:ROLE:ESP32_SCREEN_TEST");
@@ -9021,6 +9107,11 @@ void setup() {
   // parseur SCOPE (voir ScopeRxState plus haut). 2048 o donne une marge
   // large sans cout memoire notable (PSRAM/RAM disponibles ici).
   Serial1.setRxBufferSize(2048);
+  // Tampon d'envoi (2026-10-01) : chaque frame d'emulateur envoie un paquet
+  // audio de 236 o au Teensy ; sans tampon, Serial1.write() attendait la
+  // FIFO materielle de 128 o (~1,2 ms bloquees par frame, mesure
+  // audio_avg_us ~1,9 ms sur Walnut). 4 paquets de marge.
+  Serial1.setTxBufferSize(1024);
   Serial1.begin(az2::kControlBaud, SERIAL_8N1, kTeensyRxPin, kTeensyTxPin);
   gbSetAudioV2Ready(false);
   sendToTeensy(az2::kHelloControl);

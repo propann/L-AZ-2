@@ -25,6 +25,10 @@
 // synthese), donc avec reverb/delay/volume si les potards sont
 // tournes.
 
+// Optimisation propre a ce fichier (coeur Walnut-CGB inclus ici). Mesure
+// Zelda DX X2 du 2026-10-01, core_avg_us : -O2 14,9 ms, -O3 17,3 ms,
+// -Os 19,0 ms. Le reste du firmware ecran garde -O3 (utile au coeur NES).
+#pragma GCC optimize("O2")
 #include "gb_emulator.h"
 
 #define ENABLE_LCD 1
@@ -69,6 +73,12 @@ uint32_t romSize = 0;
 uint8_t *cartRam = nullptr;
 uint32_t cartRamSize = 0;
 bool cartRamDirty = false;
+// Empreinte du contenu deja present sur la SD : meme correctif que
+// gb_emulator_peanut.cpp (b211b4d). Sans elle la sauvegarde auto reecrivait
+// le .sav pour une SRAM revenue a l'identique et figeait le jeu ~0,8 s
+// (mesure Zelda DX du 2026-10-01).
+uint32_t cartRamSavedCrc = 0;
+bool cartRamSavedCrcValid = false;
 // La copie .bak est l'unique sauvegarde valide apres recuperation.
 bool cartRamRecoveredFromBackup = false;
 
@@ -308,7 +318,14 @@ bool gbSaveCartRam() {
     Serial.println("GB:SAVE_UNAVAILABLE");
     return false;
   }
+  const uint32_t crc = crc32Buffer(cartRam, cartRamSize);
+  if (cartRamSavedCrcValid && crc == cartRamSavedCrc) {
+    cartRamDirty = false;  // identique a la SD : aucune ecriture
+    return true;
+  }
   if (atomicSaveRaw(saveRamPath, cartRam, cartRamSize)) {
+    cartRamSavedCrc = crc;
+    cartRamSavedCrcValid = true;
     cartRamDirty = false;
     cartRamRecoveredFromBackup = false;
     Serial.print("GB:SAVED:");
@@ -543,6 +560,8 @@ bool gbLoadCartRamIfPresent() {
   if (gbLoadCartRamFile(saveRamPath)) {
     cartRamDirty = false;
     cartRamRecoveredFromBackup = false;
+    cartRamSavedCrc = crc32Buffer(cartRam, cartRamSize);
+    cartRamSavedCrcValid = true;
     return true;
   }
 
@@ -753,6 +772,7 @@ bool gbUnload() {
   rtcPath[0] = '\0';
   cartRamDirty = false;
   cartRamRecoveredFromBackup = false;
+  cartRamSavedCrcValid = false;
   cartHasRtc = false;
   rtcRecoveredFromBackup = false;
   memset(rtcLastSaved, 0, sizeof(rtcLastSaved));
@@ -961,6 +981,7 @@ bool gbLoadRom(const char *filename) {
   cartRamSize = static_cast<uint32_t>(detectedSaveSize);
   cartRamDirty = false;
   cartRamRecoveredFromBackup = false;
+  cartRamSavedCrcValid = false;
 
   const uint8_t cartridgeType = romData[0x147];
   cartHasRtc = (cartridgeType == 0x0F || cartridgeType == 0x10);
