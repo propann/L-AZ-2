@@ -169,7 +169,7 @@ AudioMixer4 mixFinal;    // groupe A + groupe B + voix live (entree 3 libre)
 // AudioEffectDelay pleine echelle coute ~350 Ko de RAM ; un seul sur le
 // bus master est largement suffisant et abordable, un par piste ne le
 // serait pas). mixMaster combine signal sec (0), reverb (1), delay (2)
-// et le son de l'emulateur GB (3, voir gbAudioQueue plus bas -- demande
+// et le son de l'emulateur GB (3, voir gbAudioSource plus bas -- demande
 // 2026-09-15, "il faut un emulateur complet classe ... pour que le DAC
 // le joue").
 AudioEffectFreeverb reverbUnit;
@@ -201,7 +201,89 @@ constexpr bool kMuteExternalRackAudio = false;
 // n'importe quel autre "moteur" par le bus d'effets maitre (reverb/
 // delay/volume s'appliquent donc dessus aussi si les potards sont
 // tournes).
-AudioPlayQueue gbAudioQueue;
+//
+// [2026-10-01] Source TIREE par l'ISR audio au lieu d'une AudioPlayQueue.
+// L'ancienne queue cachait 80 blocs (232 ms) en aval de l'anneau : son
+// remplissage reel etait illisible, l'asservissement estimait donc le stock
+// via millis(), estimation qui se decalait DEFINITIVEMENT au premier trou
+// (le temps passe a vide etait compte comme consomme). Resultat : latence
+// qui grimpe jusqu'a queue pleine, puis blocs ecrases sans le savoir
+// (playBuffer() NON_STALLING refusait le bloc, retour ignore) = clics.
+// Ici l'anneau EST le seul tampon : son remplissage est la vraie mesure.
+// Producteur unique = loop() (push), consommateur unique = update() (ISR) ;
+// indices 32 bits libres, chacun ecrit par un seul cote.
+class AudioGbRingSource : public AudioStream {
+ public:
+  // ~186 ms a 44,1 kHz : absorbe une rafale UART complete (tampon RX 2 Ko
+  // = ~8,7 paquets = ~6400 echantillons apres sur-echantillonnage).
+  static constexpr uint32_t kCapacity = 8192;  // puissance de 2
+  // Remplissage vise et seuil de (re)demarrage : ~46 ms.
+  static constexpr uint32_t kTargetFill = 2048;
+
+  AudioGbRingSource() : AudioStream(0, nullptr) {}
+
+  bool push(int16_t sample) {
+    const uint32_t h = head_;
+    if (h - tail_ >= kCapacity) return false;
+    buf_[h & (kCapacity - 1)] = sample;
+    __asm__ volatile("" ::: "memory");  // l'echantillon avant l'index
+    head_ = h + 1;
+    return true;
+  }
+
+  uint32_t fill() const { return head_ - tail_; }
+  uint32_t underruns() const { return underruns_; }
+
+  // Vide l'anneau et re-arme le pre-remplissage (PANIC, reprise de flux).
+  void reset() {
+    AudioNoInterrupts();
+    tail_ = head_;
+    started_ = false;
+    last_ = 0;
+    AudioInterrupts();
+  }
+
+  void update() override {
+    const uint32_t available = head_ - tail_;
+    if (!started_) {
+      if (available < kTargetFill) return;  // silence pendant le pre-remplissage
+      started_ = true;
+    }
+    audio_block_t *block = allocate();
+    if (block == nullptr) return;
+    if (available < AUDIO_BLOCK_SAMPLES) {
+      // Famine : fondu de la derniere valeur vers 0 plutot qu'un saut sec,
+      // puis re-armement du pre-remplissage (une reprise propre plutot qu'un
+      // clic a chaque bloc quand la source est plus lente que 44,1 kHz).
+      for (int i = 0; i < AUDIO_BLOCK_SAMPLES; ++i) {
+        block->data[i] = static_cast<int16_t>(
+            (static_cast<int32_t>(last_) * (AUDIO_BLOCK_SAMPLES - 1 - i)) / AUDIO_BLOCK_SAMPLES);
+      }
+      last_ = 0;
+      started_ = false;
+      ++underruns_;
+    } else {
+      uint32_t t = tail_;
+      for (int i = 0; i < AUDIO_BLOCK_SAMPLES; ++i) {
+        block->data[i] = buf_[t & (kCapacity - 1)];
+        ++t;
+      }
+      last_ = block->data[AUDIO_BLOCK_SAMPLES - 1];
+      tail_ = t;
+    }
+    transmit(block);
+    release(block);
+  }
+
+ private:
+  int16_t buf_[kCapacity] = {};
+  volatile uint32_t head_ = 0;  // ecrit par loop()
+  volatile uint32_t tail_ = 0;  // ecrit par update()
+  volatile bool started_ = false;
+  volatile uint32_t underruns_ = 0;
+  int16_t last_ = 0;
+};
+AudioGbRingSource gbAudioSource;
 
 // Oscilloscope (Teensy -> ESP32, voir AZ2_Protocol.h "kScopePacketMagic"
 // et updateScope() plus bas) -- demande 2026-09-15 ("une fenetre ou on
@@ -394,7 +476,7 @@ AudioConnection patchFinalToReverb(mixFinal, 0, reverbUnit, 0);
 AudioConnection patchReverbToMaster(reverbUnit, 0, mixMaster, 1);
 AudioConnection patchFinalToDelay(mixFinal, 0, delayUnit, 0);
 AudioConnection patchDelayToMaster(delayUnit, 0, mixMaster, 2);
-AudioConnection patchGbAudioToMaster(gbAudioQueue, 0, mixMaster, 3);
+AudioConnection patchGbAudioToMaster(gbAudioSource, 0, mixMaster, 3);
 #ifdef AZ2_EXTERNAL_RACK
 AudioConnection patchMasterToOutputL(mixMaster, 0, mixOutputL, 0);
 AudioConnection patchMasterToOutputR(mixMaster, 0, mixOutputR, 0);
@@ -1982,6 +2064,8 @@ void allTrackNotesOff() {
   }
 }
 
+void gbAudioResetStream();  // definie avec le chemin audio GB plus bas
+
 // Arret d'urgence global. Contrairement a allTrackNotesOff(), qui suit
 // seulement les notes connues du sequenceur, PANIC couvre aussi les pads,
 // la voix live et les one-shots encore actifs.
@@ -2003,6 +2087,9 @@ void panicAllAudio() {
   liveVoice.panic();
   for (uint8_t pad = 0; pad < az2::kPadCount; ++pad)
     padSampler[pad].stopNow();
+  // PANIC remet aussi le chemin audio GB a zero (anneau, interpolateur) :
+  // c'etait le seul etat audio que rien ne savait vider avant un power-cycle.
+  gbAudioResetStream();
 }
 
 // Applique l'effet actif d'une piste sur le tick courant (ticksSinceTrigger
@@ -2628,7 +2715,7 @@ void applyMasterMix() {
   mixMaster.gain(0, masterVolume);
   mixMaster.gain(1, reverbWet * masterVolume);
   mixMaster.gain(2, delayWet * masterVolume);
-  mixMaster.gain(3, masterVolume);  // son GB (voir gbAudioQueue) -- suit le potard 1 comme le signal sec
+  mixMaster.gain(3, masterVolume);  // son GB (voir gbAudioSource) -- suit le potard 1 comme le signal sec
 #ifdef AZ2_EXTERNAL_RACK
   // Le bus local est déjà pondéré ci-dessus. Le rack reçoit sa propre marge
   // de tête mais suit le même volume général.
@@ -3348,12 +3435,15 @@ void updateDigitalControls() {
     }
     if ((now - c.lastChangeMs) >= kLocalDebounceMs && raw != c.state) {
       c.state = raw;
+      // Serial1 (ecran) AVANT Serial (USB) : l'USB n'est qu'un miroir de
+      // debug, et une ecriture USB peut attendre jusqu'a ~120 ms si l'hote
+      // ne lit pas le port. L'ecran ne doit jamais payer ce delai.
       if (c.isNav) {
-        az2::printNav(Serial, c.label, raw);
         az2::printNav(Serial1, c.label, raw);
+        az2::printNav(Serial, c.label, raw);
       } else {
-        az2::printBtn(Serial, c.label[0], raw);
         az2::printBtn(Serial1, c.label[0], raw);
+        az2::printBtn(Serial, c.label[0], raw);
       }
     }
   }
@@ -3412,8 +3502,8 @@ void updateEncoderButtons() {
     }
     if ((now - b.lastChangeMs) >= kLocalDebounceMs && raw != b.state) {
       b.state = raw;
+      az2::printEnc(Serial1, b.index, raw);  // ecran d'abord, voir updateDigitalControls()
       az2::printEnc(Serial, b.index, raw);
-      az2::printEnc(Serial1, b.index, raw);
     }
   }
 }
@@ -3467,8 +3557,8 @@ void updateEncoders() {
       // ne se bloque jamais aux bornes 0/127 et peut donc parcourir un
       // menu indefiniment dans les deux sens.
       const int8_t direction = delta > 0 ? 1 : -1;
+      Serial1.printf("TURN:%u:%d\n", i, direction);  // ecran d'abord
       Serial.printf("TURN:%u:%d\n", i, direction);
-      Serial1.printf("TURN:%u:%d\n", i, direction);
       const int32_t next = static_cast<int32_t>(encValue[i]) + delta * kEncStepPerDetent;
       encValue[i] = static_cast<uint8_t>(constrain(next, 0, 127));
     }
@@ -3482,8 +3572,8 @@ void updateEncoders() {
     potLastSent[i] = encValue[i];
     potLastSentMs[i] = now;
 
+    az2::printPot(Serial1, i, encValue[i]);  // ecran d'abord
     az2::printPot(Serial, i, encValue[i]);
-    az2::printPot(Serial1, i, encValue[i]);
 
     // Encodeur 0 (volume) reste CABLE DIRECT (2026-09-19, "le volume il
     // bouge pas" -- role fixe, jamais reinterprete) : reagit meme si
@@ -4105,81 +4195,20 @@ void handleCommand(const String &line) {
 // ce qui ajoutait des marches/aliasing audibles. On interpole desormais
 // lineairement entre deux echantillons en arithmetique Q16 : cout faible
 // sur Teensy 4.1 et aucune modification du protocole UART.
-// Le flux UART arrive par rafales : readStream() peut recevoir plusieurs
-// paquets avant que loop() ne revienne au remplissage de la queue audio.
-// 2048 echantillons (~46 ms) debordait alors regulierement, ce qui produisait
-// des trous/clics audibles dans l'emulation. 16K (~371 ms) absorbe le pire
-// burst du tampon UART de 2K tout en restant une petite allocation RAM.
-// [2026-09-29] 4096 (~93 ms) et non 16384 : depuis que readStream() alimente
-// la queue toutes les 64 octets pendant une rafale, l'anneau n'a plus besoin
-// d'absorber un tampon UART entier. Grossir la capacite ne corrigeait de
-// toute facon PAS la derive moyenne (voir l'asservissement plus bas), ca ne
-// faisait qu'espacer les trous en ajoutant de la latence.
-constexpr size_t kGbRingCapacity = 4096;
-// Niveau de remplissage vise, et seuil de demarrage : ~23 ms a 44,1 kHz.
-// C'est la reserve dans laquelle l'asservissement puise pour encaisser la
-// gigue de frame de l'ESP32 (fps_x100 mesure entre 5900 et 6000).
-constexpr size_t kGbTargetFillSamples = 1024;
-// Stock tampon vise, toutes files confondues : ~100 ms a 44,1 kHz. Assez pour
-// encaisser la gigue de frame de l'ESP32 (fps mesure entre 59,0 et 60,0) sans
-// ajouter une latence genante en jeu.
-constexpr int32_t kGbTargetBufferedSamples = 4410;
-int16_t gbRing[kGbRingCapacity];
-size_t gbRingHead = 0;
-size_t gbRingTail = 0;
+// L'anneau lui-meme vit dans gbAudioSource (voir AudioGbRingSource plus
+// haut) : c'est le seul tampon entre le paquet UART et l'I2S.
 uint32_t gbRingDrops = 0;
 uint32_t gbAudioPacketsRx = 0;
 uint32_t gbAudioBadLengths = 0;
 uint32_t gbAudioTimeouts = 0;
-// Famine : la lib audio reclame un bloc que l'anneau ne peut pas fournir,
-// donc 2,9 ms de silence inserees dans une forme d'onde continue -- un clic.
-// AUCUN compteur ne mesurait ca jusqu'ici : reportGbAudioHealth() ne voyait
-// que le debordement (ring_drop), si bien que le rapport affichait "tout va
-// bien" pendant que ca claquait une fois par seconde. C'est la raison pour
-// laquelle ce defaut a survecu a quatre tentatives de correction.
-uint32_t gbRingDryEvents = 0;
 uint32_t gbAudioLastPacketMs = 0;
-// [2026-09-29] AudioPlayQueue::MAX_BUFFERS vaut 80 sur Teensy 4.x, soit 80
-// blocs = 10240 echantillons = 232 ms de tampon EN AVAL de l'anneau. Comme
-// feedGbAudioQueue() y deverse tout des qu'il peut, gbRingFill() vaut ~0 en
-// permanence : c'est une mesure inutilisable pour asservir. On estime donc le
-// vrai stock tampon par la DERIVE entre ce qu'on a livre a la queue et ce que
-// l'I2S a consomme depuis le demarrage. millis() et l'horloge audio derivent
-// du MEME quartz Teensy, donc cette estimation ne derive pas dans le temps.
-uint32_t gbBlocksDelivered = 0;
-uint32_t gbFeedStartMs = 0;
-bool gbFeedRunning = false;
-int32_t gbBufferedLast = 0;
-bool gbFeedStarted = false;          // pre-remplissage atteint ?
-size_t gbRingFillMin = kGbRingCapacity;
-size_t gbRingFillMax = 0;
-
-inline size_t gbRingFill() {
-  return (gbRingHead >= gbRingTail) ? (gbRingHead - gbRingTail)
-                                    : (kGbRingCapacity - gbRingTail + gbRingHead);
-}
-
-// Stock tampon reel, en echantillons a 44,1 kHz : ce qui attend encore dans
-// l'anneau, plus ce qui a ete livre a la queue mais pas encore sorti par
-// l'I2S. C'est CETTE grandeur qu'il faut maintenir constante.
-inline int32_t gbBufferedSamples() {
-  if (!gbFeedRunning) return 0;
-  const uint32_t elapsedMs = millis() - gbFeedStartMs;
-  const int32_t consumed =
-      static_cast<int32_t>((static_cast<uint64_t>(elapsedMs) * 44100ULL) / 1000ULL);
-  const int32_t delivered =
-      static_cast<int32_t>(gbBlocksDelivered * AUDIO_BLOCK_SAMPLES);
-  return delivered - consumed + static_cast<int32_t>(gbRingFill());
-}
+uint32_t gbRingFillMin = AudioGbRingSource::kCapacity;
+uint32_t gbRingFillMax = 0;
 
 void gbRingPush(int16_t sample) {
-  const size_t next = (gbRingHead + 1) % kGbRingCapacity;
-  if (next == gbRingTail) {
-    ++gbRingDrops;
-    return;  // jamais bloquer sequenceur/controles pour sauver un sample
+  if (!gbAudioSource.push(sample)) {
+    ++gbRingDrops;  // jamais bloquer sequenceur/controles pour sauver un sample
   }
-  gbRing[gbRingHead] = sample;
-  gbRingHead = next;
 }
 
 // ---------------------------------------------------------------------
@@ -4191,7 +4220,7 @@ void gbRingPush(int16_t sample) {
 // dans la SD du Teensy") + precisee le 2026-09-17 ("REC/STOP, ... une
 // routine pour capter les sons de l'emulateur"). Capture au format
 // NATIF de la source (14 kHz mono 16 bits signe, avant le
-// sur-echantillonnage vers 44.1kHz fait pour gbRing/gbAudioQueue plus
+// sur-echantillonnage vers 44.1kHz fait pour gbAudioSource plus
 // haut) -- fichiers plus petits, honnete sur la vraie qualite de la
 // source, pas de perte a upsampler puis re-downsampler plus tard.
 //
@@ -4397,30 +4426,45 @@ uint32_t gbResampleStepQ16 = kGbResampleNominalQ16;
 //
 // Plus le pas est GRAND, moins on produit d'echantillons par echantillon
 // source, donc plus l'anneau se vide. Anneau trop plein -> augmenter le pas ;
-// trop vide -> le diminuer. Appele une fois par paquet (~60 Hz) : boucle de
-// controle volontairement lente, elle corrige une derive, pas une transitoire.
+// trop vide -> le diminuer. Appele une fois par paquet (~60 Hz), toujours
+// AVANT d'empiler le paquet, donc au meme point de la dent de scie
+// production/consommation : la mesure est comparable d'un paquet a l'autre.
+// [2026-10-01] Regule sur le VRAI remplissage (gbAudioSource.fill()) et non
+// plus sur une estimation millis() qui derivait au premier trou.
 void gbUpdateResampleStep() {
-  const int32_t buffered = gbBufferedSamples();
-  gbBufferedLast = buffered;
-  const int32_t error = buffered - kGbTargetBufferedSamples;
-  int32_t adj = (error * kGbResampleMaxDevQ16) / kGbTargetBufferedSamples;
+  const int32_t fill = static_cast<int32_t>(gbAudioSource.fill());
+  const int32_t target = static_cast<int32_t>(AudioGbRingSource::kTargetFill);
+  int32_t adj = ((fill - target) * kGbResampleMaxDevQ16) / target;
   if (adj > kGbResampleMaxDevQ16) adj = kGbResampleMaxDevQ16;
   if (adj < -kGbResampleMaxDevQ16) adj = -kGbResampleMaxDevQ16;
   gbResampleStepQ16 =
       static_cast<uint32_t>(static_cast<int32_t>(kGbResampleNominalQ16) + adj);
 }
 
+// Remise a zero complete du chemin audio GB : anneau, pre-remplissage,
+// interpolateur et pas d'asservissement. Appelee a la reprise d'un flux
+// (changement d'emulateur, ROM rechargee) et par PANIC -- avant ce correctif,
+// aucun chemin logiciel ne savait vider cet etat (voir
+// docs/AZ2_BIP_PARASITE_2026-09-28.md).
+void gbAudioResetStream() {
+  gbAudioSource.reset();
+  gbResampleHavePrev = false;
+  gbResamplePrev = 0;
+  gbResamplePhaseQ16 = 0;
+  gbResampleStepQ16 = kGbResampleNominalQ16;
+}
+
 void handleGbAudioPacket(const uint8_t *pcm, uint8_t len) {
   ++gbAudioPacketsRx;
-  // Reprise apres un arret (changement de page, ROM dechargee) : l'estimation
-  // de derive n'a plus de sens, on repart d'une base propre.
+  // Reprise apres un arret (changement de page, ROM dechargee) : on repart
+  // d'une base propre plutot que d'interpoler depuis un echantillon perime.
   if (gbAudioLastPacketMs != 0 && (millis() - gbAudioLastPacketMs) > 500) {
-    gbFeedRunning = false;
-    gbFeedStarted = false;
-    gbBlocksDelivered = 0;
-    gbResampleStepQ16 = kGbResampleNominalQ16;
+    gbAudioResetStream();
   }
   gbAudioLastPacketMs = millis();
+  const uint32_t fill = gbAudioSource.fill();
+  if (fill < gbRingFillMin) gbRingFillMin = fill;
+  if (fill > gbRingFillMax) gbRingFillMax = fill;
   gbUpdateResampleStep();
   for (uint8_t i = 0; i < len; ++i) {
     const int16_t current = static_cast<int16_t>((static_cast<int>(pcm[i]) - 128) << 8);
@@ -4441,63 +4485,6 @@ void handleGbAudioPacket(const uint8_t *pcm, uint8_t len) {
     }
     gbResamplePhaseQ16 -= kGbResampleOneQ16;
     gbResamplePrev = current;
-  }
-}
-
-// Declaration avancee : le parseur doit pouvoir vider la ring pendant qu'il
-// consomme une rafale UART, sinon il remplit la ring avant le retour dans
-// loop().
-void feedGbAudioQueue();
-
-// Vide l'anneau vers gbAudioQueue par blocs complets -- appelee depuis
-// loop(), independamment du rythme d'arrivee des paquets serie.
-void feedGbAudioQueue() {
-  while (gbAudioQueue.available()) {
-    const size_t ready = gbRingFill();
-    if (ready < gbRingFillMin) gbRingFillMin = ready;
-    if (ready > gbRingFillMax) gbRingFillMax = ready;
-
-    // Pre-remplissage. Sans lui le feeder vidait l'anneau des qu'il avait un
-    // bloc, si bien que l'anneau tournait EN PERMANENCE quasi vide : sa
-    // capacite n'amortissait rien, et la moindre frame en retard cote ESP32
-    // creusait un trou. On attend kGbTargetFillSamples avant de demarrer,
-    // puis l'asservissement maintient ce niveau.
-    if (!gbFeedStarted) {
-      if (ready < kGbTargetFillSamples) break;
-      gbFeedStarted = true;
-      if (!gbFeedRunning) {
-        // Demarre l'horloge de derive en meme temps que le premier bloc livre.
-        gbFeedRunning = true;
-        gbFeedStartMs = millis();
-        gbBlocksDelivered = 0;
-      }
-    }
-
-    if (ready < AUDIO_BLOCK_SAMPLES) {
-      // Famine reelle. On ne compte que les TRANSITIONS (feedGbAudioQueue()
-      // est appelee des milliers de fois par seconde) et uniquement quand la
-      // source emet vraiment, sinon un emulateur a l'arret gonflerait le
-      // compteur. On re-arme le pre-remplissage : une resynchronisation
-      // propre vaut mieux qu'un clic a chaque bloc.
-      // Famine AUDIBLE : l'anneau est vide ET le stock aval (queue) est
-      // epuise. Anneau vide seul n'est pas un defaut -- la queue tient 232 ms.
-      if (gbAudioLastPacketMs != 0 && (millis() - gbAudioLastPacketMs) < 250 &&
-          gbBufferedSamples() < static_cast<int32_t>(AUDIO_BLOCK_SAMPLES)) {
-        ++gbRingDryEvents;
-        gbFeedStarted = false;  // re-armer le pre-remplissage
-      }
-      break;
-    }
-    int16_t *buf = gbAudioQueue.getBuffer();
-    if (buf == nullptr) {
-      break;
-    }
-    for (int i = 0; i < AUDIO_BLOCK_SAMPLES; ++i) {
-      buf[i] = gbRing[gbRingTail];
-      gbRingTail = (gbRingTail + 1) % kGbRingCapacity;
-    }
-    gbAudioQueue.playBuffer();
-    ++gbBlocksDelivered;
   }
 }
 
@@ -4599,10 +4586,8 @@ void readStream(Stream &in, String &lineBuffer, AudioRxState *audioState) {
     audioState->pos = 0;
   }
 
-  uint16_t bytesSinceAudioFeed = 0;
   while (in.available() > 0) {
     const uint8_t b = static_cast<uint8_t>(in.read());
-    ++bytesSinceAudioFeed;
 
     if (audioState != nullptr) {
       if (az2::kGbAudioV2PilotEnabled && gbAudioV2InPacket) {
@@ -4641,10 +4626,6 @@ void readStream(Stream &in, String &lineBuffer, AudioRxState *audioState) {
           handleGbAudioPacket(audioState->buf, audioState->len);
           audioState->inPacket = false;
         }
-        if (bytesSinceAudioFeed >= 64) {
-          feedGbAudioQueue();
-          bytesSinceAudioFeed = 0;
-        }
         continue;
       }
       if (az2::kGbAudioV2PilotEnabled && b == az2::kGbAudioV2Magic) {
@@ -4660,11 +4641,6 @@ void readStream(Stream &in, String &lineBuffer, AudioRxState *audioState) {
         audioState->lastByteMs = millis();
         continue;
       }
-    }
-
-    if (audioState != nullptr && bytesSinceAudioFeed >= 64) {
-      feedGbAudioQueue();
-      bytesSinceAudioFeed = 0;
     }
 
     const char c = static_cast<char>(b);
@@ -4706,23 +4682,24 @@ void reportGbAudioHealth() {
   Serial.print(gbAudioTimeouts);
   Serial.print(":ring_drop=");
   Serial.print(gbRingDrops);
-  // Les quatre champs qui manquaient pour voir la famine plutot que de la
-  // deviner. dry = nombre de trous audibles depuis le boot ; fill_min/max =
-  // excursion du remplissage sur la fenetre ; step = pas de reechantillonnage
-  // courant (nominal kGbResampleNominalQ16, +/-0,5 % d'autorite).
+  // dry = famines de la source depuis le boot (une par arret d'emulateur
+  // est normale, au-dela c'est un trou audible) ; fill_min/max = excursion
+  // du remplissage de l'anneau mesure a l'arrivee de chaque paquet (cible
+  // AudioGbRingSource::kTargetFill) ; step = pas de reechantillonnage courant
+  // (nominal kGbResampleNominalQ16, +/-0,5 % d'autorite).
   Serial.print(":dry=");
-  Serial.print(gbRingDryEvents);
+  Serial.print(gbAudioSource.underruns());
   Serial.print(":fill_min=");
-  Serial.print(gbRingFillMin == kGbRingCapacity ? 0 : gbRingFillMin);
+  Serial.print(gbRingFillMin == AudioGbRingSource::kCapacity ? 0 : gbRingFillMin);
   Serial.print(":fill_max=");
   Serial.print(gbRingFillMax);
-  Serial.print(":buffered=");
-  Serial.print(gbBufferedLast);
+  Serial.print(":fill=");
+  Serial.print(gbAudioSource.fill());
   Serial.print(":step=");
   Serial.print(gbResampleStepQ16);
   Serial.print("/");
   Serial.print(kGbResampleNominalQ16);
-  gbRingFillMin = kGbRingCapacity;
+  gbRingFillMin = AudioGbRingSource::kCapacity;
   gbRingFillMax = 0;
   Serial.print(":v2_ok=");
   Serial.print(gbAudioV2Accepted);
@@ -4874,6 +4851,12 @@ void setup() {
   static uint8_t serial1RxBuf[2048];
   Serial1.addMemoryForRead(serial1RxBuf, sizeof(serial1RxBuf));
   Serial1.begin(az2::kControlBaud);
+  // Broches 34 (RX8) / 35 (TX8) du circuit MIDI jamais monte : figees par
+  // pull-down plutot que laissees flottantes (regle de
+  // docs/AZ2_BIP_PARASITE_2026-09-28.md, retiree par erreur le 2026-09-29).
+  // Sans circuit en face, le pull-down ne coute rien.
+  pinMode(34, INPUT_PULLDOWN);
+  pinMode(35, INPUT_PULLDOWN);
 #ifdef AZ2_EXTERNAL_RACK
   // RX7 (pin 28) reste physiquement connecte au rack, mais peut flotter
   // quand le S3 est eteint/non branche. Le pull-down interne evite que le
@@ -4905,12 +4888,6 @@ void setup() {
   // meme temps -- 694/700 blocs, CPU 8.9% (pic 10.4%), pas de
   // depassement.
   AudioMemory(kAudioMemoryBlocks);
-
-  // Son GB (voir gbAudioQueue plus haut) : NON_STALLING -- si l'anneau
-  // envoie plus vite que la queue ne se vide (ne devrait pas arriver,
-  // 80 blocs de marge sur Teensy 4.x), on ignore plutot que de bloquer
-  // tout loop() (sequenceur, controles...) en attendant de la place.
-  gbAudioQueue.setBehaviour(AudioPlayQueue::NON_STALLING);
 
   // init_braids() = init materielle obligatoire de la lib (osc.Init()),
   // sur LES 4 instances par piste (pas seulement celle active au boot) --
@@ -5032,7 +5009,6 @@ void loop() {
   serviceGranularSampleTransfer();
 #endif
   reportGbAudioHealth();
-  feedGbAudioQueue();
   updateScope();
   updateSequencer();
   updateLocalControls();
