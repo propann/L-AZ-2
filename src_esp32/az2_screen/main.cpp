@@ -84,6 +84,13 @@ Arduino_DataBus *bus = new Arduino_SWSPI(
     47 /* SDA */, GFX_NOT_DEFINED /* MISO */);
 
 #ifndef AZ2_DIRECT_PANEL
+// PCLK 10 MHz (2026-10-01, etait 12). Le DMA du panneau lit le framebuffer en
+// PSRAM en concurrence avec le blit des emulateurs : a 12 MHz il manquait de
+// donnees, des lignes s'affichaient decalees ("l'ecran sautille") jusqu'au
+// recalage VSYNC. 10 MHz = ~35 Hz de balayage, -17 % de debit PSRAM, valide a
+// l'oeil en X2 et X3. Le bounce buffer a ete essaye avant : il remplacait le
+// decalage par des bandes qui clignotent en X3, rejete. 20 MHz : image
+// brouillee (voir AZ2_AUDIT_PILOTE_RGB_2026-09-20.md).
 Arduino_ESP32RGBPanel *rgbPanel = new Arduino_ESP32RGBPanel(
     18 /* DE */, 17 /* VSYNC */, 16 /* HSYNC */, 21 /* PCLK */,
     4 /* R0 */, 3 /* R1 */, 2 /* R2 */, 1 /* R3 */, 0 /* R4 */,
@@ -91,7 +98,7 @@ Arduino_ESP32RGBPanel *rgbPanel = new Arduino_ESP32RGBPanel(
     15 /* B0 */, 14 /* B1 */, 13 /* B2 */, 12 /* B3 */, 11 /* B4 */,
     1 /* hsync_polarity */, 10 /* hsync_front_porch */, 8 /* hsync_pulse_width */, 50 /* hsync_back_porch */,
     1 /* vsync_polarity */, 10 /* vsync_front_porch */, 8 /* vsync_pulse_width */, 20 /* vsync_back_porch */,
-    0 /* pclk_active_neg */, 12000000 /* prefer_speed */, false /* useBigEndian */,
+    0 /* pclk_active_neg */, 10000000 /* prefer_speed, voir note PCLK plus haut */, false /* useBigEndian */,
     0 /* de_idle_high */, 0 /* pclk_idle_high */, 0 /* bounce_buffer_size_px */);
 
 Arduino_RGB_Display *gfx = new Arduino_RGB_Display(
