@@ -72,6 +72,12 @@ uint32_t romSize = 0;
 uint8_t *cartRam = nullptr;
 uint32_t cartRamSize = 0;
 bool cartRamDirty = false;
+// Empreinte du contenu deja present sur la SD. Beaucoup de jeux se servent
+// de la SRAM comme brouillon (ecrire puis remettre la meme valeur) : sans
+// cette comparaison, la sauvegarde auto des 30 s reecrivait le .sav pour
+// rien et figeait le jeu ~0,44 s (mesure Zelda X3 du 2026-10-01).
+uint32_t cartRamSavedCrc = 0;
+bool cartRamSavedCrcValid = false;
 // La copie .bak est l'unique sauvegarde valide apres recuperation.
 bool cartRamRecoveredFromBackup = false;
 
@@ -258,7 +264,14 @@ bool gbSaveCartRam() {
     Serial.println("GB:SAVE_UNAVAILABLE");
     return false;
   }
+  const uint32_t crc = crc32Buffer(cartRam, cartRamSize);
+  if (cartRamSavedCrcValid && crc == cartRamSavedCrc) {
+    cartRamDirty = false;  // identique a la SD : aucune ecriture
+    return true;
+  }
   if (atomicSaveRaw(saveRamPath, cartRam, cartRamSize)) {
+    cartRamSavedCrc = crc;
+    cartRamSavedCrcValid = true;
     cartRamDirty = false;
     cartRamRecoveredFromBackup = false;
     Serial.print("GB:SAVED:");
@@ -492,6 +505,8 @@ bool gbLoadCartRamIfPresent() {
   if (gbLoadCartRamFile(saveRamPath)) {
     cartRamDirty = false;
     cartRamRecoveredFromBackup = false;
+    cartRamSavedCrc = crc32Buffer(cartRam, cartRamSize);
+    cartRamSavedCrcValid = true;
     return true;
   }
 
@@ -677,6 +692,7 @@ bool gbUnload() {
   rtcPath[0] = '\0';
   cartRamDirty = false;
   cartRamRecoveredFromBackup = false;
+  cartRamSavedCrcValid = false;
   cartHasRtc = false;
   rtcRecoveredFromBackup = false;
   memset(rtcLastSaved, 0, sizeof(rtcLastSaved));
@@ -887,6 +903,7 @@ bool gbLoadRom(const char *filename) {
   cartRamSize = static_cast<uint32_t>(detectedSaveSize);
   cartRamDirty = false;
   cartRamRecoveredFromBackup = false;
+  cartRamSavedCrcValid = false;
 
   const uint8_t cartridgeType = romData[0x147];
   cartHasRtc = (cartridgeType == 0x0F || cartridgeType == 0x10);
