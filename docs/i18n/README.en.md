@@ -6,12 +6,14 @@
 
 ## Build an instrument
 
-AZ-2 combines a groovebox, an eight-track tracker, six synthesis/sample engines and a Game Boy / Game Boy Color console. The goal is to play, compose, capture game audio and turn a recording into a playable instrument. AZ-2 uses **two boards**, without a multiplexer or an extra ESP rack; the rack belongs to the separate AZ-3 project.
+AZ-2 combines a groovebox, an eight-track tracker and nine audio engines. It includes a game console: **Game Boy and Game Boy Color run at full speed (59.7 fps at X2 and X3, measured on the device)**, NES at 49–50 fps. The active prototype uses a Teensy, the display ESP32-S3, a granular ESP32-S3 and a spectral ESP-WROOM-32D.
 
 | Board | Responsibilities | Storage |
 | --- | --- | --- |
-| Teensy 4.1 | Tracker timing, audio engines, MIDI, WAV recording, sample playback, I²S output to the PCM5102A DAC | Its own SD card for recordings; PSRAM for the dynamic sample |
-| ESP32-S3 VIEWE UEDX48480040E-WB | 480×480 touch display, menus, GB/GBC emulation and ROM browser | Its own SD card for ROMs and game saves |
+| Teensy 4.1 | Tracker timing, audio engines, WAV recording, sample playback, I²S output to the PCM5102A DAC | Its own SD card for recordings; PSRAM for the dynamic sample |
+| ESP32-S3 VIEWE UEDX48480040E-WB | 480×480 touch display, menus, GB/GBC (Walnut-CGB) and NES emulators | Its own SD card for UI data and ROMs (`/games`) |
+| ESP32-S3 N16R8 | GRANULAR, PSRAM and audio aggregation | Samples transferred from the Teensy SD card |
+| ESP-WROOM-32D | SPECTRAL | No local storage required |
 
 Commands and Game Boy audio travel over a shared **921600-baud UART** link. The common contract lives in `lib/AZ2_Protocol/AZ2_Protocol.h`: **update both firmwares and their tests together**. The production audio path is still **V1, 14 kHz mono PCM8**. The stereo V2 pilot exists but is disabled.
 
@@ -25,17 +27,19 @@ cd L-AZ-2
 python -m pip install platformio==6.1.19
 python tools/check_firmware_contract.py
 pio test -e native
-pio run -e master_teensy -e screen_esp
+pio run -e master_teensy_rack_lab -e screen_esp_walnut_gbc_core_task
 # Only after checking the hardware and backing up your data:
-pio run -e master_teensy -t upload
-pio run -e screen_esp -t upload
+pio run -e master_teensy_rack_lab -t upload
+pio run -e screen_esp_walnut_gbc_core_task -t upload
 ```
 
-Build both binaries from the **same Git commit**. Do not update only one board after an incompatible protocol change. `ui_esp` is a legacy bring-up environment, not the final display firmware. Commercial game ROMs and private user content are not included.
+Build both binaries from the **same Git commit**. Do not update only one board after an incompatible protocol change. Commercial game ROMs and private user content are not included.
 
 ## Emulation, saves and music
 
-- **GB/GBC:** Walnut-CGB core, ROM selection from the ESP32 SD card and physical controls. Compatibility, actual frame rate and absence of glitches still require per-game testing, including LSDJ, Tetris and Mario.
+- **GB/GBC:** a single core, Walnut-CGB, validated on the device at 59.7 fps at X2 and X3 (Zelda `.gb` and Zelda DX `.gbc`). The GAME BOY card lists `.gb` files, the GAME BOY COLOR card lists `.gbc` files. Dual-core display: 30 Hz on screen at X2, 20 Hz at X3, game logic and sound at 59.7 Hz. Wider compatibility and long sessions still to be qualified.
+- **NES:** Anemoia-ESP32, 49–50 fps (~82 %) with frameskip.
+- **Neo Geo Pocket:** removed on 2 October 2026 (the RACE core is GPLv2-only, incompatible with AZ-2's GPLv3).
 - **Cartridge SRAM:** periodic and manual saving to `.sav/.bak`. A save failure prevents unloading the cartridge so RAM modifications are not silently discarded.
 - **MBC3 RTC:** separate, versioned `.rtc` file with CRC32 and `.bak` recovery. Offline elapsed time is applied only when the ESP32 system clock is valid; power-loss resilience still needs hardware testing.
 - **GB audio:** V1 mono PCM8 at 14 kHz to Teensy. In experimental mode, V2 transports interleaved stereo PCM8 L/R at 14 kHz with CRC16, sequence numbers and negotiation; it is **disabled by default**. The Teensy output bus is still mono, even when V2 is used.
@@ -50,7 +54,7 @@ Build both binaries from the **same Git commit**. Do not update only one board a
 | Music workflow | Shared GB Capture patch, WAV-to-PSRAM loading, source-rate-aware playback and boot-time reload | [Sampler integration](https://github.com/propann/L-AZ-2/commit/2aa8fbfc99d2483be684f5009462c3f760410ee7); physical audio/SD validation pending |
 | Checks | Dynamic patch test, Teensy and ESP32-S3 firmware builds, native shared-protocol tests against the same revision | [Successful CI run](https://github.com/propann/L-AZ-2/actions/runs/35455889760) for `2ea9e03285814f4ebcb6844b7758ccf5f931891d`; **not a hardware test** |
 
-More detailed documentation is available in the [GB/LSDJ roadmap (French)](../AZ2_GB_ROADMAP_IMPLEMENTATION.md), [V2 audio protocol (French)](../AZ2_PROTOCOL_AUDIO_V2.md), [sampler documentation (French)](../AZ2_SAMPLEUR.md) and [user manual (French)](../AZ2_MANUEL_UTILISATEUR.md). Some older planning documents mention abandoned hardware. Use the current wiring guide, `platformio.ini` and this overview when working on the active two-board configuration.
+More detailed documentation is available in the [current verified state (French)](../AZ2_ETAT_ACTUEL.md), [GB/LSDJ roadmap (French)](../AZ2_GB_ROADMAP_IMPLEMENTATION.md), [sampler documentation (French)](../AZ2_SAMPLEUR.md) and [user manual (French)](../AZ2_MANUEL_UTILISATEUR.md). Older planning documents may describe obsolete hardware.
 
 ## Remaining work
 

@@ -16,16 +16,21 @@
 // tronques pour l'affichage : 87 octets max pour rester dans le chemin
 // /games/<name> (kSavePathCapacity=96 cote emulation). Les noms plus
 // longs sont exclus du scan avec un diagnostic, jamais tronques.
-constexpr uint8_t kGbRomNameLen = 88;
+constexpr uint8_t kGbRomNameLen = 160;
 // Nombre maximum d'entrees du navigateur ROM. 100 reste sous la limite
 // int8_t du curseur UI et coute ~8,8 Ko pour les noms complets.
 constexpr uint8_t kGbMaxRoms = 100;
 
-// Scanne /games sur la carte SD pour les fichiers .gb/.gbc (jusqu'a
-// kGbMaxRoms), remplit `names` (kGbMaxRoms x kGbRomNameLen, deja
-// alloue par l'appelant) avec les noms de fichiers trouves. Renvoie le
-// nombre trouve (0 si pas de carte/dossier/fichier).
+// Scanne recursivement /games pour les fichiers .gb/.gbc (jusqu'a
+// kGbMaxRoms), remplit `names` avec les chemins relatifs a /games
+// (ex. "GameBoyColor/jeu.gbc").
 uint8_t gbScanRoms(char names[][kGbRomNameLen]);
+// Filtre de gbScanRoms() (2026-10-01) : chaque carte de la page EMULATEURS ne
+// liste que ses ROM -- GAME BOY les .gb, GAME BOY COLOR les .gbc. Le meme
+// coeur Walnut-CGB fait tourner les deux. Peanut-GB (DMG seul) ignore le
+// filtre et ne liste que les .gb.
+enum class GbRomKind : uint8_t { Any, Dmg, Cgb };
+void gbSetRomKind(GbRomKind kind);
 
 // Charge et demarre le fichier /games/<filename> (nom tel que renvoye
 // par gbScanRoms()). Renvoie false (message Serial clair) en cas
@@ -50,6 +55,17 @@ struct GbRuntimeStats {
   uint16_t fpsX10 = 0;          // cadence observee x10 sur ~1 seconde
   uint32_t avgWorkUs = 0;       // CPU emulation + paquet audio, moyenne fenetre
   uint32_t maxWorkUs = 0;       // pire frame de la fenetre
+  uint32_t p99WorkUs = 0;       // 99e percentile de la fenetre
+  uint32_t avgCoreUs = 0;       // coeur GB + rendu LCD
+  // [2026-09-25, Peanut-GB uniquement] avgCoreUs ci-dessus englobe deja le
+  // rendu (gbBlitLine tourne DANS gb_run_frame()) -- ceci isole le CPU+PPU
+  // pur (0 sur Walnut-CGB, pas instrumente la, pas necessaire pour l'instant).
+  uint32_t avgCpuOnlyUs = 0;
+  uint32_t avgDisplayUs = 0;    // temps passe dans le driver RGB
+  uint32_t avgAudioUs = 0;      // generation/conversion/envoi audio
+  uint32_t maxCoreUs = 0;
+  uint32_t maxDisplayUs = 0;
+  uint32_t maxAudioUs = 0;
   uint32_t totalFrames = 0;
   uint16_t autosaveFailures = 0;
 };
@@ -77,6 +93,22 @@ void gbSetButton(GbButton button, bool pressed);
 // Nom (titre ROM, 16 caracteres max + fin de chaine) de la ROM chargee,
 // pour affichage sur la page JEUX. Chaine vide si rien de charge.
 const char *gbRomTitle();
+
+// Restaure manuellement la SRAM et le RTC de la cartouche courante à partir de la SD.
+bool gbLoadNow();
+
+// Structure pour stocker un code de triche (cheat)
+struct GbCheat {
+  char name[24];
+  uint16_t address;
+  uint8_t value;
+  bool enabled;
+};
+
+// Accesseurs publics pour le moteur de triche
+uint8_t gbGetCheatCount();
+GbCheat* gbGetCheat(uint8_t index);
+void gbToggleCheat(uint8_t index);
 
 // Implementee dans main.cpp (seul endroit qui connait `gfx`) : dessine
 // une ligne Game Boy (160 pixels RGB565 deja convertis) a l'ecran,

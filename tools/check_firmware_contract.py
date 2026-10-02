@@ -41,6 +41,9 @@ for name, source in [("Teensy", teensy), ("ESP32 screen", screen)]:
 require("az2::kGbAudioSamplesPerPacket" in teensy, "Teensy does not validate GB audio packet size")
 require("[env:master_teensy]" in ini and "[env:screen_esp]" in ini,
         "Both firmware PlatformIO environments must exist")
-require("default_envs = master_teensy, screen_esp" in ini,
+# master_teensy_rack_lab (pas master_teensy) est le firmware de production
+# depuis le 2026-09-23 : le bouton B est resoude en permanence sur la pin 10
+# (unite physique cablee pour le rack), voir platformio.ini.
+require("default_envs = master_teensy_rack_lab, screen_esp" in ini,
         "Default build must compile both linked firmwares")
 print(f"PASS: linked firmware V1 contract — {sample_rate} Hz, UART {baud} baud, dual PlatformIO targets")

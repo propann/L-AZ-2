@@ -6,12 +6,14 @@
 
 ## Construir un instrumento
 
-AZ-2 combina una groovebox, un tracker de ocho pistas, seis motores de síntesis/reproducción y una consola Game Boy / Game Boy Color. El objetivo es jugar, componer, capturar el audio del juego y convertir una grabación en un instrumento. AZ-2 utiliza **dos placas**, sin multiplexor ni rack de ESP adicional; ese rack pertenece al proyecto independiente AZ-3.
+AZ-2 combina una groovebox, un tracker de ocho pistas y nueve motores de audio. Incluye una consola de juegos: **Game Boy y Game Boy Color funcionan a velocidad completa (59,7 fps en X2 y X3, medido en la máquina)**, NES a 49–50 fps. El prototipo activo utiliza Teensy, el ESP32-S3 de pantalla, un ESP32-S3 granular y un ESP-WROOM-32D espectral.
 
 | Placa | Funciones | Almacenamiento |
 | --- | --- | --- |
-| Teensy 4.1 | Temporización del tracker, motores de audio, MIDI, grabación WAV, reproducción de samples y salida I²S al DAC PCM5102A | Su propia tarjeta SD para grabaciones; PSRAM para el sample dinámico |
-| ESP32-S3 VIEWE UEDX48480040E-WB | Pantalla táctil 480×480, menús, emulación GB/GBC y explorador de ROMs | Su propia tarjeta SD para ROMs y partidas guardadas |
+| Teensy 4.1 | Temporización del tracker, motores de audio, grabación WAV, reproducción de samples y salida I²S al DAC PCM5102A | Su propia tarjeta SD para grabaciones; PSRAM para el sample dinámico |
+| ESP32-S3 VIEWE UEDX48480040E-WB | Pantalla táctil 480×480, menús, emuladores GB/GBC (Walnut-CGB) y NES | Su propia tarjeta SD para datos de interfaz y ROM (`/games`) |
+| ESP32-S3 N16R8 | GRANULAR, PSRAM y agregación de audio | Samples transferidos desde la SD del Teensy |
+| ESP-WROOM-32D | SPECTRAL | No necesita almacenamiento local |
 
 Los comandos y el audio Game Boy comparten un enlace **UART a 921600 baudios**. El contrato común se define en `lib/AZ2_Protocol/AZ2_Protocol.h`: **actualiza ambos firmwares y sus pruebas juntos**. La ruta de audio de producción sigue siendo **V1, PCM8 mono a 14 kHz**. El piloto V2 estéreo está implementado, pero desactivado.
 
@@ -25,17 +27,19 @@ cd L-AZ-2
 python -m pip install platformio==6.1.19
 python tools/check_firmware_contract.py
 pio test -e native
-pio run -e master_teensy -e screen_esp
+pio run -e master_teensy_rack_lab -e screen_esp_walnut_gbc_core_task
 # Solo después de comprobar el hardware y guardar copias:
-pio run -e master_teensy -t upload
-pio run -e screen_esp -t upload
+pio run -e master_teensy_rack_lab -t upload
+pio run -e screen_esp_walnut_gbc_core_task -t upload
 ```
 
-Compila los dos binarios desde el **mismo commit de Git**. No actualices una sola placa después de un cambio incompatible del protocolo. `ui_esp` es un entorno antiguo de pruebas iniciales, no el firmware de la pantalla definitiva. El repositorio no incluye ROMs comerciales ni archivos privados del usuario.
+Compila los dos binarios desde el **mismo commit de Git**. No actualices una sola placa después de un cambio incompatible del protocolo. El repositorio no incluye ROMs comerciales ni archivos privados del usuario.
 
 ## Emulación, partidas y música
 
-- **GB/GBC:** núcleo Walnut-CGB, selección de ROMs desde la SD del ESP32 y controles físicos. La compatibilidad, los FPS reales y la ausencia de fallos deben verificarse juego por juego, incluidos LSDJ, Tetris y Mario.
+- **GB/GBC:** un único núcleo, Walnut-CGB, validado en la máquina a 59,7 fps en X2 y X3 (Zelda `.gb` y Zelda DX `.gbc`). La tarjeta GAME BOY muestra los `.gb` y la tarjeta GAME BOY COLOR los `.gbc`. Pantalla de doble núcleo: 30 Hz en pantalla en X2, 20 Hz en X3, juego y sonido a 59,7 Hz. Falta validar una compatibilidad más amplia y sesiones largas.
+- **NES:** Anemoia-ESP32, 49–50 fps (~82 %) con frameskip.
+- **Neo Geo Pocket:** retirada el 2 de octubre de 2026 (el núcleo RACE es solo GPLv2, incompatible con la GPLv3 de AZ-2).
 - **SRAM del cartucho:** guardado periódico y manual en `.sav/.bak`. Un error de escritura impide descargar el cartucho para no perder silenciosamente los cambios en RAM.
 - **RTC MBC3:** archivo `.rtc` independiente y versionado, con CRC32 y recuperación desde `.bak`. El tiempo transcurrido con la máquina apagada solo se aplica cuando el reloj del sistema ESP32 es válido; queda pendiente probar la resistencia a cortes de alimentación en el hardware.
 - **Audio GB:** V1 PCM8 mono a 14 kHz hacia Teensy. En modo experimental, V2 transporta PCM8 estéreo L/R entrelazado a 14 kHz con CRC16, números de secuencia y negociación; está **desactivado de forma predeterminada**. El bus de salida del Teensy sigue siendo mono incluso al usar V2.
@@ -50,7 +54,7 @@ Compila los dos binarios desde el **mismo commit de Git**. No actualices una sol
 | Flujo musical | Patch compartido GB Capture, carga WAV → PSRAM, reproducción a la frecuencia original y recarga al arrancar | [Integración del sampler](https://github.com/propann/L-AZ-2/commit/2aa8fbfc99d2483be684f5009462c3f760410ee7); falta validar audio/SD en el dispositivo |
 | Verificación | Prueba del patch dinámico, compilación de Teensy y ESP32-S3 y pruebas nativas del protocolo compartido sobre la misma revisión | [Ejecución CI correcta](https://github.com/propann/L-AZ-2/actions/runs/35455889760) para `2ea9e03285814f4ebcb6844b7758ccf5f931891d`; **no es una prueba física** |
 
-La información técnica detallada está en la [hoja de ruta GB/LSDJ (francés)](../AZ2_GB_ROADMAP_IMPLEMENTATION.md), el [protocolo de audio V2 (francés)](../AZ2_PROTOCOL_AUDIO_V2.md), la [documentación del sampler (francés)](../AZ2_SAMPLEUR.md) y el [manual de usuario (francés)](../AZ2_MANUEL_UTILISATEUR.md). Algunos documentos antiguos de planificación mencionan hardware descartado. Para la configuración actual de dos placas, usa la guía de cableado vigente, `platformio.ini` y este resumen.
+La información técnica actual está en el [estado verificado (francés)](../AZ2_ETAT_ACTUEL.md), la [hoja de ruta GB/LSDJ](../AZ2_GB_ROADMAP_IMPLEMENTATION.md), la [documentación del sampler](../AZ2_SAMPLEUR.md) y el [manual](../AZ2_MANUEL_UTILISATEUR.md). Los documentos antiguos pueden describir hardware obsoleto.
 
 ## Trabajo pendiente
 

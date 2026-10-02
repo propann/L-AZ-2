@@ -32,6 +32,10 @@ Le bouton REC doit rester accessible pendant le jeu et **ne doit pas remplacer A
 
 Pendant une partie, suspendre les rendus d'interface non visibles (scope, animations, écran de veille) et réduire les tâches non indispensables **sans interrompre** l'horloge GB, les commandes, la réception audio, le DAC ni l'enregistrement. Le Teensy possède déjà une connexion dynamique des moteurs sélectionnés ; ne pas refondre son graphe ou créer un nouveau rack système sans profil CPU/mémoire montrant un bénéfice. Garder le profil V1 fiable comme référence ; V2 stéréo et sortie DAC stéréo sont hors MVP.
 
+Implémentation AZ-2 : pendant une ROM active, le scope, les redraws sampleur,
+la lecture tactile I²C et la veille sont suspendus ; `readTeensyStatus()` et
+les commandes série restent actifs.
+
 ### Idées ultérieures — volontairement différées
 
 - Étudier finement **LSDJ** (fonctionnement, sauvegardes, timing et éventuelle synchronisation) après stabilisation jeu + capture. Ne pas conditionner la capture à la synchronisation tracker/GB.
@@ -62,7 +66,7 @@ Ce document distingue **code intégré**, **à implémenter**, et **à valider s
 
 ### Lot 1 — Instrumenter et qualifier la cadence (à implémenter/valider)
 
-- [x] Instrumentation de base intégrée : FPS observé, temps moyen/max de frame, missed frames, total frames et échecs d'autosave, avec affichage dans la bande supérieure et logs série. [ ] Ajouter p99 séparé, timings LCD/APU/SD/UART et qualification sur matériel.
+- [x] Instrumentation de base intégrée : FPS observé, temps moyen/max de frame, p99 du travail émulateur+audio, missed frames, total frames et échecs d'autosave, avec logs série. Le bandeau graphique est désactivé en jeu pour éviter un rafraîchissement parasite. [ ] Ajouter timings LCD/APU/SD/UART et qualification sur matériel.
 - [ ] Vérifier la cadence 59,7275 Hz sur machine pendant 30 minutes ; capturer aussi les ralentissements, pas seulement la moyenne.
 - [ ] Bench A/B gb_run_frame() et gb_run_frame_dualfetch() avec tests CPU/timers/interruptions/DMA.
 - [ ] Vérifier le vrai rendu écran 60 Hz et les transactions par bande ; ajouter un double buffer uniquement après contrôle des échanges avec le panneau.

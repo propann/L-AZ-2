@@ -5,9 +5,16 @@ Révision auditée : [410f492](https://github.com/propann/L-AZ-2/commit/410f492e
 
 ## Verdict
 
+> **Archive d'audit du 19 septembre 2026.** Certaines formulations ci-dessous
+> étaient des projections fondées sur le code de cette révision. L'état
+> canonique actuel est [AZ2_ETAT_ACTUEL.md](AZ2_ETAT_ACTUEL.md) : aucun
+> émulateur GB/GBC n'est aujourd'hui déclaré fonctionnel de bout en bout.
+
 Le matériel actuel peut faire fonctionner **LSDJ, Tetris et Mario sans ajouter de microcontrôleur**. Le cœur Walnut-CGB couvre le Game Boy monochrome et le Game Boy Color, les MBC1/2/3/5, le RTC, les palettes CGB et la double vitesse.
 
-Cependant, le niveau actuel est encore celui d’un **émulateur intégré fonctionnel**, pas celui d’une console de référence :
+Cependant, le niveau observé dans cette ancienne révision restait celui d’un
+**prototype d’intégration**, pas celui d’un émulateur fonctionnel validé ni
+d’une console de référence :
 
 - la logique vise bien 59,7275 images/s ;
 - le rendu visible est limité à environ 30 images/s par le frame-skip ;

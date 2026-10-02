@@ -7,7 +7,7 @@ raison l'absence de licence racine et d'inventaire des composants tiers.
 ## Licence du projet AZ-2
 
 Le code propre a AZ-2 (`src_teensy/az2_audio/`, `src_esp32/az2_screen/`,
-`src_esp32/az2_control/`, `lib/AZ2_Protocol/`, outils, documentation) est
+`lib/AZ2_Protocol/`, outils, documentation) est
 publie sous **GNU GPLv3** (voir `LICENSE` a la racine).
 
 Pourquoi GPLv3 et pas une licence permissive (MIT/Apache) :
@@ -33,32 +33,29 @@ Pourquoi GPLv3 et pas une licence permissive (MIT/Apache) :
 | Banques ROM1-ROM4 Yamaha DX7 (255 des 256 patches d'usine originaux) | `master_teensy` (patches DEXED, 2026-09-18) | Apache-2.0 OU GPLv3 (meme double licence, memes fichiers Synth_Dexed) | `.../Synth_Dexed/examples/Banks/banks.h` (vendored), extraits vers `src_teensy/az2_audio/az2_dexed_bank_data.h` |
 | Synth_MDA_EPiano | `master_teensy` (moteur EPIANO) | **GPLv3 uniquement** | `src_teensy/microdexed-touch/third-party/Synth_MDA_EPiano/` |
 | Synth_Braids | `master_teensy` (moteur BRAIDS) | **MIT** (verifie le 2026-09-17 : chaque fichier du coeur DSP -- `macro_oscillator.*`, `digital_oscillator.*`, `analog_oscillator.*`, `resources.*`, `settings.*`, `dsp.h`, `stmlib.h`, `svf.h`, `random.*`, `excitation.h`, `parameter_interpolation.h` -- porte l'entete MIT original "Copyright 2012/2013 Emilie/Olivier Gillet" de Mutable Instruments ; `murmurhash3.h` est domaine public. Seul le fin wrapper Teensy `synth_braids.h/.cpp` n'a pas d'entete propre, mais son `README.md` cite ses sources -- `github.com/pichenettes/eurorack` (MIT) et `github.com/modlfo/teensy-braids` -- confirmant la meme origine MIT.) | `src_teensy/microdexed-touch/third-party/Synth_Braids/` |
-| MIDI (FortySevenEffects/Arduino MIDI Library) | `master_teensy` (`lib_deps`, USB MIDI IN) | MIT | Registre PlatformIO |
 | Teensy Audio Library, Encoder, SD (SdFat) | `master_teensy` (framework Teensy) | Majoritairement MIT/PJRC (voir `framework-arduinoteensy`) | Fournis par la plateforme `teensy`, pas vendored dans ce depot |
 | GFX Library for Arduino (moononournation, ex-Arduino_GFX) | `screen_esp` (pilote ecran RGB parallele + tactile) | MIT | Registre PlatformIO, version figee `@1.6.7` |
-| Walnut-CGB (`walnut_cgb.h`, additions par Mr. Paul sur la base Peanut-GB de Mahyar Koshkouei, elle-meme via le fork de Lior Halphon) | `screen_esp` (emulateur GB/GBC) | MIT (chaque couche : voir l'entete du fichier) | `src_esp32/az2_screen/walnut_cgb/walnut_cgb.h` (vendored, un seul fichier) |
+| Walnut-CGB (`walnut_cgb.h`, additions par Mr. Paul sur la base Peanut-GB de Mahyar Koshkouei, elle-meme via le fork de Lior Halphon) | `screen_esp*` (emulateur GB/GBC) | MIT (chaque couche : voir l'entete du fichier) | `src_esp32/az2_screen/walnut_cgb/walnut_cgb.h` (vendored, un seul fichier ; modifie par AZ-2 le 2026-10-01 : frame skip 1 sur N, commentaires `AZ-2`) |
 | minigb_apu (Alex Baines, Mahyar Koshkouei) | `screen_esp` (son de l'emulateur GB) | MIT | `src_esp32/az2_screen/minigb_apu/` (vendored), voir son `LICENSE` |
-| Kick_1_Simple.wav, Snare_1_Simple.wav | `master_teensy` (moteur SAMPLER, 2026-09-18) | **GPLv3** (meme couverture globale que le reste de MicroDexed-touch -- readme.md du projet : "MicroDexed is licensed on the GPL v3", aucune mention separee pour ce contenu SD, pas de LICENSE dedie dans `addon/SD/`) | `src_teensy/microdexed-touch/addon/SD/CUSTOM/` (vendored), convertis en tableaux PCM 16 bits dans `src_teensy/az2_audio/az2_sampler_data.h` |
+| Kick_1_Simple.wav, Snare_1_Simple.wav | `master_teensy` (moteur SAMPLER, 2026-09-18) | **GPLv3** (couverture globale de MicroDexed-touch, sans licence separee pour ces fichiers) | Sources WAV dans l'historique Git ; tableaux PCM 16 bits conserves dans `src_teensy/az2_audio/az2_sampler_data.h` |
 
-## Composants vendored mais PAS compiles (reference uniquement)
+## Composants retires pour licence
 
-Le reste de `src_teensy/microdexed-touch/` (le sketch `.ino` d'origine,
-`addon/` -- samples et presets JSON de l'appli originale (SAUF
-Kick_1_Simple.wav/Snare_1_Simple.wav, voir le tableau ci-dessus,
-compiles depuis le 2026-09-18), et les
-bibliotheques `third-party/` non listees ci-dessus : Bounce2, MCP23008,
-MCP23017, MCP4728, LCDMenuLib2, MD_REncoder, Regexp, ArduinoJson,
-TeensyTimerTool, wav2sketch) n'est PAS inclus dans le binaire
-`master_teensy` -- `platformio.ini` ne compile que
-`src_teensy/az2_audio/` (`build_src_filter`), et `lib_extra_dirs`
-n'expose que les 3 moteurs synthese ci-dessus a la LDF (PlatformIO ne
-lie que ce qui est reellement `#include`). Ce code reste dans le depot
-comme matiere premiere de reference (voir
-`docs/AZ2_PORTAGE_MICRODEXED_TOUCH.md`), chaque sous-dossier garde sa
-propre licence d'origine (voir son fichier `LICENSE`/`LICENSE-*.txt`) --
-MicroDexed-touch lui-meme est publie en double licence Apache-2.0 /
-GPLv3 (voir `src_teensy/microdexed-touch/LICENSE-APACHE2.txt` et
-`LICENSE-GPL3.txt`).
+- **RACE** (emulateur Neo Geo Pocket / Color, port ESP32-S3) : **GPLv2
+  seule**, incompatible avec la GPLv3 d'AZ-2 dans un meme binaire. Supprime
+  du depot le 2026-10-02 avec son adaptateur (`ngp_emulator.*`) et sa cible
+  labo. Ses sources restent dans l'historique Git avec leur notice GPLv2.
+- **Arduino MIDI Library** : plus utilisee depuis la suppression du code MIDI
+  (puce 6N138 non montee, 2026-09-29).
+
+## Sources amont conservees
+
+Le depot ne conserve plus que les trois moteurs tiers effectivement compiles :
+Synth_Dexed, Synth_MDA_EPiano et Synth_Braids. Le sketch MicroDexed-touch
+complet, ses ressources SD et ses bibliotheques inutilisees ont ete retires du
+checkout le 2026-09-21 apres verification du graphe de dependances PlatformIO.
+Ils restent consultables dans l'historique Git. Les licences racines de
+MicroDexed-touch restent presentes dans `src_teensy/microdexed-touch/`.
 
 Nettoyage fait le 2026-09-17 (audit de code) : le manuel PDF
 (`doc/MicroDexed-touch-manual.pdf`, 66 Mo), l'ancien manuel de build

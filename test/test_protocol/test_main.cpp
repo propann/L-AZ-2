@@ -18,6 +18,7 @@
 #include <unity.h>
 
 #include <AZ2_Protocol.h>
+#include "../../src_teensy/az2_audio/sampler_math.h"
 
 void test_step_condition_always_is_zero() {
   TEST_ASSERT_EQUAL_UINT8(0, az2::kStepCondAlways);
@@ -207,13 +208,97 @@ void test_engine_patch_count_and_name() {
   // pas" ailleurs dans le protocole (stepPatch/seqStepPatch), voir le
   // commentaire de kDexedPatchCount dans AZ2_Protocol.h.
   TEST_ASSERT_EQUAL_UINT16(255, az2::enginePatchCount(az2::kEngineDexed));
-  TEST_ASSERT_EQUAL_UINT16(1, az2::enginePatchCount(az2::kEngineKarplus));  // un seul "patch" possible
-  TEST_ASSERT_EQUAL_UINT16(3, az2::enginePatchCount(az2::kEngineSampler));
+  TEST_ASSERT_EQUAL_UINT16(100, az2::enginePatchCount(az2::kEngineKarplus));
+  TEST_ASSERT_EQUAL_STRING("Corde pincee", az2::enginePatchName(az2::kEngineKarplus, 0));
+  TEST_ASSERT_EQUAL_STRING("Drone resonant", az2::enginePatchName(az2::kEngineKarplus, 7));
+  TEST_ASSERT_EQUAL_STRING("NYLON 01", az2::enginePatchName(az2::kEngineKarplus, 8));
+  TEST_ASSERT_EQUAL_STRING("FX 02", az2::enginePatchName(az2::kEngineKarplus, 99));
+  TEST_ASSERT_EQUAL_STRING("?", az2::enginePatchName(az2::kEngineKarplus, 100));
+  // 4 depuis le 2026-09-23 ("fusion" du moteur SAMPLER d'une piste avec le
+  // navigateur SD des pads -- voir kSamplerCustomPatch dans AZ2_Protocol.h) :
+  // Kick/Snare/GB Capture (fixes) + CUSTOM (WAV libre charge par piste,
+  // voir loadWavIntoTrackSampler() cote Teensy).
+  TEST_ASSERT_EQUAL_UINT16(4, az2::enginePatchCount(az2::kEngineSampler));
   TEST_ASSERT_EQUAL_UINT8(2, az2::kSamplerGbCapturePatch);
+  TEST_ASSERT_EQUAL_UINT8(3, az2::kSamplerCustomPatch);
   TEST_ASSERT_EQUAL_STRING("GB Capture",
                            az2::enginePatchName(az2::kEngineSampler, az2::kSamplerGbCapturePatch));
+  TEST_ASSERT_EQUAL_STRING("CUSTOM",
+                           az2::enginePatchName(az2::kEngineSampler, az2::kSamplerCustomPatch));
   TEST_ASSERT_EQUAL_STRING("DEXED", az2::engineName(az2::kEngineDexed));
   TEST_ASSERT_EQUAL_STRING("?", az2::engineName(99));  // moteur invalide -> pas de crash, "?" attendu
+}
+
+// Ajoute 2026-09-22 (audit complet) : GRANULAR/SPECTRAL (kEngineGranular/
+// kEngineSpectral) n'avaient aucune assertion malgre le diff qui les a
+// ajoutes au coeur du protocole partage -- ni pour kRackPatchCount/
+// rackParamName/rackParamCount, cote rack (kRackEngine*, identifiants
+// SEPARES de kEngine*, voir le commentaire ligne 662-665 de
+// AZ2_Protocol.h).
+void test_rack_engine_patch_count_and_name() {
+  TEST_ASSERT_EQUAL_UINT16(az2::kRackPatchCount, az2::enginePatchCount(az2::kEngineGranular));
+  TEST_ASSERT_EQUAL_UINT16(az2::kRackPatchCount, az2::enginePatchCount(az2::kEngineSpectral));
+  TEST_ASSERT_EQUAL_STRING("GRANULAR", az2::engineName(az2::kEngineGranular));
+  TEST_ASSERT_EQUAL_STRING("SPECTRAL", az2::engineName(az2::kEngineSpectral));
+
+  TEST_ASSERT_EQUAL_STRING("CLOUD", az2::enginePatchName(az2::kEngineGranular, 0));
+  TEST_ASSERT_EQUAL_STRING("PERCUSSIVE",
+                            az2::enginePatchName(az2::kEngineGranular, az2::kRackPatchCount - 1));
+  TEST_ASSERT_EQUAL_STRING("?", az2::enginePatchName(az2::kEngineGranular, az2::kRackPatchCount));
+  TEST_ASSERT_EQUAL_STRING("AIR", az2::enginePatchName(az2::kEngineSpectral, 0));
+  TEST_ASSERT_EQUAL_STRING("ABYSS",
+                            az2::enginePatchName(az2::kEngineSpectral, az2::kRackPatchCount - 1));
+  TEST_ASSERT_EQUAL_STRING("?", az2::enginePatchName(az2::kEngineSpectral, az2::kRackPatchCount));
+}
+
+void test_rack_param_count_and_name() {
+  TEST_ASSERT_EQUAL_UINT8(az2::kRackGranularParamCount, az2::rackParamCount(az2::kRackEngineGranular));
+  TEST_ASSERT_EQUAL_UINT8(az2::kRackSpectralParamCount, az2::rackParamCount(az2::kRackEngineSpectral));
+  TEST_ASSERT_EQUAL_UINT8(0, az2::rackParamCount(99));  // moteur rack invalide -> 0, pas de crash
+
+  TEST_ASSERT_EQUAL_STRING("POSITION", az2::rackParamName(az2::kRackEngineGranular, 0));
+  TEST_ASSERT_EQUAL_STRING("?",
+      az2::rackParamName(az2::kRackEngineGranular, az2::kRackGranularParamCount));
+  TEST_ASSERT_EQUAL_STRING("PARTIALS", az2::rackParamName(az2::kRackEngineSpectral, 0));
+  TEST_ASSERT_EQUAL_STRING("?",
+      az2::rackParamName(az2::kRackEngineSpectral, az2::kRackSpectralParamCount));
+
+  // Precaution de compatibilite documentee ligne 662-665 de AZ2_Protocol.h :
+  // ces deux jeux d'identifiants doivent rester numeriquement distincts,
+  // sinon un ecran plus recent pourrait selectionner un moteur absent d'un
+  // Teensy/S3 plus ancien (voir aussi rackEngineSlotFor() cote Teensy).
+  TEST_ASSERT_NOT_EQUAL(static_cast<int>(az2::kRackEngineGranular), static_cast<int>(az2::kEngineGranular));
+  TEST_ASSERT_NOT_EQUAL(static_cast<int>(az2::kRackEngineSpectral), static_cast<int>(az2::kEngineSpectral));
+}
+
+void test_sampler_modes_are_stable_wire_values() {
+  TEST_ASSERT_EQUAL_UINT8(0, az2::kSamplerModeOneShot);
+  TEST_ASSERT_EQUAL_UINT8(1, az2::kSamplerModeGate);
+  TEST_ASSERT_NOT_EQUAL(az2::kSamplerModeOneShot, az2::kSamplerModeGate);
+}
+
+void test_sampler_playback_step() {
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 1.0f,
+      az2_sampler_math::samplerPlaybackStep(44100, 44100, 440.0f, 440.0f));
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.5f,
+      az2_sampler_math::samplerPlaybackStep(22050, 44100, 440.0f, 440.0f));
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 2.0f,
+      az2_sampler_math::samplerPlaybackStep(44100, 44100, 880.0f, 440.0f));
+  TEST_ASSERT_EQUAL_FLOAT(0.0f,
+      az2_sampler_math::samplerPlaybackStep(0, 44100, 440.0f, 440.0f));
+}
+
+void test_sampler_linear_interpolation() {
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, -1000.0f,
+      az2_sampler_math::samplerLinearInterpolate(-1000, 1000, 0.0f));
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f,
+      az2_sampler_math::samplerLinearInterpolate(-1000, 1000, 0.5f));
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1000.0f,
+      az2_sampler_math::samplerLinearInterpolate(-1000, 1000, 1.0f));
+}
+
+void test_panic_command_is_stable() {
+  TEST_ASSERT_EQUAL_STRING("PANIC", az2::kPanic);
 }
 
 int main(int argc, char **argv) {
@@ -227,6 +312,12 @@ int main(int argc, char **argv) {
   RUN_TEST(test_division_label_known_values);
   RUN_TEST(test_pad_id_and_valid_pad);
   RUN_TEST(test_engine_patch_count_and_name);
+  RUN_TEST(test_rack_engine_patch_count_and_name);
+  RUN_TEST(test_rack_param_count_and_name);
+  RUN_TEST(test_sampler_modes_are_stable_wire_values);
+  RUN_TEST(test_sampler_playback_step);
+  RUN_TEST(test_sampler_linear_interpolation);
+  RUN_TEST(test_panic_command_is_stable);
   RUN_TEST(test_gb_audio_v2_endian_helpers);
   RUN_TEST(test_gb_audio_v2_crc16_known_vector);
   RUN_TEST(test_gb_audio_v2_header_sanity);

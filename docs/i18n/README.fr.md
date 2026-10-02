@@ -6,14 +6,16 @@
 
 ## Construire un instrument
 
-AZ-2 réunit une groovebox, un tracker huit pistes, six moteurs de synthèse/lecture et une console Game Boy / Game Boy Color. L'objectif est de jouer, composer, capturer le son du jeu et réutiliser une capture comme instrument. AZ-2 conserve **deux cartes**, sans multiplexeur ni rack ESP supplémentaire : le rack appartient au projet AZ-3.
+AZ-2 réunit une groovebox, un tracker huit pistes et neuf moteurs audio. Elle intègre une console de jeu : **Game Boy et Game Boy Color tournent à pleine vitesse (59,7 fps en X2 et X3, mesuré sur la machine)**, la NES à 49–50 fps. Le prototype actif utilise le Teensy, l'ESP32-S3 écran, le S3 granulaire et le WROOM spectral.
 
 | Carte | Rôle | Stockage |
 | --- | --- | --- |
-| Teensy 4.1 | Timing du tracker, moteurs audio, MIDI, enregistrement WAV, lecture de samples, sortie I²S vers PCM5102A | Sa propre SD pour les captures ; PSRAM pour le sample dynamique |
-| ESP32-S3 VIEWE UEDX48480040E-WB | Écran tactile 480×480, menus, émulation GB/GBC, navigation des ROMs | Sa propre SD pour les ROMs et sauvegardes |
+| Teensy 4.1 | Timing du tracker, moteurs audio, enregistrement WAV, lecture de samples, sortie I²S vers PCM5102A | Sa propre SD pour les captures ; PSRAM pour le sample dynamique |
+| ESP32-S3 VIEWE UEDX48480040E-WB | Écran tactile 480×480, menus, émulateurs GB/GBC (Walnut-CGB) et NES | Sa propre SD pour les données d'interface et les ROM (`/games`) |
+| ESP32-S3 N16R8 | GRANULAR, PSRAM et agrégation audio | Samples reçus depuis la SD du Teensy |
+| ESP-WROOM-32D | SPECTRAL | Aucun stockage local requis |
 
-Les commandes et l'audio Game Boy circulent sur un UART partagé à **921600 bauds**. Le contrat commun est défini dans `lib/AZ2_Protocol/AZ2_Protocol.h` : **modifier les deux firmwares et leurs tests ensemble**. Le mode de production reste **V1, PCM8 mono 14 kHz** ; le pilote V2 stéréo est présent, mais désactivé.
+Les commandes écran circulent sur l'UART Teensy/écran à **921600 bauds** ; le rack audio possède ses liaisons UART/I2S dédiées. Le contrat commun est défini dans `lib/AZ2_Protocol/AZ2_Protocol.h` : modifier et vérifier tous les firmwares concernés ensemble.
 
 ## Installation et mise à jour
 
@@ -25,17 +27,19 @@ cd L-AZ-2
 python -m pip install platformio==6.1.19
 python tools/check_firmware_contract.py
 pio test -e native
-pio run -e master_teensy -e screen_esp
+pio run -e master_teensy_rack_lab -e screen_esp_walnut_gbc_core_task
 # Après vérification du matériel et des sauvegardes :
-pio run -e master_teensy -t upload
-pio run -e screen_esp -t upload
+pio run -e master_teensy_rack_lab -t upload
+pio run -e screen_esp_walnut_gbc_core_task -t upload
 ```
 
-Les deux compilations proviennent du **même SHA Git**. Ne pas mettre à jour une seule carte avec un changement de protocole incompatible. `ui_esp` est un environnement historique de bring-up, pas le firmware de l'écran final. Aucun jeu commercial ou contenu utilisateur privé n'est inclus.
+Les deux compilations proviennent du **même SHA Git**. Ne pas mettre à jour une seule carte avec un changement de protocole incompatible. Aucun jeu commercial ou contenu utilisateur privé n'est inclus.
 
 ## Émulation, sauvegardes et musique
 
-- **GB/GBC :** cœur Walnut-CGB, sélection des ROMs depuis la SD ESP32 et commandes physiques ; compatibilité, vitesse réelle et absence de défauts encore à qualifier jeu par jeu (dont LSDJ, Tetris et Mario).
+- **GB/GBC :** un seul cœur, Walnut-CGB, validé sur la machine à 59,7 fps en X2 et X3 (Zelda `.gb` et Zelda DX `.gbc`). La carte GAME BOY liste les `.gb`, la carte GAME BOY COLOR les `.gbc`. Affichage double cœur : 30 Hz à l'écran en X2, 20 Hz en X3, jeu et son à 59,7 Hz. Compatibilité plus large et sessions longues encore à qualifier.
+- **NES :** Anemoia-ESP32, 49–50 fps (~82 %) avec frameskip.
+- **Neo Geo Pocket :** retirée le 2 octobre 2026 (cœur RACE sous GPLv2 seule, incompatible avec la GPLv3 d'AZ-2).
 - **SRAM :** sauvegarde périodique et manuelle, fichiers `.sav/.bak`. Une erreur de sauvegarde bloque la décharge de la cartouche pour éviter de perdre des changements en RAM.
 - **RTC MBC3 :** fichier `.rtc` distinct, versionné avec CRC32 et secours `.bak`. L'horloge n'avance hors tension que si l'heure système ESP32 est valide ; la fiabilité lors de coupures doit encore être testée sur matériel.
 - **Audio GB :** V1 PCM8 mono 14 kHz vers le Teensy ; V2 transporte en mode expérimental L/R PCM8 stéréo 14 kHz avec CRC16, séquence et négociation, **désactivé par défaut**. Le bus de sortie Teensy reste mono pour l'instant, même avec V2.

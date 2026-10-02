@@ -94,7 +94,7 @@ class mdaEPiano
 
     void noteOn(int32_t note, int32_t velocity);
     void noteOff(int32_t note);
-    bool processMidiController(uint8_t data1, uint8_t data2);
+    bool processController(uint8_t data1, uint8_t data2);
     void setProgram(uint8_t program);
     void resumeVoices();
     void resetVoices(void);

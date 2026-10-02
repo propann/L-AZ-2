@@ -2,11 +2,27 @@
 #include <cstdint>
 
 namespace az2 {
-    constexpr uint8_t kStepCount = 16;
+    constexpr uint8_t kStepsPerMeasure = 16;
+    constexpr uint8_t kMaxPatternMeasures = 8;
+    constexpr uint8_t kStepCount = kStepsPerMeasure * kMaxPatternMeasures;
     constexpr uint8_t kTrackCount = 8;
     constexpr uint8_t kPatternCount = 8;
 
-    enum StepFx : uint8_t { kStepFxNone = 0, kStepFxArp = 1, kStepFxCut = 2, kStepFxRetrig = 3 };
+    // CRUSH/DELAY ajoutes le 2026-09-23 ("on regroupe tous les effets dans
+    // le bouton EFFET") : les effets audio par piste (bitcrusher/echo,
+    // jusque-la seulement pilotables par commande serie CRUSH:/DELAY: sans
+    // aucun acces UI) rejoignent ARP/CUT/RET comme un 5e/6e choix de la
+    // meme colonne FX du tracker -- stepFxVal devient un NUMERO DE PATCH
+    // (voir kCrushPresets[]/kDelayPresets[] dans main.cpp), pas une valeur
+    // brute, pour rester coherent avec "des patch qu'on peut appeler".
+    enum StepFx : uint8_t {
+      kStepFxNone = 0,
+      kStepFxArp = 1,
+      kStepFxCut = 2,
+      kStepFxRetrig = 3,
+      kStepFxCrush = 4,
+      kStepFxDelay = 5,
+    };
 }
 
 struct SequencerTrack {

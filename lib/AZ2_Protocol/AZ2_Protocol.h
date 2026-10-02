@@ -245,7 +245,7 @@ constexpr uint8_t kScopePacketMagic = 0x02;
 constexpr uint8_t kScopeSamplesPerPacket = 32;
 constexpr uint8_t kPadCount = 16;
 // Gamme chromatique des 16 pads (voix live) : pad 0 = kPadBaseNote
-// (MIDI), pad 15 = kPadBaseNote+15. 48 = C3. Partage entre les deux
+// pad 15 = kPadBaseNote+15. 48 = C3. Partage entre les deux
 // cartes depuis le 2026-09-17 (avant : duplique en dur cote Teensy
 // seulement -- l'ESP32 en a besoin pour "poser" une note de pad
 // directement sur un pas du sequenceur, voir padEditsStep dans
@@ -258,6 +258,7 @@ constexpr const char *kHelloControl = "HELLO:ESP32_CONTROL";
 constexpr const char *kHelloAudio = "HELLO:TEENSY_AUDIO";
 constexpr const char *kPlay = "PLAY";
 constexpr const char *kStop = "STOP";
+constexpr const char *kPanic = "PANIC";
 constexpr const char *kStatusReady = "READY";
 constexpr const char *kStatusPlaying = "PLAYING";
 constexpr const char *kStatusStopped = "STOPPED";
@@ -354,8 +355,7 @@ inline void printBtn(Print &out, char button, bool pressed) {
 }
 
 // Potentiometre : valeur ABSOLUE (pas un delta comme printMacro/l'ancien
-// encodeur Pico) -- 0-127, format compatible MIDI CC en vue d'une
-// eventuelle sortie MIDI plus tard. Depuis le 2026-09-15, les 3
+// encodeur Pico) -- 0-127. Depuis le 2026-09-15, les 3
 // "potards" sont en realite des encodeurs rotatifs incrementaux (voir
 // AZ2_CABLAGE_MASTER.md) -- POT: reste le meme protocole (valeur
 // absolue accumulee cote Teensy a chaque cran), rien a changer cote
@@ -457,9 +457,17 @@ constexpr uint8_t kEngineAnalog = 4;
 // (voir external_psram_size/psramTestBuffer dans main.cpp) mais jamais
 // exploites avant ce soir -- voir docs/AZ2_SAMPLEUR.md.
 constexpr uint8_t kEngineSampler = 5;
-constexpr uint8_t kEngineCount = 6;
+// Moteur percussion leger de la bibliotheque Audio Teensy. Il utilise un
+// patch par piste et ne depend d'aucun sample externe.
+constexpr uint8_t kEngineDrum = 6;
+constexpr uint8_t kEngineGranular = 7;
+constexpr uint8_t kEngineSpectral = 8;
+constexpr uint8_t kEngineCount = 9;
 
-constexpr const char *kEngineNames[kEngineCount] = {"DEXED", "EPIANO", "BRAIDS", "KARPLUS", "ANALOG", "SAMPLER"};
+constexpr const char *kEngineNames[kEngineCount] = {
+    "DEXED", "EPIANO", "BRAIDS", "KARPLUS", "ANALOG", "SAMPLER", "DRUM",
+    "GRANULAR", "SPECTRAL",
+};
 
 constexpr uint8_t kDexedPatchCount = 255;
 // 255 des 256 vrais patches d'usine du Yamaha DX7 original (banques
@@ -510,9 +518,34 @@ constexpr const char *kDexedPatchNames[kDexedPatchCount] = {
     "DESCENT", "OCTAVE WAR", "..GOTCHA..", "ST.HELENS",
 };
 
-constexpr uint8_t kEPianoPatchCount = 5;
+// [2026-09-26] 105 (etait 5) : les 5 presets d'origine mdaEPiano restent en
+// tete (rien de plus n'existe reellement en amont pour ce moteur, verifie --
+// tous les ports de mda-epiano, LV2/JSFX/autres, n'ont jamais que ces 5-la),
+// suivis de 100 variations generees par famille (voir
+// az2_epiano_bank_data.h cote Teensy, GARDER LE MEME ORDRE ici).
+constexpr uint8_t kEPianoPatchCount = 105;
 constexpr const char *kEPianoPatchNames[kEPianoPatchCount] = {
     "Default", "Bright", "Mellow", "Autopan", "Tremolo",
+    "GRAND 01", "GRAND 02", "GRAND 03", "GRAND 04", "GRAND 05",
+    "GRAND 06", "GRAND 07", "GRAND 08", "GRAND 09", "GRAND 10",
+    "BRIGHT 01", "BRIGHT 02", "BRIGHT 03", "BRIGHT 04", "BRIGHT 05",
+    "BRIGHT 06", "BRIGHT 07", "BRIGHT 08", "BRIGHT 09", "BRIGHT 10",
+    "MELLOW 01", "MELLOW 02", "MELLOW 03", "MELLOW 04", "MELLOW 05",
+    "MELLOW 06", "MELLOW 07", "MELLOW 08", "MELLOW 09", "MELLOW 10",
+    "SUITCASE 01", "SUITCASE 02", "SUITCASE 03", "SUITCASE 04", "SUITCASE 05",
+    "SUITCASE 06", "SUITCASE 07", "SUITCASE 08", "SUITCASE 09", "SUITCASE 10",
+    "TREMOLO 01", "TREMOLO 02", "TREMOLO 03", "TREMOLO 04", "TREMOLO 05",
+    "TREMOLO 06", "TREMOLO 07", "TREMOLO 08", "TREMOLO 09", "TREMOLO 10",
+    "CHORUS 01", "CHORUS 02", "CHORUS 03", "CHORUS 04", "CHORUS 05",
+    "CHORUS 06", "CHORUS 07", "CHORUS 08", "CHORUS 09", "CHORUS 10",
+    "DRIVEN 01", "DRIVEN 02", "DRIVEN 03", "DRIVEN 04", "DRIVEN 05",
+    "DRIVEN 06", "DRIVEN 07", "DRIVEN 08", "DRIVEN 09", "DRIVEN 10",
+    "BELL 01", "BELL 02", "BELL 03", "BELL 04", "BELL 05",
+    "BELL 06", "BELL 07", "BELL 08", "BELL 09", "BELL 10",
+    "MUTED 01", "MUTED 02", "MUTED 03", "MUTED 04", "MUTED 05",
+    "MUTED 06", "MUTED 07", "MUTED 08", "MUTED 09", "MUTED 10",
+    "PAD 01", "PAD 02", "PAD 03", "PAD 04", "PAD 05",
+    "PAD 06", "PAD 07", "PAD 08", "PAD 09", "PAD 10",
 };
 
 // 43 depuis le 2026-09-18 ("recuperer un max de patch pour tout les
@@ -539,10 +572,34 @@ constexpr const char *kBraidsPatchNames[kBraidsPatchCount] = {
     "Digital Mod",
 };
 
-// AudioSynthKarplusStrong n'expose aucun parametre de forme (juste
-// noteOn(freq,vel)/noteOff()) -- un seul "patch" possible avec cet objet.
-constexpr uint8_t kKarplusPatchCount = 1;
-constexpr const char *kKarplusPatchNames[kKarplusPatchCount] = {"Corde pincee"};
+// AudioSynthKarplusStrong n'expose pas de parametre de forme (seulement
+// noteOn(freq,vel)/noteOff()). Les patches KARPLUS sont donc des presets de
+// la chaine partagee autour de l'objet : excitation, enveloppe et filtre.
+// Ils restent de vrais patches sonores, sans modifier la bibliotheque Audio.
+constexpr uint8_t kKarplusPatchCount = 100;
+constexpr const char *kKarplusPatchNames[kKarplusPatchCount] = {
+    "Corde pincee", "Nylon doux", "Acier brillant", "Guitare mutee",
+    "Harpe courte", "Basse bois", "Pluck vintage", "Drone resonant",
+    "NYLON 01", "NYLON 02", "NYLON 03", "NYLON 04", "NYLON 05",
+    "NYLON 06", "NYLON 07", "NYLON 08", "NYLON 09", "NYLON 10",
+    "ACIER 01", "ACIER 02", "ACIER 03", "ACIER 04", "ACIER 05",
+    "ACIER 06", "ACIER 07", "ACIER 08", "ACIER 09", "ACIER 10",
+    "MUTEE 01", "MUTEE 02", "MUTEE 03", "MUTEE 04", "MUTEE 05",
+    "MUTEE 06", "MUTEE 07", "MUTEE 08", "MUTEE 09", "MUTEE 10",
+    "HARPE 01", "HARPE 02", "HARPE 03", "HARPE 04", "HARPE 05",
+    "HARPE 06", "HARPE 07", "HARPE 08", "HARPE 09", "HARPE 10",
+    "BASSE 01", "BASSE 02", "BASSE 03", "BASSE 04", "BASSE 05",
+    "BASSE 06", "BASSE 07", "BASSE 08", "BASSE 09", "BASSE 10",
+    "PLUCK 01", "PLUCK 02", "PLUCK 03", "PLUCK 04", "PLUCK 05",
+    "PLUCK 06", "PLUCK 07", "PLUCK 08", "PLUCK 09", "PLUCK 10",
+    "BOWED 01", "BOWED 02", "BOWED 03", "BOWED 04", "BOWED 05",
+    "BOWED 06", "BOWED 07", "BOWED 08", "BOWED 09", "BOWED 10",
+    "CLOCHE 01", "CLOCHE 02", "CLOCHE 03", "CLOCHE 04", "CLOCHE 05",
+    "CLOCHE 06", "CLOCHE 07", "CLOCHE 08", "CLOCHE 09", "CLOCHE 10",
+    "DRONE 01", "DRONE 02", "DRONE 03", "DRONE 04", "DRONE 05",
+    "DRONE 06", "DRONE 07", "DRONE 08", "DRONE 09", "DRONE 10",
+    "FX 01", "FX 02",
+};
 
 // AudioSynthWaveform : la forme d'onde EST le patch (WAVEFORM_* dans
 // synth_waveform.h). 11 depuis le 2026-09-18 ("recuperer un max de
@@ -563,14 +620,60 @@ constexpr const char *kAnalogPatchNames[kAnalogPatchCount] = {
 
 // SAMPLER (2026-09-18) : 2 samples de depart embarques en flash (voir
 // az2_sampler_data.h cote Teensy), deja vendores dans le repo avec
-// MicroDexed-touch (meme licence GPLv3, voir AZ2_LICENCES.md) --
-// d'autres pourront s'ajouter (SD/PSRAM, voir docs/AZ2_SAMPLEUR.md)
-// sans que cette table grandisse necessairement au meme rythme (un
-// index au-dela de kSamplerPatchCount reste gere -- voir
-// applyTrackPatch() cote Teensy).
-constexpr uint8_t kSamplerPatchCount = 3;
+// MicroDexed-touch (meme licence GPLv3, voir AZ2_LICENCES.md).
+//
+// 4e entree ajoutee le 2026-09-23 ("fusion" demandee entre le moteur
+// SAMPLER d'une piste et le navigateur SD deja utilise par les pads,
+// voir docs/AZ2_SAMPLEUR.md) : CUSTOM n'a pas de contenu FIXE comme les
+// 3 precedents (Kick/Snare/GB Capture pointent vers des tableaux PROGMEM
+// ou un buffer de capture GB partages entre pistes) -- chaque piste a
+// desormais SON PROPRE buffer PSRAM (trackSampleBuffer[] cote Teensy),
+// rempli en chargeant n'importe quel WAV de la SD via TRACKSAMPLE:<piste>:
+// <chemin>, exactement comme PADSAMPLE:<pad>:<chemin> le fait deja pour
+// les pads. Voir applyTrackPatch() cote Teensy pour le branchement.
+constexpr uint8_t kSamplerPatchCount = 4;
 constexpr uint8_t kSamplerGbCapturePatch = 2;
-constexpr const char *kSamplerPatchNames[kSamplerPatchCount] = {"Kick", "Snare", "GB Capture"};
+constexpr uint8_t kSamplerCustomPatch = 3;
+constexpr const char *kSamplerPatchNames[kSamplerPatchCount] = {"Kick", "Snare", "GB Capture", "CUSTOM"};
+
+constexpr uint8_t kDrumPatchCount = 6;
+constexpr const char *kDrumPatchNames[kDrumPatchCount] = {
+    "Kick", "Snare", "Tom", "Hi Tom", "Click", "Zap",
+};
+
+// Mode de declenchement du sampleur chromatique d'une piste : one-shot
+// laisse le sample finir, gate coupe sur note-off. Les 16 pads dedies restent
+// toujours one-shot.
+constexpr uint8_t kSamplerModeOneShot = 0;
+constexpr uint8_t kSamplerModeGate = 1;
+
+constexpr uint8_t kRackPatchCount = 8;
+constexpr const char *kRackGranularPatchNames[kRackPatchCount] = {
+    "CLOUD", "DRONE", "DUST", "SHIMMER", "REVERSE", "TEXTURE", "FREEZE", "PERCUSSIVE",
+};
+constexpr const char *kRackSpectralPatchNames[kRackPatchCount] = {
+    "AIR", "WAVES", "GLASS", "CHOIR", "METAL", "SWARM", "ORGAN", "ABYSS",
+};
+constexpr uint8_t kRackGranularPresets[kRackPatchCount][18] = {
+    {64, 28, 14, 64, 3, 20, 96, 0, 90, 0, 3, 24, 110, 34, 124, 10, 8, 127},
+    {46, 86, 28, 52, 2, 18, 108, 4, 104, 0, 54, 58, 116, 82, 108, 18, 16, 127},
+    {72, 7, 4, 76, 20, 74, 118, 8, 42, 0, 0, 12, 72, 18, 127, 6, 5, 127},
+    {80, 46, 18, 88, 8, 34, 122, 2, 102, 0, 18, 38, 108, 58, 122, 14, 10, 127},
+    {54, 34, 12, 60, 5, 42, 104, 110, 94, 0, 5, 26, 104, 44, 118, 10, 10, 127},
+    {64, 22, 24, 64, 26, 96, 127, 18, 74, 0, 8, 34, 94, 54, 116, 20, 22, 127},
+    {38, 108, 20, 48, 2, 5, 110, 8, 114, 127, 64, 62, 120, 96, 100, 24, 14, 127},
+    {24, 9, 2, 52, 2, 10, 58, 0, 60, 0, 0, 10, 92, 16, 127, 5, 18, 127},
+};
+constexpr uint8_t kRackSpectralPresets[kRackPatchCount][17] = {
+    {55, 78, 4, 88, 64, 3, 108, 14, 72, 2, 24, 48, 102, 68, 122, 8, 127},
+    {72, 48, 8, 62, 64, 7, 96, 30, 58, 6, 12, 42, 108, 54, 116, 12, 127},
+    {64, 28, 18, 94, 72, 2, 114, 8, 36, 3, 1, 20, 94, 48, 126, 22, 127},
+    {80, 66, 3, 58, 52, 10, 88, 18, 88, 8, 30, 54, 114, 68, 112, 16, 127},
+    {96, 34, 46, 82, 70, 5, 100, 12, 32, 34, 1, 18, 98, 38, 120, 34, 127},
+    {88, 56, 14, 64, 58, 42, 122, 54, 52, 14, 6, 34, 94, 52, 116, 18, 127},
+    {48, 72, 0, 46, 86, 2, 46, 5, 96, 8, 1, 28, 122, 42, 120, 10, 127},
+    {72, 88, 32, 28, 42, 12, 108, 18, 106, 28, 36, 64, 110, 88, 92, 36, 127},
+};
 
 // uint16_t (pas uint8_t) depuis le passage de DEXED a 256 patches
 // (2026-09-18, voir kDexedPatchCount plus haut) -- un uint8_t aurait
@@ -585,6 +688,9 @@ inline uint16_t enginePatchCount(uint8_t engine) {
     case kEngineKarplus: return kKarplusPatchCount;
     case kEngineAnalog: return kAnalogPatchCount;
     case kEngineSampler: return kSamplerPatchCount;
+    case kEngineDrum: return kDrumPatchCount;
+    case kEngineGranular:
+    case kEngineSpectral: return kRackPatchCount;
     default: return 1;
   }
 }
@@ -597,12 +703,56 @@ inline const char *enginePatchName(uint8_t engine, uint8_t patch) {
     case kEngineKarplus: return patch < kKarplusPatchCount ? kKarplusPatchNames[patch] : "?";
     case kEngineAnalog: return patch < kAnalogPatchCount ? kAnalogPatchNames[patch] : "?";
     case kEngineSampler: return patch < kSamplerPatchCount ? kSamplerPatchNames[patch] : "?";
+    case kEngineDrum: return patch < kDrumPatchCount ? kDrumPatchNames[patch] : "?";
+    case kEngineGranular: return patch < kRackPatchCount ? kRackGranularPatchNames[patch] : "?";
+    case kEngineSpectral: return patch < kRackPatchCount ? kRackSpectralPatchNames[patch] : "?";
     default: return "?";
   }
 }
 
 inline const char *engineName(uint8_t engine) {
   return engine < kEngineCount ? kEngineNames[engine] : "?";
+}
+
+// Rack audio externe. Les identifiants restent separes de kEngine* tant que
+// les deux DSP ne sont pas encore exposes comme moteurs de piste : cela evite
+// qu'un firmware ecran plus recent selectionne un moteur absent d'un ancien
+// firmware Teensy/S3.
+constexpr uint8_t kRackEngineGranular = 0;
+constexpr uint8_t kRackEngineSpectral = 1;
+constexpr uint8_t kRackEngineCount = 2;
+constexpr uint8_t kRackGranularParamCount = 18;
+constexpr uint8_t kRackSpectralParamCount = 17;
+
+constexpr const char *kRackEngineNames[kRackEngineCount] = {"GRANULAR", "SPECTRAL"};
+constexpr const char *kRackGranularParamNames[kRackGranularParamCount] = {
+    "POSITION", "SIZE", "DENSITY", "PITCH", "PITCH SPRAY", "POSITION SPRAY",
+    "PAN SPREAD", "REVERSE", "WINDOW", "FREEZE", "ATTACK", "DECAY",
+    "SUSTAIN", "RELEASE", "CUTOFF", "RESONANCE", "DRIVE", "LEVEL",
+};
+constexpr const char *kRackSpectralParamNames[kRackSpectralParamCount] = {
+    "PARTIALS", "MORPH", "STRETCH", "TILT", "ODD/EVEN", "DETUNE", "SPREAD",
+    "MOTION", "CHARACTER", "DRIVE", "ATTACK", "DECAY", "SUSTAIN", "RELEASE",
+    "CUTOFF", "RESONANCE", "LEVEL",
+};
+
+inline uint8_t rackParamCount(uint8_t engine) {
+  return engine == kRackEngineGranular ? kRackGranularParamCount :
+         engine == kRackEngineSpectral ? kRackSpectralParamCount : 0;
+}
+
+inline const char *rackParamName(uint8_t engine, uint8_t parameter) {
+  if (engine == kRackEngineGranular && parameter < kRackGranularParamCount)
+    return kRackGranularParamNames[parameter];
+  if (engine == kRackEngineSpectral && parameter < kRackSpectralParamCount)
+    return kRackSpectralParamNames[parameter];
+  return "?";
+}
+
+inline const char *rackPatchName(uint8_t engine, uint8_t patch) {
+  if (patch >= kRackPatchCount) return "?";
+  return engine == kRackEngineGranular ? kRackGranularPatchNames[patch] :
+         engine == kRackEngineSpectral ? kRackSpectralPatchNames[patch] : "?";
 }
 
 // ESP32/Pico -> Teensy: choix direct (pas de +1/-1, l'ecran calcule le

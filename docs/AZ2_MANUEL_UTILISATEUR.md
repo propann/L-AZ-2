@@ -6,10 +6,12 @@ Ce guide explique comment **jouer avec la machine**, pas comment la construire o
 
 ## 1. Vue d'ensemble
 
-L'AZ-2 est une groovebox à deux cerveaux :
+L'AZ-2 est une groovebox distribuée sur quatre cartes programmables :
 
-- **Teensy 4.1** (le "master audio") : fait tourner le tracker (séquenceur), les 6 moteurs de synthèse, le mixage et la sortie audio (DAC PCM5102A).
-- **ESP32-S3** (l'"écran") : affiche l'interface tactile 480×480, lit les ROM Game Boy / Game Boy Color depuis la carte SD, et relaie vos actions au Teensy.
+- **Teensy 4.1** (le master audio) : tracker, neuf moteurs locaux, mixage, MIDI et sortie PCM5102A.
+- **ESP32-S3 écran** : interface tactile 480×480 et prototypes GB/GBC non validés.
+- **ESP32-S3 N16R8** : moteur GRANULAR et agrégation du rack audio.
+- **ESP-WROOM-32D** : moteur SPECTRAL.
 
 Vous interagissez avec la machine via :
 
@@ -73,7 +75,7 @@ Le cœur de la composition : un tracker 8 pistes, 16 pas par pattern, inspiré d
   - **MOTEUR** — ouvre la page Moteurs pour cette piste.
   - **PATCH** — ouvre la page Patch complète (filtre, ADSR, forme d'onde) pour cette piste.
   - **EFFET** — reste dans le tracker, place le focus croix directement sur la colonne FX du pas sélectionné.
-  - **CLAVIER** — ouvre la page Audio (pads tactiles), en mode "pose la note sur le pas sélectionné" (pratique pour composer en jouant en direct).
+  - **PAD 4X4** — ouvre le clavier tactile 4×4 configuré sur le moteur/patch de la piste sélectionnée, en mode "pose la note sur le pas sélectionné".
   - **METRO** — active/désactive le métronome.
   - **SAUVER** — sauvegarde tout le morceau (patterns, chaînage song, tempo, et le moteur/patch/réglages de chaque piste) dans l'emplacement PROJET actuellement choisi, sans quitter le tracker.
 
@@ -91,14 +93,14 @@ Le cœur de la composition : un tracker 8 pistes, 16 pas par pattern, inspiré d
 
 ### Transport
 
-Barre du bas : PLAY/STOP, BPM (+/- 5 par tap gauche/droite de la case), division rythmique. Bouton D = déclenche un "fill" temporaire pendant qu'il est maintenu (variation de motif).
+Barre du bas : PLAY/STOP, BPM (+/- 5 par tap gauche/droite de la case), division rythmique. Les flèches peuvent entrer dans les boutons latéraux : depuis la dernière colonne, DROITE ouvre le focus du panneau, HAUT/BAS choisit MOTEUR/PATCH/EFFET/CLAVIER/METRO/SAUVER, puis A confirme. Bouton **D** déclenche un "fill" temporaire pendant qu'il est maintenu (variation de motif). C reste le retour.
 
 ## 6. Page MOTEURS
 
 Assigner un moteur de synthèse et un patch à chaque piste.
 
 - Ligne **PISTE** en haut (GAUCHE/DROITE pour changer, atteinte en remontant depuis le haut des listes).
-- **Liste MOTEUR** à gauche (6 moteurs, voir §9), **liste PATCH** à droite (patchs disponibles pour le moteur choisi — jusqu'à 255 pour Dexed).
+- **Liste MOTEUR** à gauche (9 moteurs, voir §9), **liste PATCH** à droite (patchs disponibles pour le moteur choisi — jusqu'à 255 pour Dexed).
 - GAUCHE/DROITE bascule le focus entre les 2 listes ; HAUT/BAS s'y déplace.
 - Toucher ou sélectionner un moteur/patch l'applique **immédiatement**.
 - Bandeau du bas : aperçu du patch actuel, touchez-le (ou appuyez **A** quand la liste PATCH a le focus) pour ouvrir directement la page PATCH complète.
@@ -108,6 +110,7 @@ Assigner un moteur de synthèse et un patch à chaque piste.
 Le réglage fin du son de la piste affichée : filtre, enveloppe, effets propres à la piste, et un oscilloscope qui trace en direct ce qui est réellement entendu.
 
 - Ligne **PISTE** en haut (même convention qu'ailleurs).
+- Cadre de presets à côté de l'onde : **A** entre en édition, HAUT/BAS choisit le preset, puis **A** ressort ; hors édition, BAS/DROITE descend dans les réglages.
 - Grille de réglages, **2 par ligne** pour gagner de la place — GAUCHE/DROITE choisit le réglage, HAUT/BAS monte/descend d'une ligne en gardant la colonne.
 - **A maintenu + HAUT/BAS *ou* A maintenu + GAUCHE/DROITE** éditent tous les deux la valeur sélectionnée (au choix, selon ce qui est le plus confortable à tenir).
 - Réglages disponibles selon le moteur : coupure/résonance du filtre, ADSR (attaque/chute/maintien/relâchement) — remplacé par ALGO/FEEDBACK pour Dexed — puis des réglages spécifiques au moteur (voir §9), **CRUSH** (bitcrusher) et **DELAY** (écho court, un seul répétition) propres à la piste, VOLUME, puis la ligne **SLOT** (sauvegarde/chargement de patch, voir §10).
@@ -124,18 +127,21 @@ Vue d'ensemble du volume de toutes les pistes à la fois.
 - Boutons **MUTE** et **SOLO** (tactiles, ou boutons physiques B/D) pour la piste sélectionnée — indicateur M/S affiché sous sa barre.
 - Encodeur 1 = choisir la piste, encodeur 2 = son volume (mêmes actions qu'à la croix, en plus rapide).
 
-## 9. Les 6 moteurs de synthèse
+## 9. Les 9 moteurs audio
 
 | Moteur | Type | Patchs disponibles |
 | :-- | :-- | :-- |
 | **DEXED** | Synthèse FM (compatible DX7) | 255 (banques ROM Yamaha officielles) |
 | **EPIANO** | Piano électrique (mda ePiano) | 5 presets réels |
 | **BRAIDS** | Oscillateur macro (Mutable Instruments) | 43 formes d'onde |
-| **KARPLUS** | Corde pincée (Karplus-Strong) | — |
+| **KARPLUS** | Corde pincée (Karplus-Strong) | 100 presets (nylon, acier, harpe, basse, pluck, drone, FX…) |
 | **ANALOG** | Oscillateur + ADSR classique | 11 formes d'onde |
-| **SAMPLER** | Lecture d'échantillons PCM (pitché selon la note) | 2 samples embarqués (Kick, Snare) pour l'instant — chargement depuis la carte SD à venir |
+| **SAMPLER** | Lecture d'échantillons PCM | Kick, Snare et GB Capture expérimental |
+| **DRUM** | Percussions synthétiques Teensy | 6 programmes |
+| **GRANULAR** | Granulaire externe sur ESP32-S3 avec PSRAM | 8 presets |
+| **SPECTRAL** | Synthèse additive/spectrale externe sur WROOM-32D | 8 presets |
 
-Chaque piste peut utiliser n'importe lequel des 6, changé à tout moment depuis la page MOTEURS.
+Chaque piste peut sélectionner l'un des neuf moteurs. GRANULAR et SPECTRAL sont chacun une ressource physique unique du rack externe : une seule piste à la fois en possède le contrôle.
 
 ## 10. Sauvegarder / charger
 
@@ -144,11 +150,15 @@ Deux systèmes de sauvegarde distincts, tous deux sur la carte SD de l'écran :
 - **Patch** (page PATCH, ligne SLOT) : moteur + patch + filtre + ADSR + algo/feedback Dexed d'**une seule piste**, dans l'un des 8 emplacements. A maintenu + GAUCHE (charge) ou DROITE (sauve) sur la ligne SLOT ; ou touchez directement SLOT/SAVE/LOAD.
 - **Projet** (page PROJET, ou bouton SAUVER du tracker) : **tout le morceau** — patterns, chaînage song, tempo, gamme, et le moteur/patch/réglages de chaque piste — dans l'un des 4 emplacements.
 
+La page **PROJETS** affiche les quatre fichiers de la SD ESP32 sous forme de liste. **HAUT/BAS** choisit un projet, **A** le charge, **D** lance la sauvegarde (un deuxième appui confirme si le slot contient déjà un fichier), **B** ouvre SONG et **C** revient. Les deux grands boutons tactiles CHARGER/SAUVER font les mêmes actions ; toucher une ligne la sélectionne. Un message en bas confirme le résultat ou indique l'erreur.
+
 Les deux utilisent une écriture atomique (fichier temporaire puis renommage) : une coupure de courant en cours de sauvegarde ne peut pas corrompre le dernier fichier valide.
 
 ## 11. Page SONG
 
 Chaîner plusieurs patterns pour construire un morceau complet (intro / couplet / refrain...). Bascule entre boucle simple (comportement par défaut) et mode song ; une grille de 16 cases où chaque case pointe vers un pattern (0-7).
+
+Les pages SONG et PROJETS sont séparées pour que la grille ne recouvre plus les commandes de sauvegarde. Dans SONG, **HAUT/BAS** déplace la case choisie, **GAUCHE/DROITE** change son pattern, **A** bascule le mode, **D** règle la longueur, **B** ouvre PROJETS et **C** revient. Les cases, le mode, la longueur et le bouton PROJETS restent tactiles.
 
 ## 12. Page AUDIO (pads)
 
@@ -163,7 +173,7 @@ Deux façons d'y arriver, avec un comportement différent :
 
 ## 13. Jeux (Game Boy / Game Boy Color)
 
-Émulateur GB/GBC intégré, ROM lues depuis la carte SD de l'écran.
+La page JEUX et les cœurs GB/GBC sont **expérimentaux et non fonctionnels de bout en bout à ce jour**. Les éléments ci-dessous décrivent le comportement visé ou des briques présentes dans le code, pas une console validée.
 
 - Liste de ROM naviguable à la croix, **A** pour lancer.
 - En jeu : A/B = boutons Game Boy A/B, START/SELECT sur 2 des encodeurs, **C** quitte proprement (sauvegarde la RAM cartouche avant de fermer).

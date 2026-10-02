@@ -1,5 +1,7 @@
 #pragma once
 
+#include "sampler_math.h"
+
 // AudioPlaySampler : lecture d'un sample PCM 16 bits mono FIXE (flash
 // ou PSRAM -- les deux sont directement adressables sur cette
 // architecture, pas besoin de pgm_read_word comme sur AVR) avec suivi
@@ -9,7 +11,7 @@
 // mettre en route le sampleur"), voir docs/AZ2_SAMPLEUR.md.
 //
 // A INCLURE DEPUIS main.cpp, DANS le meme bloc "namespace { ... }" et
-// APRES la definition de midiNoteToFreq() -- cette classe l'utilise
+// APRES la definition de noteToFreq() -- cette classe l'utilise
 // directement (pas de re-declaration ici, evite de dupliquer la
 // formule).
 //
@@ -27,7 +29,7 @@ class AudioPlaySampler : public AudioStream {
   AudioPlaySampler() : AudioStream(0, nullptr) {}
 
   // sampleData/sampleLen : buffer PCM 16 bits mono 44.1kHz (flash
-  // PROGMEM OU PSRAM). rootNote : note MIDI a laquelle ce sample doit
+  // PROGMEM OU PSRAM). rootNote : note 0-127 a laquelle ce sample doit
   // jouer a sa vitesse d'origine (pas de resampling, step=1.0).
   void setSample(const int16_t *data, uint32_t len, uint8_t rootNote,
                  uint32_t sampleRate = 44100) {
@@ -44,8 +46,8 @@ class AudioPlaySampler : public AudioStream {
       return;
     }
     pos_ = 0.0f;
-    step_ = (static_cast<float>(sampleRate_) / 44100.0f) *
-            (midiNoteToFreq(note) / midiNoteToFreq(rootNote_));
+    step_ = az2_sampler_math::samplerPlaybackStep(
+        sampleRate_, 44100, noteToFreq(note), noteToFreq(rootNote_));
     amp_ = static_cast<float>(velocity) / 127.0f;
     playing_ = true;
   }
@@ -56,6 +58,19 @@ class AudioPlaySampler : public AudioStream {
   // pour la symetrie d'API avec les 5 autres moteurs (trackNoteOff()
   // cote appelant reste un seul chemin generique).
   void noteOff() {}
+
+  // Coupe IMMEDIATEMENT la lecture en cours (2026-09-19, audit de code
+  // -- meme categorie de risque que celui deja signale par l'audit des
+  // racks logiciels pour le rechargement PSRAM du GB Capture) : appele
+  // juste avant d'ecraser sampleData_/sampleLen_ (voir
+  // loadWavIntoPadSampler() cote main.cpp) pour eviter que update()
+  // continue de lire le buffer PENDANT qu'un nouveau fichier y est
+  // ecrit depuis la carte SD -- sans ca, un pad reassigne pendant
+  // qu'il joue encore pourrait lire un melange d'ancien et de nouveau
+  // contenu (glitch audio, pas un crash : sampleLen_ courant reste
+  // valide pour le buffer, meme taille). Distinct de noteOff()
+  // (silence volontaire, pas la fin naturelle du sample).
+  void stopNow() { playing_ = false; }
 
   virtual void update(void) {
     audio_block_t *block = allocate();
@@ -74,9 +89,9 @@ class AudioPlaySampler : public AudioStream {
         break;
       }
       const float frac = pos_ - static_cast<float>(idx);
-      const float s0 = static_cast<float>(sampleData_[idx]);
-      const float s1 = static_cast<float>(sampleData_[idx + 1]);
-      const float interpolated = s0 + (s1 - s0) * frac;
+      const float interpolated =
+          az2_sampler_math::samplerLinearInterpolate(
+              sampleData_[idx], sampleData_[idx + 1], frac);
       block->data[i] = static_cast<int16_t>(constrain(interpolated * amp_, -32768.0f, 32767.0f));
       pos_ += step_;
     }

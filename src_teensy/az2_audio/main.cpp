@@ -1,9 +1,9 @@
 #include <cstdint>
+#include <math.h>
 // AZ-2 - Moteur audio Teensy v1 : multi-voix + sequenceur 16 pas.
 //
-// Architecture reprise de MicroDexed-touch (voir
-// src_teensy/microdexed-touch/MicroDexed-touch/config.h: NUM_DEXED=4,
-// sequenceur multi-pistes), adaptee a l'echelle AZ-2 v0 -- voir
+// Architecture inspiree de MicroDexed-touch (source amont conservee dans
+// l'historique Git), adaptee a l'echelle AZ-2 v0 -- voir
 // docs/AZ2_PORTAGE_MICRODEXED_TOUCH.md, "Plan de portage" etape 5:
 //   - 4 voix "pistes" (une instance Dexed chacune) pour le sequenceur.
 //   - 1 voix "live" dediee au jeu au clavier (pads/page AUDIO ecran),
@@ -18,6 +18,7 @@
 #include <Arduino.h>
 #include <Audio.h>
 #include <AZ2_Protocol.h>
+#include "sequencer.h"
 #include <Encoder.h>
 #include <SD.h>
 #include <synth_dexed.h>
@@ -25,7 +26,7 @@
 #include <synth_braids.h>
 #include <malloc.h>  // mallinfo() -- voir checkHeap(), diagnostic 2026-09-18
 
-volatile uint32_t maxIsrTime = 0;
+volatile uint32_t maxIsrTime = 0;  // duree maximale d'un tick, en microsecondes
 
 
 // Rempli par le coeur Teensyduino au boot (startup.c) en sommant les 2
@@ -51,13 +52,20 @@ void checkHeapTest(uint32_t bytes);  // definie plus bas, utilisee par handleCom
 // 8 (au lieu de 4) depuis la demande du 2026-09-14 ("on peut augmenter
 // les pistes monter a 8") -- performance mesuree reelle avant/apres ce
 // changement, voir AZ2_FEUILLE_DE_ROUTE_MOTEUR.md.
-constexpr uint8_t kTrackCount = 8;
+constexpr uint8_t kTrackCount = az2::kTrackCount;
 // Taille du pool AudioMemory() partage -- constante nommee (2026-09-19,
 // corrige un affichage fige a "/200" dans reportCpuUsage() alors que le
 // pool reel etait deja passe a 700, voir setup()) : une seule source de
 // verite pour l'appel AudioMemory() ET le diagnostic MEM?.
 constexpr uint16_t kAudioMemoryBlocks = 700;
-constexpr uint8_t kStepCount = 16;
+constexpr uint8_t kStepCount = az2::kStepCount;
+constexpr uint8_t kPatternCount = az2::kPatternCount;
+using az2::kStepFxNone;
+using az2::kStepFxArp;
+using az2::kStepFxCut;
+using az2::kStepFxRetrig;
+using az2::kStepFxCrush;
+using az2::kStepFxDelay;
 constexpr uint8_t kNotesPerTrack = 2;  // polyphonie legere par piste (accords)
 constexpr uint8_t kLiveNotes = 4;      // polyphonie de la voix "jeu au clavier"
 
@@ -73,6 +81,13 @@ constexpr uint8_t kLiveNotes = 4;      // polyphonie de la voix "jeu au clavier"
 // ne fait tourner update() QUE sur les objets "actifs" (au moins une
 // connexion), donc un moteur non selectionne ne consomme AUCUN CPU (voir
 // AudioStream.cpp: software_isr() -> "if (p->active) p->update();").
+// Patch DEXED de depart quand une piste selectionne ce moteur (voir
+// setTrackEngine()) -- PAS 0 (BRASS 1), mesure au scope le 2026-09-22
+// comme le patch le plus agressif de toute la banque de 255 (voir le
+// commentaire de setTrackEngine()). 120 = "WATER GDN", le plus propre des
+// 8 patches testes ce jour-la.
+constexpr uint8_t kDexedDefaultPatch = 120;
+
 AudioSynthDexed trackDexedEngine[kTrackCount] = {
     AudioSynthDexed(kNotesPerTrack, SAMPLE_RATE), AudioSynthDexed(kNotesPerTrack, SAMPLE_RATE),
     AudioSynthDexed(kNotesPerTrack, SAMPLE_RATE), AudioSynthDexed(kNotesPerTrack, SAMPLE_RATE),
@@ -85,8 +100,13 @@ AudioSynthEPiano trackEPianoEngine[kTrackCount] = {
     AudioSynthEPiano(kNotesPerTrack), AudioSynthEPiano(kNotesPerTrack),
     AudioSynthEPiano(kNotesPerTrack), AudioSynthEPiano(kNotesPerTrack),
 };
-AudioSynthBraids trackBraidsEngine[kTrackCount];  // pas de parametre de constructeur
-AudioSynthKarplusStrong trackKarplusEngine[kTrackCount];  // corde pincee, pas de parametre non plus
+// Braids embarque de grosses tables d'etat par instance. Les placer en PSRAM
+// evite de consommer la RAM1 critique du Teensy (le DSP reste execute par le
+// CPU, seule la memoire d'etat est deplacee).
+EXTMEM AudioSynthBraids trackBraidsEngine[kTrackCount];  // pas de parametre de constructeur
+AudioSynthKarplusStrong trackKarplusEngine[kTrackCount];  // corde pincee; presets dans la chaine commune
+float trackKarplusVelocityScale[kTrackCount] = {1.0f, 1.0f, 1.0f, 1.0f,
+                                                1.0f, 1.0f, 1.0f, 1.0f};
 // Moteur "Analogique" = oscillateur continu (comme Braids) + enveloppe
 // ADSR standard -- 2 objets chaines en permanence par piste (le "moteur"
 // selectionnable, cote patchTrackIn[], c'est la SORTIE de l'enveloppe,
@@ -119,11 +139,11 @@ AudioSynthDexed liveVoice(kLiveNotes, SAMPLE_RATE);   // voix live (pads/ecran),
 
 constexpr float kBraidsActiveGain = 0.5f;  // meme niveau que les autres pistes
 
-float midiNoteToFreq(uint8_t note) {
+float noteToFreq(uint8_t note) {
   return 440.0f * powf(2.0f, (static_cast<float>(note) - 69.0f) / 12.0f);
 }
 
-// AZ2_ROLE_AUDIO -> az2_sampler.h utilise midiNoteToFreq() defini
+// AZ2_ROLE_AUDIO -> az2_sampler.h utilise noteToFreq() defini
 // juste au-dessus, doit donc etre inclus APRES (voir le commentaire
 // en tete de ce header). Les 2 tableaux PROGMEM de depart (Kick/Snare)
 // sont dans un header de donnees separe -- purement des tableaux
@@ -135,6 +155,7 @@ float midiNoteToFreq(uint8_t note) {
 // kEngineSampler dans AZ2_Protocol.h et applyTrackPatch() plus bas
 // pour le choix Kick/Snare par piste.
 AudioPlaySampler trackSamplerEngine[kTrackCount];
+AudioSynthSimpleDrum trackDrumEngine[kTrackCount];
 
 // AudioMixer4 n'a que 4 entrees : avec 8 pistes il en faut 2 (groupe A =
 // pistes 0-3, groupe B = pistes 4-7), combinees dans mixFinal avec la
@@ -148,13 +169,29 @@ AudioMixer4 mixFinal;    // groupe A + groupe B + voix live (entree 3 libre)
 // AudioEffectDelay pleine echelle coute ~350 Ko de RAM ; un seul sur le
 // bus master est largement suffisant et abordable, un par piste ne le
 // serait pas). mixMaster combine signal sec (0), reverb (1), delay (2)
-// et le son de l'emulateur GB (3, voir gbAudioQueue plus bas -- demande
+// et le son de l'emulateur GB (3, voir gbAudioSource plus bas -- demande
 // 2026-09-15, "il faut un emulateur complet classe ... pour que le DAC
 // le joue").
 AudioEffectFreeverb reverbUnit;
 AudioEffectDelay delayUnit;
 AudioMixer4 mixMaster;
 AudioOutputI2S i2sOut;
+#ifdef AZ2_EXTERNAL_RACK
+// AudioInputI2S partage BCLK/LRCLK avec AudioOutputI2S : le Teensy reste
+// maître, reçoit le flux agrégé S3 sur pin 8 et continue de sortir vers le
+// PCM5102A sur pin 7. Deux mixeurs préservent la stéréo du rack.
+AudioInputI2S rackAudioIn;
+AudioAnalyzePeak rackPeakL;
+AudioAnalyzePeak rackPeakR;
+AudioAnalyzePeak rackFinalPeakL;
+AudioAnalyzePeak rackFinalPeakR;
+AudioMixer4 mixOutputL;
+AudioMixer4 mixOutputR;
+// Diagnostic temporaire : coupe uniquement le retour audio du rack externe
+// pour isoler le bip parasite sans dessouder la liaison I2S.
+// Le retour I2S externe reste actif dans la version rack de production.
+constexpr bool kMuteExternalRackAudio = false;
+#endif
 
 // Son de l'emulateur Game Boy (ESP32 -> Teensy, voir AZ2_Protocol.h
 // "kGbAudioPacketMagic" et handleGbAudioPacket() plus bas) : ESP32
@@ -164,7 +201,89 @@ AudioOutputI2S i2sOut;
 // n'importe quel autre "moteur" par le bus d'effets maitre (reverb/
 // delay/volume s'appliquent donc dessus aussi si les potards sont
 // tournes).
-AudioPlayQueue gbAudioQueue;
+//
+// [2026-10-01] Source TIREE par l'ISR audio au lieu d'une AudioPlayQueue.
+// L'ancienne queue cachait 80 blocs (232 ms) en aval de l'anneau : son
+// remplissage reel etait illisible, l'asservissement estimait donc le stock
+// via millis(), estimation qui se decalait DEFINITIVEMENT au premier trou
+// (le temps passe a vide etait compte comme consomme). Resultat : latence
+// qui grimpe jusqu'a queue pleine, puis blocs ecrases sans le savoir
+// (playBuffer() NON_STALLING refusait le bloc, retour ignore) = clics.
+// Ici l'anneau EST le seul tampon : son remplissage est la vraie mesure.
+// Producteur unique = loop() (push), consommateur unique = update() (ISR) ;
+// indices 32 bits libres, chacun ecrit par un seul cote.
+class AudioGbRingSource : public AudioStream {
+ public:
+  // ~186 ms a 44,1 kHz : absorbe une rafale UART complete (tampon RX 2 Ko
+  // = ~8,7 paquets = ~6400 echantillons apres sur-echantillonnage).
+  static constexpr uint32_t kCapacity = 8192;  // puissance de 2
+  // Remplissage vise et seuil de (re)demarrage : ~46 ms.
+  static constexpr uint32_t kTargetFill = 2048;
+
+  AudioGbRingSource() : AudioStream(0, nullptr) {}
+
+  bool push(int16_t sample) {
+    const uint32_t h = head_;
+    if (h - tail_ >= kCapacity) return false;
+    buf_[h & (kCapacity - 1)] = sample;
+    __asm__ volatile("" ::: "memory");  // l'echantillon avant l'index
+    head_ = h + 1;
+    return true;
+  }
+
+  uint32_t fill() const { return head_ - tail_; }
+  uint32_t underruns() const { return underruns_; }
+
+  // Vide l'anneau et re-arme le pre-remplissage (PANIC, reprise de flux).
+  void reset() {
+    AudioNoInterrupts();
+    tail_ = head_;
+    started_ = false;
+    last_ = 0;
+    AudioInterrupts();
+  }
+
+  void update() override {
+    const uint32_t available = head_ - tail_;
+    if (!started_) {
+      if (available < kTargetFill) return;  // silence pendant le pre-remplissage
+      started_ = true;
+    }
+    audio_block_t *block = allocate();
+    if (block == nullptr) return;
+    if (available < AUDIO_BLOCK_SAMPLES) {
+      // Famine : fondu de la derniere valeur vers 0 plutot qu'un saut sec,
+      // puis re-armement du pre-remplissage (une reprise propre plutot qu'un
+      // clic a chaque bloc quand la source est plus lente que 44,1 kHz).
+      for (int i = 0; i < AUDIO_BLOCK_SAMPLES; ++i) {
+        block->data[i] = static_cast<int16_t>(
+            (static_cast<int32_t>(last_) * (AUDIO_BLOCK_SAMPLES - 1 - i)) / AUDIO_BLOCK_SAMPLES);
+      }
+      last_ = 0;
+      started_ = false;
+      ++underruns_;
+    } else {
+      uint32_t t = tail_;
+      for (int i = 0; i < AUDIO_BLOCK_SAMPLES; ++i) {
+        block->data[i] = buf_[t & (kCapacity - 1)];
+        ++t;
+      }
+      last_ = block->data[AUDIO_BLOCK_SAMPLES - 1];
+      tail_ = t;
+    }
+    transmit(block);
+    release(block);
+  }
+
+ private:
+  int16_t buf_[kCapacity] = {};
+  volatile uint32_t head_ = 0;  // ecrit par loop()
+  volatile uint32_t tail_ = 0;  // ecrit par update()
+  volatile bool started_ = false;
+  volatile uint32_t underruns_ = 0;
+  int16_t last_ = 0;
+};
+AudioGbRingSource gbAudioSource;
 
 // Oscilloscope (Teensy -> ESP32, voir AZ2_Protocol.h "kScopePacketMagic"
 // et updateScope() plus bas) -- demande 2026-09-15 ("une fenetre ou on
@@ -295,7 +414,26 @@ AudioConnection patchGroupB(mixTracksB, 0, mixFinal, 1);
 constexpr uint32_t kPadSampleCapacity = 48000U * 2U;
 EXTMEM int16_t padSampleBuffer[az2::kPadCount][kPadSampleCapacity];
 AudioPlaySampler padSampler[az2::kPadCount];
+char padSamplePathLive[az2::kPadCount][64] = {};
 bool padSamplerLoaded[az2::kPadCount] = {};
+
+// Meme principe pour le moteur SAMPLER d'une PISTE (2026-09-23, "fusion"
+// demandee entre la page PATCH et le navigateur SD deja utilise par les
+// pads) : chaque piste a son propre buffer PSRAM, rempli par
+// TRACKSAMPLE:<piste>:<chemin> (voir loadWavIntoTrackSampler() plus bas),
+// joue via trackSamplerEngine[] des que trackPatch[piste] ==
+// az2::kSamplerCustomPatch (voir applyTrackPatch()). Meme capacite que
+// les pads : 8 x 192 Ko = ~1,5 Mo de plus, confirme largement dans les 16
+// Mo de PSRAM aux cotes des 16 pads (~3 Mo) et du reste.
+EXTMEM int16_t trackSampleBuffer[kTrackCount][kPadSampleCapacity];
+char trackSamplePathLive[kTrackCount][64] = {};
+bool trackSampleLoaded[kTrackCount] = {};
+// AudioPlaySampler (az2_sampler.h, classe maison) n'expose pas d'accesseur
+// pour relire la longueur d'un echantillon deja charge -- retenue ici pour
+// pouvoir rebrancher trackSampleBuffer[] sans recharger le fichier quand
+// la piste revient sur le patch CUSTOM (voir applyTrackPatch()).
+uint32_t trackSampleLen[kTrackCount] = {};
+uint32_t trackSampleRate[kTrackCount] = {};
 
 // Meme principe de mixage a etages que les pistes (AudioMixer4 = 4
 // entrees max) : 4 groupes de 4 pads -> 1 bus pads -> combine avec
@@ -333,28 +471,27 @@ AudioConnection patchLiveIn(mixLiveAndPads, 0, mixFinal, 2);
 // de noteOff() explicite) declenche depuis advanceTick() a chaque
 // debut de temps (currentStep % stepsPerBeat == 0), accentue (plus
 // aigu) sur le premier temps du pattern.
-AudioSynthWaveform metroClick;
-AudioEffectEnvelope metroEnv;
-AudioConnection patchMetroEnv(metroClick, 0, metroEnv, 0);
-AudioConnection patchMetroOut(metroEnv, 0, mixFinal, 3);
-bool metronomeEnabled = false;
-
-void triggerMetronome(bool accent) {
-  if (!metronomeEnabled) {
-    return;
-  }
-  metroClick.frequency(accent ? 1800.0f : 1200.0f);
-  metroClick.amplitude(0.5f);
-  metroEnv.noteOn();
-}
 AudioConnection patchFinalToMaster(mixFinal, 0, mixMaster, 0);  // signal sec
 AudioConnection patchFinalToReverb(mixFinal, 0, reverbUnit, 0);
 AudioConnection patchReverbToMaster(reverbUnit, 0, mixMaster, 1);
 AudioConnection patchFinalToDelay(mixFinal, 0, delayUnit, 0);
 AudioConnection patchDelayToMaster(delayUnit, 0, mixMaster, 2);
-AudioConnection patchGbAudioToMaster(gbAudioQueue, 0, mixMaster, 3);
+AudioConnection patchGbAudioToMaster(gbAudioSource, 0, mixMaster, 3);
+#ifdef AZ2_EXTERNAL_RACK
+AudioConnection patchMasterToOutputL(mixMaster, 0, mixOutputL, 0);
+AudioConnection patchMasterToOutputR(mixMaster, 0, mixOutputR, 0);
+AudioConnection patchRackToOutputL(rackAudioIn, 0, mixOutputL, 1);
+AudioConnection patchRackToOutputR(rackAudioIn, 1, mixOutputR, 1);
+AudioConnection patchRackPeakL(rackAudioIn, 0, rackPeakL, 0);
+AudioConnection patchRackPeakR(rackAudioIn, 1, rackPeakR, 0);
+AudioConnection patchRackFinalPeakL(mixOutputL, 0, rackFinalPeakL, 0);
+AudioConnection patchRackFinalPeakR(mixOutputR, 0, rackFinalPeakR, 0);
+AudioConnection patchOutL(mixOutputL, 0, i2sOut, 0);
+AudioConnection patchOutR(mixOutputR, 0, i2sOut, 1);
+#else
 AudioConnection patchOutL(mixMaster, 0, i2sOut, 0);
 AudioConnection patchOutR(mixMaster, 0, i2sOut, 1);
+#endif
 
 // Piste -> quel AudioMixer4 de groupe, et quel canal (0-3) dedans.
 AudioMixer4 &trackGroupMixer(uint8_t track) {
@@ -387,6 +524,79 @@ uint8_t trackEngine[kTrackCount] = {
     az2::kEngineAnalog, az2::kEngineAnalog, az2::kEngineEPiano, az2::kEngineBraids,
 };
 uint8_t trackPatch[kTrackCount] = {0, 0, 0, 0, 0, 0, 0, 0};
+
+// Propriete exclusive des moteurs de rack externes (audit 2026-09-22,
+// "modele par piste sans identifiant de piste dans le protocole rack") :
+// il n'existe qu'UNE seule instance physique GRANULAR et UNE seule
+// SPECTRAL sur le rack externe (voir az2::kRackEngineCount), alors que
+// n'importe quelle piste du sequenceur peut selectionner ces moteurs
+// (trackEngine[track] == kEngineGranular/kEngineSpectral). Sans ce
+// verrou, deux pistes sur le meme moteur rack pilotaient la MEME voix
+// physique : un noteOff() de la piste A coupait une note tenue par la
+// piste B, et un changement de patch depuis A changeait aussi le son
+// entendu par B. rackOwnerTrack[slot] retient quelle piste a le droit
+// d'envoyer RACK_NOTE_ON/OFF/PATCH pour ce moteur ; -1 = libre. La
+// piste qui SELECTIONNE le moteur (setTrackEngine()) devient
+// proprietaire immediatement (vol du moteur autorise, comme sur un
+// synthe externe partage entre plusieurs sequenceurs) ; toute AUTRE
+// piste encore configuree sur ce moteur devient silencieuse dessus
+// (trackNoteOn/trackNoteOff/applyTrackPatch verifient la propriete
+// avant d'emettre sur Serial7) plutot que de continuer a interferer.
+int8_t rackOwnerTrack[az2::kRackEngineCount] = {-1, -1};
+
+// -1 si engine n'est pas un moteur de rack externe (GRANULAR/SPECTRAL).
+int8_t rackEngineSlotFor(uint8_t engine) {
+  if (engine == az2::kEngineGranular) return static_cast<int8_t>(az2::kRackEngineGranular);
+  if (engine == az2::kEngineSpectral) return static_cast<int8_t>(az2::kRackEngineSpectral);
+  return -1;
+}
+
+// Libere toute propriete de rack tenue par cette piste (appele quand
+// elle quitte GRANULAR/SPECTRAL pour un autre moteur, voir
+// setTrackEngine()) -- evite un "vol" fantome plus tard si une autre
+// piste reclame ce meme moteur alors que "track" ne l'utilise plus.
+void rackReleaseOwnership(uint8_t track) {
+  for (uint8_t slot = 0; slot < az2::kRackEngineCount; ++slot) {
+    if (rackOwnerTrack[slot] == static_cast<int8_t>(track)) {
+      rackOwnerTrack[slot] = -1;
+    }
+  }
+}
+
+// Rend "track" proprietaire du moteur rack correspondant a "engine" (no-op
+// si engine n'est pas GRANULAR/SPECTRAL, ou si "track" l'est deja). Si un
+// AUTRE piste en etait proprietaire, on lui vole le moteur : sa note en
+// cours (si elle existe) ne recevra plus jamais son propre RACK_NOTE_OFF
+// une fois la propriete transferee (voir trackNoteOff()), donc on coupe
+// explicitement la voix ici pour ne pas laisser un son bloque indefiniment.
+void rackClaimOwnership(uint8_t track, uint8_t engine) {
+  const int8_t slot = rackEngineSlotFor(engine);
+  if (slot < 0 || rackOwnerTrack[slot] == static_cast<int8_t>(track)) return;
+#ifdef AZ2_EXTERNAL_RACK
+  if (rackOwnerTrack[slot] >= 0) {
+    if (engine == az2::kEngineGranular) Serial7.println("RACK_NOTE_OFF:GRANULAR:0");
+    else if (engine == az2::kEngineSpectral) Serial7.println("RACK_NOTE_OFF:SPECTRAL:0");
+  }
+#endif
+  rackOwnerTrack[slot] = static_cast<int8_t>(track);
+  // L'ecran ignore tout ce mecanisme de propriete (il n'a pas acces a
+  // rackOwnerTrack[], qui n'existe que cote Teensy) : sans cette annonce,
+  // sendPatchExtra()/patchApplyDelta() cote ESP32 continueraient d'envoyer
+  // RACK_PARAM: pour la piste qui vient de perdre le moteur, en direct
+  // (ce chemin-la ne passe PAS par trackNoteOn/trackNoteOff/
+  // applyTrackPatch ci-dessus -- c'est un forward brut vers Serial7, voir
+  // le bloc RACK_PARAM:/RACK_PATCH: plus bas). Diffuse sur Serial ET
+  // Serial1 comme announceStatus()/relayLine() -- l'ecran filtrera cote
+  // handleTeensyLine().
+  Serial.printf("RACK_OWNER:%s:%d\n", az2::kRackEngineNames[slot], track);
+  Serial1.printf("RACK_OWNER:%s:%d\n", az2::kRackEngineNames[slot], track);
+}
+
+// Le sampler de piste est one-shot par defaut (Kick/Snare/GB Capture).
+// Quand le mode gate est active, un note-off coupe immediatement le sample
+// et l'enveloppe partagee. Le mode one-shot laisse le sample finir sans que
+// l'ADSR commune ne le tronque.
+bool trackSamplerGate[kTrackCount] = {};
 
 // Volume/mute/solo par piste (VOL:/MUTE:/SOLO:, priorites #1 et #4 de
 // la liste indispensable, AZ2_BENCHMARK_CONCURRENCE.md). ATTENTION
@@ -454,6 +664,7 @@ void applyGroupGainNow(uint8_t track) {
 // (AZ2_Protocol.h) -- l'index doit correspondre, les deux fichiers
 // DOIVENT rester synchronises a la main.
 #include "az2_dexed_bank_data.h"
+#include "az2_epiano_bank_data.h"
 
 // Les 43 formes UTILISABLES de Synth_Braids (voir settings.h:
 // MacroOscillatorShape -- WAVETABLES/QUESTION_MARK/YOUR_ALGO restent
@@ -492,10 +703,126 @@ const short kAnalogWaveformValues[11] = {
     WAVEFORM_BANDLIMIT_SAWTOOTH, WAVEFORM_BANDLIMIT_SQUARE, WAVEFORM_BANDLIMIT_PULSE,
 };
 
+// Presets du moteur DRUM (meme ordre que kDrumPatchNames). Les valeurs sont
+// volontairement simples et peu nombreuses : l'objet natif gere deja
+// l'enveloppe de percussion et reste tres leger en RAM/CPU.
+const float kDrumFrequencyValues[az2::kDrumPatchCount] = {55.0f, 180.0f, 110.0f, 220.0f, 1400.0f, 880.0f};
+const int32_t kDrumLengthValues[az2::kDrumPatchCount] = {420, 260, 360, 180, 90, 140};
+const float kDrumPitchModValues[az2::kDrumPatchCount] = {0.95f, 0.35f, 0.55f, 0.25f, 0.05f, 0.8f};
+const float kDrumSecondMixValues[az2::kDrumPatchCount] = {0.0f, 0.8f, 0.15f, 0.9f, 0.25f, 0.65f};
+
+// Presets KARPLUS. AudioSynthKarplusStrong fixe sa ligne de retard et son
+// amortissement en interne ; on exploite donc les elements deja presents
+// dans chaque piste pour donner une vraie identite a chaque patch :
+// excitation (velocity), enveloppe et filtre resonant.
+struct KarplusPatchPreset {
+  uint8_t attack;
+  uint8_t decay;
+  uint8_t sustain;
+  uint8_t release;
+  uint8_t cutoff;
+  uint8_t resonance;
+  float velocityScale;
+};
+
+const KarplusPatchPreset kKarplusCorePresets[8] = {
+    {2, 34, 92, 12, 104, 18, 0.92f},  // Corde pincee
+    {8, 66, 78, 28, 82, 8, 0.68f},   // Nylon doux
+    {1, 20, 100, 8, 122, 24, 1.00f}, // Acier brillant
+    {2, 42, 62, 14, 68, 12, 0.74f},  // Guitare mutee
+    {0, 28, 86, 20, 114, 5, 0.58f},  // Harpe courte
+    {4, 92, 72, 34, 48, 7, 0.96f},   // Basse bois
+    {1, 12, 100, 5, 116, 30, 1.00f}, // Pluck vintage
+    {14, 127, 100, 68, 58, 18, 0.52f}, // Drone resonant
+};
+
+// Bases des 9 banques de 10 variations (patches 8..97). Les deux derniers
+// patches sont des FX et utilisent la dixieme base. La variation dans chaque
+// banque est appliquee de maniere deterministe afin de garder le firmware
+// leger tout en donnant 100 presets distincts au navigateur.
+const KarplusPatchPreset kKarplusFamilyPresets[10] = {
+    {5, 58, 82, 24, 86, 8, 0.68f},  // NYLON
+    {1, 28, 96, 10, 120, 22, 0.96f}, // ACIER
+    {2, 36, 58, 12, 64, 10, 0.72f}, // MUTEE
+    {0, 24, 88, 18, 110, 5, 0.56f}, // HARPE
+    {4, 90, 74, 34, 46, 7, 0.94f},  // BASSE
+    {1, 16, 100, 6, 114, 26, 0.98f}, // PLUCK
+    {18, 110, 92, 58, 72, 14, 0.58f}, // BOWED
+    {0, 18, 86, 22, 126, 34, 0.62f}, // CLOCHE
+    {22, 127, 100, 82, 54, 16, 0.48f}, // DRONE
+    {0, 8, 100, 4, 127, 42, 1.00f}, // FX
+};
+
+uint8_t clampKarplusByte(int value) {
+  return static_cast<uint8_t>(value < 0 ? 0 : value > 127 ? 127 : value);
+}
+
+KarplusPatchPreset karplusPatchPreset(uint8_t patch) {
+  if (patch < 8) return kKarplusCorePresets[patch];
+
+  const uint8_t family = static_cast<uint8_t>((patch - 8) / 10);
+  const uint8_t variation = static_cast<uint8_t>((patch - 8) % 10);
+  KarplusPatchPreset preset = kKarplusFamilyPresets[family];
+  const int centered = static_cast<int>(variation) - 4;
+
+  preset.attack = clampKarplusByte(static_cast<int>(preset.attack) + centered * 2);
+  preset.decay = clampKarplusByte(static_cast<int>(preset.decay) + centered * 5);
+  preset.sustain = clampKarplusByte(static_cast<int>(preset.sustain) + centered * 3);
+  preset.release = clampKarplusByte(static_cast<int>(preset.release) + centered * 4);
+  preset.cutoff = clampKarplusByte(static_cast<int>(preset.cutoff) + centered * 5);
+  preset.resonance = clampKarplusByte(static_cast<int>(preset.resonance) + centered * 3);
+  preset.velocityScale += static_cast<float>(centered) * 0.025f;
+  if (preset.velocityScale < 0.25f) preset.velocityScale = 0.25f;
+  if (preset.velocityScale > 1.0f) preset.velocityScale = 1.0f;
+  return preset;
+}
+
+float karplusEnvelopeMs(uint8_t value) {
+  const float normalized = static_cast<float>(value) / 127.0f;
+  return normalized * normalized * 2000.0f;
+}
+
+void applyKarplusPatch(uint8_t track, uint8_t patch) {
+  const KarplusPatchPreset preset = karplusPatchPreset(patch % az2::kKarplusPatchCount);
+  trackKarplusVelocityScale[track] = preset.velocityScale;
+
+  trackAnalogEnv[track].attack(karplusEnvelopeMs(preset.attack));
+  trackAnalogEnv[track].decay(karplusEnvelopeMs(preset.decay));
+  trackAnalogEnv[track].sustain(static_cast<float>(preset.sustain) / 127.0f);
+  trackAnalogEnv[track].release(karplusEnvelopeMs(preset.release));
+
+  const float ratio = static_cast<float>(preset.cutoff) / 127.0f;
+  const float frequency = 20.0f * powf(15000.0f / 20.0f, ratio);
+  trackFilter[track].frequency(frequency);
+  trackFilter[track].resonance(
+      0.7f + (static_cast<float>(preset.resonance) / 127.0f) * (5.0f - 0.7f));
+}
+
 // Charge le patch courant (trackPatch[track]) dans le moteur actuellement
 // actif de la piste (trackEngine[track]). Partagee avec liveVoice (voir
 // setup()) qui n'a pas de "piste" mais profite des memes patchs nommes.
 void relayLine(const String &line);  // definie plus bas, voir son commentaire
+
+// [2026-09-26] 105 patches (5 d'origine mdaEPiano + 100 variations
+// generees, voir az2_epiano_bank_data.h) -- setProgram() du moteur vendored
+// ne connait que ses 5 presets internes, donc on applique directement les
+// 12 parametres continus via les setters dedies, meme principe que
+// loadDexedPatch() ci-dessous pour DEXED.
+void loadEPianoPatch(AudioSynthEPiano &engine, uint8_t patch) {
+  const float *p = kEPianoFullBank[patch % (sizeof(kEPianoFullBank) / sizeof(kEPianoFullBank[0]))].p;
+  engine.setDecay(p[0]);
+  engine.setRelease(p[1]);
+  engine.setHardness(p[2]);
+  engine.setTreble(p[3]);
+  engine.setPanTremolo(p[4]);
+  engine.setPanLFO(p[5]);
+  engine.setVelocitySense(p[6]);
+  engine.setStereo(p[7]);
+  engine.setTune(p[8]);
+  engine.setDetune(p[9]);
+  engine.setOverdrive(p[10]);
+  engine.setVolume(p[11]);
+}
 
 void loadDexedPatch(AudioSynthDexed &engine, uint8_t patch) {
   uint8_t packed[128];
@@ -565,6 +892,8 @@ bool readWavPcm16Mono(const char *path, int16_t *dst, uint32_t capacity, const c
   if (!f) {
     Serial.print(errPrefix);
     Serial.println(":OPEN_ERROR");
+    Serial1.print(errPrefix);
+    Serial1.println(":OPEN_ERROR");
     return false;
   }
   uint8_t riffHeader[12];
@@ -573,6 +902,8 @@ bool readWavPcm16Mono(const char *path, int16_t *dst, uint32_t capacity, const c
     f.close();
     Serial.print(errPrefix);
     Serial.println(":WAV_UNSUPPORTED");
+    Serial1.print(errPrefix);
+    Serial1.println(":WAV_UNSUPPORTED");
     return false;
   }
 
@@ -604,6 +935,8 @@ bool readWavPcm16Mono(const char *path, int16_t *dst, uint32_t capacity, const c
         f.close();
         Serial.print(errPrefix);
         Serial.println(":WAV_UNSUPPORTED");
+        Serial1.print(errPrefix);
+        Serial1.println(":WAV_UNSUPPORTED");
         return false;
       }
       formatTag = wavLe16(fmtBuf);
@@ -627,6 +960,8 @@ bool readWavPcm16Mono(const char *path, int16_t *dst, uint32_t capacity, const c
     f.close();
     Serial.print(errPrefix);
     Serial.println(":WAV_UNSUPPORTED");
+    Serial1.print(errPrefix);
+    Serial1.println(":WAV_UNSUPPORTED");
     return false;
   }
 
@@ -636,6 +971,8 @@ bool readWavPcm16Mono(const char *path, int16_t *dst, uint32_t capacity, const c
     f.close();
     Serial.print(errPrefix);
     Serial.println(":WAV_SIZE_ERROR");
+    Serial1.print(errPrefix);
+    Serial1.println(":WAV_SIZE_ERROR");
     return false;
   }
 
@@ -649,6 +986,8 @@ bool readWavPcm16Mono(const char *path, int16_t *dst, uint32_t capacity, const c
       f.close();
       Serial.print(errPrefix);
       Serial.println(":READ_ERROR");
+      Serial1.print(errPrefix);
+      Serial1.println(":READ_ERROR");
       return false;
     }
     offset += got;
@@ -661,6 +1000,21 @@ bool readWavPcm16Mono(const char *path, int16_t *dst, uint32_t capacity, const c
 }
 
 bool loadCapturedWavIntoSampler(const char *path) {
+  // Le buffer GB Capture est partage par toutes les pistes qui utilisent
+  // SAMPLER/GB Capture. Il ne doit jamais etre reecrit pendant que l'ISR
+  // audio le lit. Contrairement aux pads, ces lecteurs sont multiples : on
+  // les arrête donc tous avant la lecture SD. readWavPcm16Mono() est bloquant
+  // et loop() ne peut pas redéclencher de note avant la fin du chargement.
+  AudioNoInterrupts();
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    if (trackEngine[t] == az2::kEngineSampler &&
+        trackPatch[t] == az2::kSamplerGbCapturePatch) {
+      trackSamplerEngine[t].stopNow();
+      trackAnalogEnv[t].noteOff();
+    }
+  }
+  AudioInterrupts();
+
   uint32_t sampleCount = 0;
   uint32_t sampleRate = 0;
   if (!readWavPcm16Mono(path, gbCapturedSampleBuffer, kGbCapturedSampleCapacity, "SAMPLER:GB_CAPTURE", sampleCount,
@@ -707,6 +1061,20 @@ bool loadWavIntoPadSampler(uint8_t pad, const char *path) {
   if (pad >= az2::kPadCount) {
     return false;
   }
+  // Coupe la lecture en cours AVANT d'ecraser le buffer (2026-09-19,
+  // audit de code -- meme categorie de risque que celle deja signalee
+  // par l'audit des racks logiciels pour le rechargement PSRAM du GB
+  // Capture) : reassigner un pad pendant qu'il joue encore ne doit pas
+  // laisser update() lire un melange d'ancien/nouveau contenu au
+  // milieu de l'ecriture SD (qui peut prendre plusieurs millisecondes
+  // pour un fichier de pres de 2s).
+  // stopNow() seul peut courir avec update() deja en cours. La section
+  // critique attend la fin de cette mise a jour puis interdit la
+  // suivante pendant le changement d'etat. La lecture SD, longue,
+  // s'effectue ensuite avec les interruptions audio retablies.
+  AudioNoInterrupts();
+  padSampler[pad].stopNow();
+  AudioInterrupts();
   char errPrefix[20];
   snprintf(errPrefix, sizeof(errPrefix), "SAMPLER:PAD:%d", pad);
   uint32_t sampleCount = 0;
@@ -719,8 +1087,11 @@ bool loadWavIntoPadSampler(uint8_t pad, const char *path) {
   // bug evite au moment d'ecrire ce code : la bibliotheque Azothwave
   // fraichement rangee est en 24kHz, pas 44.1kHz -- sans ce parametre
   // explicite, chaque hit aurait joue ~1.84x trop vite/trop aigu.
+  AudioNoInterrupts();
   padSampler[pad].setSample(padSampleBuffer[pad], sampleCount, 60, sampleRate);
+  AudioInterrupts();
   padSamplerLoaded[pad] = true;
+  snprintf(padSamplePathLive[pad], sizeof(padSamplePathLive[pad]), "%s", path);
   Serial.print("PADSAMPLE:");
   Serial.print(pad);
   Serial.print(":READY:path=");
@@ -730,6 +1101,331 @@ bool loadWavIntoPadSampler(uint8_t pad, const char *path) {
   Serial1.print(":READY:path=");
   Serial1.println(path);
   return true;
+}
+
+// Charge un WAV (carte SD du Teensy) dans le buffer PSRAM DEDIE de la
+// piste `track` pour le moteur SAMPLER (2026-09-23, "fusion" demandee
+// entre la page PATCH et le navigateur SD deja utilise par les pads --
+// voir trackSampleBuffer[] plus haut). Meme prudence stopNow()/section
+// critique que loadWavIntoPadSampler() ci-dessus, meme raison (l'ecriture
+// SD peut prendre plusieurs millisecondes, ne doit jamais chevaucher
+// update()). Bascule aussi automatiquement la piste sur le patch CUSTOM
+// une fois le chargement reussi : on vient de choisir explicitement ce
+// fichier depuis l'ecran, la piste doit jouer avec tout de suite, pas
+// rester sur son ancien patch jusqu'a un geste supplementaire.
+bool loadWavIntoTrackSampler(uint8_t track, const char *path) {
+  if (track >= kTrackCount) {
+    return false;
+  }
+  AudioNoInterrupts();
+  trackSamplerEngine[track].stopNow();
+  AudioInterrupts();
+  char errPrefix[24];
+  snprintf(errPrefix, sizeof(errPrefix), "SAMPLER:TRACK:%d", track);
+  uint32_t sampleCount = 0;
+  uint32_t sampleRate = 0;
+  if (!readWavPcm16Mono(path, trackSampleBuffer[track], kPadSampleCapacity, errPrefix, sampleCount, sampleRate)) {
+    trackSampleLoaded[track] = false;
+    return false;
+  }
+  // sampleRate REEL du fichier, meme piege deja documente pour les pads
+  // ci-dessus (une bibliotheque en 24kHz jouerait ~1,84x trop vite/trop
+  // aigu avec le defaut 44100 de setSample()).
+  AudioNoInterrupts();
+  trackSamplerEngine[track].setSample(trackSampleBuffer[track], sampleCount, 60, sampleRate);
+  AudioInterrupts();
+  trackSampleLoaded[track] = true;
+  trackSampleLen[track] = sampleCount;
+  trackSampleRate[track] = sampleRate;
+  snprintf(trackSamplePathLive[track], sizeof(trackSamplePathLive[track]), "%s", path);
+  trackPatch[track] = az2::kSamplerCustomPatch;
+  Serial.print("TRACKSAMPLE:");
+  Serial.print(track);
+  Serial.print(":READY:path=");
+  Serial.println(path);
+  Serial1.print("TRACKSAMPLE:");
+  Serial1.print(track);
+  Serial1.print(":READY:path=");
+  Serial1.println(path);
+  // Previens l'ecran du nouveau patch actif -- meme raison/meme geste que
+  // handleEngineCommand() apres un changement de moteur : sans ca l'ecran
+  // resterait affiche sur l'ancien patch jusqu'a un changement manuel.
+  az2::printPatchSelect(Serial, track, az2::kSamplerCustomPatch);
+  az2::printPatchSelect(Serial1, track, az2::kSamplerCustomPatch);
+  return true;
+}
+
+#ifdef AZ2_EXTERNAL_RACK
+uint32_t rackSampleCrc32Byte(uint32_t crc, uint8_t value) {
+  crc ^= value;
+  for (uint8_t bit = 0; bit < 8; ++bit)
+    crc = (crc >> 1) ^ (0xEDB88320U & (0U - (crc & 1U)));
+  return crc;
+}
+
+enum class RackSampleTransferPhase : uint8_t { Idle, CrcScan, Header, Data };
+
+struct RackSampleTransfer {
+  File file;
+  RackSampleTransferPhase phase = RackSampleTransferPhase::Idle;
+  char path[96] = {};
+  char header[80] = {};
+  uint32_t dataPosition = 0;
+  uint32_t dataBytes = 0;
+  uint32_t rate = 0;
+  uint32_t processed = 0;
+  uint32_t crc = 0xFFFFFFFFU;
+  uint32_t nextProgress = 10;
+  size_t headerLength = 0;
+  size_t headerSent = 0;
+};
+
+RackSampleTransfer rackSampleTransfer;
+String rackReplyBuffer;
+bool rackAutoLoadPending = false;
+constexpr const char *kGranularStartupSample = "/samples/BASS/Bass_26.wav";
+
+void finishGranularSampleTransfer(const char *error = nullptr) {
+  if (rackSampleTransfer.file) rackSampleTransfer.file.close();
+  if (error) {
+    Serial.print("GRANULAR_SAMPLE:ERROR:");
+    Serial.println(error);
+    Serial1.print("GRANULAR_SAMPLE:ERROR:");
+    Serial1.println(error);
+  }
+  rackSampleTransfer.phase = RackSampleTransferPhase::Idle;
+}
+
+bool startWavToGranular(const char *path) {
+  if (strncmp(path, "/samples/", 9) != 0 || strstr(path, "..") != nullptr) {
+    Serial.println("GRANULAR_SAMPLE:ERROR:PATH");
+    Serial1.println("GRANULAR_SAMPLE:ERROR:PATH");
+    return false;
+  }
+  if (rackSampleTransfer.phase != RackSampleTransferPhase::Idle) {
+    finishGranularSampleTransfer("RESTARTED");
+  }
+  File &f = rackSampleTransfer.file;
+  f = SD.open(path);
+  if (!f) {
+    Serial.println("GRANULAR_SAMPLE:ERROR:OPEN");
+    Serial1.println("GRANULAR_SAMPLE:ERROR:OPEN");
+    return false;
+  }
+  uint8_t riff[12];
+  if (f.read(riff, sizeof(riff)) != sizeof(riff) || memcmp(riff, "RIFF", 4) || memcmp(riff + 8, "WAVE", 4)) {
+    f.close();
+    Serial.println("GRANULAR_SAMPLE:ERROR:WAV");
+    Serial1.println("GRANULAR_SAMPLE:ERROR:WAV");
+    return false;
+  }
+  bool haveFmt = false, haveData = false;
+  uint16_t format = 0, channels = 0, bits = 0;
+  uint32_t rate = 0, dataBytes = 0, dataPosition = 0;
+  while (!haveData) {
+    uint8_t chunk[8];
+    if (f.read(chunk, sizeof(chunk)) != sizeof(chunk)) break;
+    const uint32_t size = wavLe32(chunk + 4);
+    if (memcmp(chunk, "fmt ", 4) == 0) {
+      uint8_t fmt[16];
+      if (size < 16 || f.read(fmt, sizeof(fmt)) != sizeof(fmt)) break;
+      format = wavLe16(fmt);
+      channels = wavLe16(fmt + 2);
+      rate = wavLe32(fmt + 4);
+      bits = wavLe16(fmt + 14);
+      haveFmt = true;
+      if (size > 16) f.seek(f.position() + size - 16);
+    } else if (memcmp(chunk, "data", 4) == 0) {
+      dataBytes = size;
+      dataPosition = f.position();
+      haveData = true;
+    } else {
+      f.seek(f.position() + size + (size & 1U));
+    }
+  }
+  constexpr uint32_t kRackBankBytes = 5U * 1024U * 1024U / 2U;
+  if (!haveFmt || !haveData || format != 1 || channels != 1 || bits != 16 ||
+      rate < 8000 || rate > 48000 || dataBytes < 4 || dataBytes > kRackBankBytes ||
+      dataPosition + dataBytes > f.size()) {
+    f.close();
+    Serial.println("GRANULAR_SAMPLE:ERROR:FORMAT_OR_SIZE");
+    Serial1.println("GRANULAR_SAMPLE:ERROR:FORMAT_OR_SIZE");
+    return false;
+  }
+  snprintf(rackSampleTransfer.path, sizeof(rackSampleTransfer.path), "%s", path);
+  rackSampleTransfer.dataPosition = dataPosition;
+  rackSampleTransfer.dataBytes = dataBytes;
+  rackSampleTransfer.rate = rate;
+  rackSampleTransfer.processed = 0;
+  rackSampleTransfer.crc = 0xFFFFFFFFU;
+  rackSampleTransfer.nextProgress = 10;
+  rackSampleTransfer.headerLength = 0;
+  rackSampleTransfer.headerSent = 0;
+  f.seek(dataPosition);
+  rackSampleTransfer.phase = RackSampleTransferPhase::CrcScan;
+  Serial.printf("GRANULAR_SAMPLE:QUEUED:path=%s:bytes=%lu:rate=%lu\n", path,
+                static_cast<unsigned long>(dataBytes), static_cast<unsigned long>(rate));
+  Serial1.printf("GRANULAR_SAMPLE:QUEUED:path=%s:bytes=%lu:rate=%lu\n", path,
+                 static_cast<unsigned long>(dataBytes), static_cast<unsigned long>(rate));
+  return true;
+}
+
+void serviceGranularSampleTransfer() {
+  auto &xfer = rackSampleTransfer;
+  if (xfer.phase == RackSampleTransferPhase::Idle) return;
+
+  // Une seule petite lecture SD par loop : l'audio, le GB et l'UI gardent la main.
+  uint8_t buffer[512];
+  if (xfer.phase == RackSampleTransferPhase::CrcScan) {
+    const uint32_t remaining = xfer.dataBytes - xfer.processed;
+    const size_t count = min(static_cast<uint32_t>(sizeof(buffer)), remaining);
+    if (xfer.file.read(buffer, count) != count) {
+      finishGranularSampleTransfer("READ");
+      return;
+    }
+    for (size_t i = 0; i < count; ++i) xfer.crc = rackSampleCrc32Byte(xfer.crc, buffer[i]);
+    xfer.processed += count;
+    if (xfer.processed == xfer.dataBytes) {
+      xfer.crc ^= 0xFFFFFFFFU;
+      if (!xfer.file.seek(xfer.dataPosition)) {
+        finishGranularSampleTransfer("SEEK");
+        return;
+      }
+      xfer.processed = 0;
+      xfer.headerLength = snprintf(
+          xfer.header, sizeof(xfer.header), "RACK_SAMPLE_BEGIN:%lu:%lu:%08lX\n",
+          static_cast<unsigned long>(xfer.dataBytes / 2U),
+          static_cast<unsigned long>(xfer.rate), static_cast<unsigned long>(xfer.crc));
+      xfer.phase = RackSampleTransferPhase::Header;
+    }
+    return;
+  }
+
+  const int writable = Serial7.availableForWrite();
+  if (writable <= 0) return;
+  if (xfer.phase == RackSampleTransferPhase::Header) {
+    const size_t count = min(static_cast<size_t>(writable), xfer.headerLength - xfer.headerSent);
+    xfer.headerSent += Serial7.write(
+        reinterpret_cast<const uint8_t *>(xfer.header + xfer.headerSent), count);
+    if (xfer.headerSent == xfer.headerLength) xfer.phase = RackSampleTransferPhase::Data;
+    return;
+  }
+
+  const uint32_t remaining = xfer.dataBytes - xfer.processed;
+  const size_t count = min(min(static_cast<size_t>(writable), sizeof(buffer)),
+                           static_cast<size_t>(remaining));
+  if (xfer.file.read(buffer, count) != count) {
+    finishGranularSampleTransfer("READ");
+    return;
+  }
+  const size_t sent = Serial7.write(buffer, count);
+  if (sent != count) {
+    // availableForWrite() garantit normalement l'ecriture complete. Si le
+    // pilote change, revenir au bon octet évite de corrompre le PCM.
+    xfer.file.seek(xfer.dataPosition + xfer.processed + sent);
+  }
+  xfer.processed += sent;
+  const uint32_t progress = xfer.processed * 100U / xfer.dataBytes;
+  if (progress >= xfer.nextProgress) {
+    Serial.printf("GRANULAR_SAMPLE:PROGRESS:%lu\n", static_cast<unsigned long>(progress));
+    Serial1.printf("GRANULAR_SAMPLE:PROGRESS:%lu\n", static_cast<unsigned long>(progress));
+    xfer.nextProgress += 10;
+  }
+  if (xfer.processed != xfer.dataBytes) return;
+
+  Serial.printf("GRANULAR_SAMPLE:SENT:path=%s:bytes=%lu:rate=%lu:crc=%08lX\n", xfer.path,
+                static_cast<unsigned long>(xfer.dataBytes), static_cast<unsigned long>(xfer.rate),
+                static_cast<unsigned long>(xfer.crc));
+  Serial1.printf("GRANULAR_SAMPLE:SENT:path=%s:bytes=%lu:rate=%lu\n", xfer.path,
+                 static_cast<unsigned long>(xfer.dataBytes), static_cast<unsigned long>(xfer.rate));
+  finishGranularSampleTransfer();
+}
+
+void serviceRackReplies() {
+  // Borne le nombre d'octets draines par appel : depuis que
+  // master_teensy_rack_lab est le
+  // firmware de PRODUCTION, Serial7 est toujours initialise meme quand le
+  // module rack physique n'est pas branche -- RX7 flotte alors et peut
+  // capter du bruit electrique lu comme un flux quasi continu d'octets
+  // parasites. Un "while (Serial7.available())" sans limite pouvait
+  // monopoliser loop() en usage normal (rack debranche), signale comme
+  // "il joue seul, un bip, sans raison" -- pas confirme comme LA cause
+  // (aucune commande NOTE/PAD/CLOCK visible dans la capture qui a chope
+  // l'incident), mais le meme defaut structurel merite d'etre corrige
+  // proactivement.
+  uint8_t drained = 0;
+  while (Serial7.available() && drained < 64) {
+    ++drained;
+    const char c = static_cast<char>(Serial7.read());
+    if (c == '\r') continue;
+    if (c == '\n') {
+      rackReplyBuffer.trim();
+      if (rackReplyBuffer.length()) {
+        Serial.print("AZ2:RACK:REPLY:");
+        Serial.println(rackReplyBuffer);
+        Serial1.print("RACK_REPLY:");
+        Serial1.println(rackReplyBuffer);
+        if (rackReplyBuffer == "GMAX:RACK:READY") rackAutoLoadPending = true;
+      }
+      rackReplyBuffer = "";
+    } else if (rackReplyBuffer.length() < 127) {
+      rackReplyBuffer += c;
+    } else {
+      rackReplyBuffer = "";
+    }
+  }
+
+  if (rackAutoLoadPending &&
+      rackSampleTransfer.phase == RackSampleTransferPhase::Idle) {
+    rackAutoLoadPending = false;
+    if (SD.exists(kGranularStartupSample)) {
+      startWavToGranular(kGranularStartupSample);
+    } else {
+      Serial.println("GRANULAR_SAMPLE:AUTOLOAD:SKIP_NOT_FOUND");
+    }
+  }
+}
+#endif
+
+// Explore un dossier a la fois, comme la structure reelle de /samples.
+// SAMPLELIST:<dossier>:<offset> renvoie six dossiers/WAV et une 7e
+// entree temoin pour savoir si la page suivante existe.
+FLASHMEM __attribute__((noinline)) void listPadSamples(const String &line) {
+  const int lastColon = line.lastIndexOf(':');
+  String folder = line.substring(11, lastColon);
+  if (folder.length() == 0) folder = "/samples";  // ancien SAMPLELIST:0
+  if ((folder != "/samples" && !folder.startsWith("/samples/")) ||
+      folder.indexOf("..") >= 0 || folder.length() >= 64) {
+    Serial1.println("SAMPLELIST:ERROR:PATH");
+    return;
+  }
+  const int offset = constrain(line.substring(lastColon + 1).toInt(), 0, 4096);
+  uint16_t found = 0;
+  uint8_t sent = 0;
+  File root = SD.open(folder.c_str());
+  if (root) {
+    File entry = root.openNextFile();
+    while (entry && found <= offset + 6) {
+      const String name = entry.name();
+      const String path = name.startsWith("/") ? name : folder + "/" + name;
+      String lower = path;
+      lower.toLowerCase();
+      const bool isDir = entry.isDirectory();
+      if (name != "." && name != ".." && path.length() < 64 &&
+          (isDir || lower.endsWith(".wav"))) {
+        if (found >= offset && sent < 6) {
+          Serial1.printf(isDir ? "SAMPLEDIR:%u:%s\n" : "SAMPLEFILE:%u:%s\n", sent, path.c_str());
+          ++sent;
+        }
+        ++found;
+      }
+      entry.close();
+      entry = root.openNextFile();
+    }
+    if (entry) entry.close();
+    root.close();
+  }
+  Serial1.printf("SAMPLELIST:DONE:%u:%u\n", found, sent);
 }
 
 // Kit de batterie de depart (2026-09-19, "tu peut faire un kit de
@@ -769,21 +1465,67 @@ void applyTrackPatch(uint8_t track) {
       announceDexedParams(track);
       break;
     case az2::kEngineEPiano:
-      trackEPianoEngine[track].setProgram(patch % az2::kEPianoPatchCount);
+      loadEPianoPatch(trackEPianoEngine[track], patch);
       break;
     case az2::kEngineBraids:
       trackBraidsEngine[track].set_braids_shape(kBraidsShapeValues[patch % az2::kBraidsPatchCount]);
       break;
     case az2::kEngineKarplus:
-      break;  // AudioSynthKarplusStrong n'a pas de parametre de forme, rien a faire
+      applyKarplusPatch(track, patch);
+      break;
     case az2::kEngineAnalog:
       trackAnalogWave[track].begin(kAnalogWaveformValues[patch % az2::kAnalogPatchCount]);
       break;
     case az2::kEngineSampler: {
+      // CUSTOM (2026-09-23) : contenu PAR PISTE (trackSampleBuffer[],
+      // rempli par TRACKSAMPLE:<piste>:<chemin> -- voir
+      // loadWavIntoTrackSampler()), pas une entree partagee de
+      // kSamplerBank[]. Permet de revenir sur ce patch (ex. cycle de
+      // patches 0->3->0 depuis la page PATCH) sans avoir a recharger le
+      // fichier a chaque fois : le buffer PSRAM reste rempli tant que la
+      // piste n'en charge pas un autre.
+      if (patch == az2::kSamplerCustomPatch) {
+        AudioNoInterrupts();
+        trackSamplerEngine[track].stopNow();
+        if (trackSampleLoaded[track]) {
+          trackSamplerEngine[track].setSample(trackSampleBuffer[track], trackSampleLen[track], 60, trackSampleRate[track]);
+        } else {
+          trackSamplerEngine[track].setSample(nullptr, 0, 60, 44100);
+        }
+        AudioInterrupts();
+        break;
+      }
       const SamplerBankEntry &entry = kSamplerBank[patch % az2::kSamplerPatchCount];
+      // setSample() remplace plusieurs champs lus depuis l'ISR audio. Couper
+      // la lecture et effectuer la mutation sous verrou audio évite un état
+      // hybride (nouveau pointeur avec ancienne longueur, ou inversement)
+      // lors d'un changement de patch pendant un one-shot.
+      AudioNoInterrupts();
+      trackSamplerEngine[track].stopNow();
       trackSamplerEngine[track].setSample(entry.data, entry.len, entry.rootNote, entry.sampleRate);
+      AudioInterrupts();
       break;
     }
+    case az2::kEngineDrum: {
+      const uint8_t p = patch % az2::kDrumPatchCount;
+      trackDrumEngine[track].frequency(kDrumFrequencyValues[p]);
+      trackDrumEngine[track].length(kDrumLengthValues[p]);
+      trackDrumEngine[track].pitchMod(kDrumPitchModValues[p]);
+      trackDrumEngine[track].secondMix(kDrumSecondMixValues[p]);
+      break;
+    }
+#ifdef AZ2_EXTERNAL_RACK
+    case az2::kEngineGranular:
+      // Propriete exclusive (voir rackOwnerTrack[]) : une piste qui s'est
+      // fait voler ce moteur par une autre ne doit plus changer SON patch.
+      if (rackOwnerTrack[az2::kRackEngineGranular] == static_cast<int8_t>(track))
+        Serial7.printf("RACK_PATCH:GRANULAR:%u\n", patch % az2::kRackPatchCount);
+      break;
+    case az2::kEngineSpectral:
+      if (rackOwnerTrack[az2::kRackEngineSpectral] == static_cast<int8_t>(track))
+        Serial7.printf("RACK_PATCH:SPECTRAL:%u\n", patch % az2::kRackPatchCount);
+      break;
+#endif
   }
 }
 
@@ -808,11 +1550,42 @@ void setTrackEngine(uint8_t track, uint8_t engine) {
   if (track >= kTrackCount || engine >= az2::kEngineCount) {
     return;
   }
+#ifndef AZ2_EXTERNAL_RACK
+  // Filet de securite : handleEngineCommand() rejette deja GRANULAR/
+  // SPECTRAL sur ce firmware (pas de AZ2_EXTERNAL_RACK -> pas de Serial7
+  // initialise), mais un futur appelant direct de setTrackEngine() ne
+  // doit pas pouvoir laisser une piste "silencieusement morte" non plus.
+  if (engine == az2::kEngineGranular || engine == az2::kEngineSpectral) {
+    return;
+  }
+#endif
 
   allTrackNotesOff();
+  // Une piste peut changer de moteur pendant qu'un one-shot est en cours.
+  // Fermer l'enveloppe avant de detacher l'ancien moteur evite de conserver
+  // un etat ADSR suspendu jusqu'au prochain note-on.
+  trackAnalogEnv[track].noteOff();
+
+  // Propriete exclusive des moteurs de rack (voir le commentaire de
+  // rackOwnerTrack[] plus haut) : liberer AVANT de changer trackEngine[]
+  // (allTrackNotesOff() ci-dessus a deja coupe une eventuelle note tenue
+  // pendant que "track" etait encore proprietaire), puis reclamer le
+  // nouveau moteur si applicable.
+  rackReleaseOwnership(track);
+  rackClaimOwnership(track, engine);
 
   trackEngine[track] = engine;
-  trackPatch[track] = 0;
+  // Patch 0 (BRASS 1) mesure comme un cas extreme du banc DEXED (diagnostic
+  // scope live du 2026-09-22, voir AZ2_AUDIT_COMPLET_2026-09-22.md) :
+  // discontinuites d'amplitude bien plus fortes et bien plus longues a se
+  // stabiliser que les 7 autres patches testes (feedback DX7 eleve, typique
+  // d'un preset BRASS agressif). Comme n'importe quelle selection de DEXED
+  // repart TOUJOURS du patch 0, c'est garanti le premier son entendu --
+  // kDexedDefaultPatch pointe plutot vers un patch mesure propre
+  // ("WATER GDN", discontinuites 1-4 sur tout l'essai) pour ne pas infliger
+  // le pire cas de la banque des le premier contact avec ce moteur. Les
+  // autres moteurs repartent bien de 0 comme avant.
+  trackPatch[track] = (engine == az2::kEngineDexed) ? kDexedDefaultPatch : 0;
 
   // patchTrackIn[] rebranche l'ENTREE de l'enveloppe partagee de la
   // piste (2026-09-18, voir le commentaire de trackAnalogEnv[]/
@@ -848,6 +1621,13 @@ void setTrackEngine(uint8_t track, uint8_t engine) {
       // trackAnalogEnv[] au boot) laissent une marge confortable.
       patchTrackIn[track].connect(trackSamplerEngine[track], 0, trackAnalogEnv[track], 0);
       break;
+    case az2::kEngineDrum:
+      patchTrackIn[track].connect(trackDrumEngine[track], 0, trackAnalogEnv[track], 0);
+      break;
+    case az2::kEngineGranular:
+    case az2::kEngineSpectral:
+      // Leur audio revient deja par l'entree I2S globale du rack.
+      break;
   }
 
   applyTrackPatch(track);
@@ -872,6 +1652,7 @@ void setTrackEngine(uint8_t track, uint8_t engine) {
 String usbLine;
 String espLine;
 uint32_t lastStatusMs = 0;
+uint32_t statusIntervalMs = 1000;  // STATUS_MS:<ms>, 0 = coupe
 bool playing = false;
 
 // Gamme chromatique sur les 16 pads (voix live) -- kPadBaseNote
@@ -883,7 +1664,7 @@ bool playing = false;
 // (encodeur/gachette C-D) n'est pas branche dessus.
 int8_t transposeSemitones = 0;
 
-uint8_t padToMidiNote(uint8_t pad) {
+uint8_t padToNote(uint8_t pad) {
   return static_cast<uint8_t>(az2::kPadBaseNote + pad + transposeSemitones);
 }
 
@@ -932,32 +1713,41 @@ void sendCommandError(const char *command, const char *reason) {
 // piste ; stocke/transmis mais PAS ENCORE applique en temps reel, voir
 // note dans triggerStepFx()/advanceTick() plus bas -- changer un patch
 // Dexed coute trop cher pour une ISR), FX+VAL (stepFx/stepFxVal).
-enum StepFx : uint8_t { kStepFxNone = 0, kStepFxArp = 1, kStepFxCut = 2, kStepFxRetrig = 3 };
-constexpr uint8_t kStepFxCount = 4;  // kStepFxNone..kStepFxRetrig
+constexpr uint8_t kStepFxCount = 6;  // kStepFxNone..kStepFxDelay
 
-struct SequencerTrack {
-  bool stepOn[kStepCount] = {};
-  uint8_t stepNote[kStepCount] = {};    // seede par seedDefaultNotes()
-  uint8_t stepPatch[kStepCount];        // 0xFF par defaut, voir seedDefaultNotes()
-  uint8_t stepFx[kStepCount] = {};      // StepFx, 0 = aucun
-  uint8_t stepFxVal[kStepCount] = {};   // ARP: xy (nibbles, demi-tons) ; CUT/RETRIG: nb de ticks
-  // Probabilite/condition par pas (2026-09-17, "on travaille le tracker on
-  // fait un truc qui eclate tout" -- fonction la plus citee dans l'etude
-  // concurrence face a Elektron). Values par defaut = comportement
-  // ORIGINAL exact (100 = joue toujours, 0/kStepCondAlways = aucune
-  // condition) : un pattern deja sauvegarde avant cet ajout continue de
-  // jouer identique tant qu'on n'y touche pas.
-  uint8_t stepProb[kStepCount];         // 0-100 (%), 100 par defaut -- voir seedDefaultNotes()
-  uint8_t stepCondition[kStepCount] = {};  // encode az2::stepConditionEncode()/kStepCond*, voir AZ2_Protocol.h
-  uint8_t playingNote = 0;  // note reellement tenue, pour l'extinction correcte
-  bool stepPlaying = false;
-  // Etat d'effet du pas EN COURS (recalcule a chaque declenchement,
-  // consulte/avance par l'ISR de tick -- voir advanceTick()).
-  uint8_t activeFx = kStepFxNone;
-  uint8_t activeFxVal = 0;
-  uint8_t baseNote = 0;          // note de reference du pas (l'ARP applique ses offsets dessus)
-  uint8_t ticksSinceTrigger = 0;
+// Presets CRUSH/DELAY (2026-09-23, voir StepFx dans sequencer.h) : la
+// colonne VAL du tracker devient un NUMERO DE PATCH pour ces deux effets
+// (pas une valeur brute comme ARP/CUT/RET) -- "des patch qu'on peut
+// appeler dans le tracker", et "il faut faire des patch de reglage pour
+// que les trucs soient pas vides" (banque pre-remplie, pas de slot vide
+// au premier contact). stepFxVal (0-255) indexe modulo la taille de la
+// banque.
+struct CrushPreset { uint8_t bits; const char *name; };
+constexpr CrushPreset kCrushPresets[] = {
+    {16, "CLEAN"}, {12, "SOFT"}, {10, "WARM"}, {8, "LOFI"},
+    {6, "GRIT"},   {5, "DIRTY"}, {4, "CRUNCH"}, {3, "HARSH"},
+    {2, "BROKEN"}, {1, "NOISE"},
 };
+constexpr uint8_t kCrushPresetCount = sizeof(kCrushPresets) / sizeof(kCrushPresets[0]);
+
+struct DelayPreset { float ms; float mix; const char *name; };
+constexpr DelayPreset kDelayPresets[] = {
+    {60.0f, 0.25f},  {90.0f, 0.35f},  {125.0f, 0.45f}, {180.0f, 0.5f},
+    {250.0f, 0.55f}, {350.0f, 0.6f},  {420.0f, 0.65f}, {500.0f, 0.7f},
+    {350.0f, 0.85f}, {180.0f, 0.9f},  {90.0f, 0.95f},  {60.0f, 0.5f},
+    {250.0f, 0.75f}, {125.0f, 0.85f}, {420.0f, 0.4f},  {500.0f, 0.3f},
+};
+constexpr uint8_t kDelayPresetCount = sizeof(kDelayPresets) / sizeof(kDelayPresets[0]);
+
+void applyCrushPreset(uint8_t track, uint8_t presetIdx) {
+  trackCrush[track].bits(kCrushPresets[presetIdx % kCrushPresetCount].bits);
+}
+void applyDelayPreset(uint8_t track, uint8_t presetIdx) {
+  const DelayPreset &p = kDelayPresets[presetIdx % kDelayPresetCount];
+  trackDelay[track].delay(0, p.ms);
+  trackFx[track].gain(1, p.mix);
+}
+
 // Plusieurs patterns + chainage en "song", demande le 2026-09-16 ("il
 // faut un tracker complet ... plus qu'un sequenceur qui permet
 // d'assembler des patterns"). Modele le plus simple des 3 references
@@ -965,7 +1755,6 @@ struct SequencerTrack {
 // pas de song = UN pattern complet (8 pistes ensemble), pas de chaines
 // par piste independantes comme LSDJ/M8 (bien plus de travail pour peu
 // de gain a ce stade).
-constexpr uint8_t kPatternCount = 8;
 SequencerTrack patterns[kPatternCount][kTrackCount];
 // Pattern en cours d'EDITION -- STEP:/NOTE:/INST:/SFX: modifient
 // toujours celui-ci, qu'il soit ou non celui qui joue reellement (on
@@ -976,6 +1765,7 @@ uint8_t currentPattern = 0;
 // currentPattern en mode boucle simple ; suit songPatterns[songPos] en
 // mode song.
 uint8_t playingPattern = 0;
+uint8_t patternMeasures[kPatternCount] = {1, 1, 1, 1, 1, 1, 1, 1};
 
 constexpr uint8_t kSongLength = 16;
 uint8_t songPatterns[kSongLength] = {};
@@ -1025,9 +1815,8 @@ uint8_t swingAmount = 0;
 uint8_t ticksForCurrentStep = kTicksPerStep;
 
 // Horloge du sequenceur : sur IntervalTimer (interruption materielle),
-// comme MicroDexed-touch (voir src_teensy/microdexed-touch/MicroDexed-touch/
-// MicroDexed-touch.ino, "PeriodicTimer sequencer_timer" + dexed_sd.cpp:4823
-// "sequencer_timer.begin(sequencer, seq.tempo_ms/(seq.ticks_max+1))") --
+// selon le principe employe par MicroDexed-touch (source amont consultable
+// dans l'historique Git) --
 // c'est ce qui manquait cote AZ-2 : avant, le pas etait avance depuis
 // loop() via un simple test millis(), donc soumis a la duree de tout ce
 // que loop() fait dans le meme tour (lecture des 3 UART, etc.) -- source
@@ -1095,6 +1884,18 @@ void announceClock() {
 void announceHello() {
   Serial.println(az2::kHelloAudio);
   Serial1.println(az2::kHelloAudio);
+  // Capacite rack externe (audit 2026-09-22) : annonce si CE firmware a
+  // ete compile avec AZ2_EXTERNAL_RACK (donc si GRANULAR/SPECTRAL ont un
+  // vrai chemin audio, voir handleEngineCommand()) -- permet a l'ecran de
+  // griser ces deux entrees plutot que de laisser l'utilisateur les
+  // selectionner pour rien sur le couple de firmwares de production.
+#ifdef AZ2_EXTERNAL_RACK
+  Serial.println("RACK_CAP:1");
+  Serial1.println("RACK_CAP:1");
+#else
+  Serial.println("RACK_CAP:0");
+  Serial1.println("RACK_CAP:0");
+#endif
 
   // Reenvoie l'etat courant a la connexion/reconnexion de l'ESP32 -- sans
   // ca, l'ecran redemarre sur des valeurs par defaut fausses alors que le
@@ -1118,6 +1919,22 @@ void announceHello() {
     az2::printEngineSelect(Serial1, t, trackEngine[t]);
     az2::printPatchSelect(Serial, t, trackPatch[t]);
     az2::printPatchSelect(Serial1, t, trackPatch[t]);
+    Serial.print("SMODE:");
+    Serial.print(t);
+    Serial.print(':');
+    Serial.println(trackSamplerGate[t] ? 1 : 0);
+    Serial1.print("SMODE:");
+    Serial1.print(t);
+    Serial1.print(':');
+    Serial1.println(trackSamplerGate[t] ? 1 : 0);
+    // Chemin du sample CUSTOM (2026-09-23) -- meme raison que PADSAMPLE?
+    // pour les pads : sans cet echo, l'ecran ne saurait pas quel fichier
+    // est charge apres une reconnexion/un redemarrage (le HELLO courant
+    // ci-dessus ne renvoyait deja que ENGINE:/PATCH:/SMODE:).
+    if (trackSampleLoaded[t] && trackSamplePathLive[t][0]) {
+      Serial.printf("TRACKSAMPLE:%u:READY:path=%s\n", t, trackSamplePathLive[t]);
+      Serial1.printf("TRACKSAMPLE:%u:READY:path=%s\n", t, trackSamplePathLive[t]);
+    }
   }
 
   // Pattern/song (voir patterns[]/songPatterns[] plus haut) -- pas les
@@ -1126,6 +1943,10 @@ void announceHello() {
   char msg[16];
   snprintf(msg, sizeof(msg), "PATTERN:%d", currentPattern);
   relayLine(msg);
+  for (uint8_t p = 0; p < kPatternCount; ++p) {
+    snprintf(msg, sizeof(msg), "PLEN:%d:%d", p, patternMeasures[p]);
+    relayLine(msg);
+  }
   snprintf(msg, sizeof(msg), "SONGMODE:%d", songMode ? 1 : 0);
   relayLine(msg);
   snprintf(msg, sizeof(msg), "SONGLEN:%d", songLen);
@@ -1153,24 +1974,45 @@ void trackNoteOn(uint8_t track, uint8_t note, uint8_t velocity) {
       applyGroupGainNow(track);
       break;
     case az2::kEngineKarplus:
-      trackKarplusEngine[track].noteOn(midiNoteToFreq(note), static_cast<float>(velocity) / 127.0f);
+      trackKarplusEngine[track].noteOn(
+          noteToFreq(note),
+          (static_cast<float>(velocity) / 127.0f) * trackKarplusVelocityScale[track]);
       break;
     case az2::kEngineAnalog:
-      trackAnalogWave[track].frequency(midiNoteToFreq(note));
+      trackAnalogWave[track].frequency(noteToFreq(note));
       trackAnalogWave[track].amplitude(0.8f);
       break;
     case az2::kEngineSampler:
       trackSamplerEngine[track].noteOn(note, velocity);
       break;
+    case az2::kEngineDrum:
+      trackDrumEngine[track].noteOn();
+      break;
+#ifdef AZ2_EXTERNAL_RACK
+    case az2::kEngineGranular:
+      // Propriete exclusive (voir rackOwnerTrack[]) : une piste qui s'est
+      // fait voler ce moteur ne doit plus pouvoir declencher/couper SA
+      // note dessus -- elle jouerait sur la voix de la piste proprietaire.
+      if (rackOwnerTrack[az2::kRackEngineGranular] == static_cast<int8_t>(track))
+        Serial7.printf("RACK_NOTE_ON:GRANULAR:%u:%u\n", note, velocity);
+      break;
+    case az2::kEngineSpectral:
+      if (rackOwnerTrack[az2::kRackEngineSpectral] == static_cast<int8_t>(track))
+        Serial7.printf("RACK_NOTE_ON:SPECTRAL:%u:%u\n", note, velocity);
+      break;
+#endif
   }
   // Enveloppe PARTAGEE par les 6 moteurs (2026-09-18, voir le
   // commentaire de trackAnalogEnv[] plus haut) -- declenchee ici pour
   // TOUS, pas seulement ANALOG (qui l'utilisait deja seul avant ce
   // fix).
-  trackAnalogEnv[track].noteOn();
+  if (trackEngine[track] != az2::kEngineGranular &&
+      trackEngine[track] != az2::kEngineSpectral)
+    trackAnalogEnv[track].noteOn();
 }
 
 void trackNoteOff(uint8_t track, uint8_t note) {
+  bool releaseEnvelope = true;
   switch (trackEngine[track]) {
     case az2::kEngineDexed: trackDexedEngine[track].keyup(note); break;
     case az2::kEngineEPiano: trackEPianoEngine[track].noteOff(note); break;
@@ -1180,11 +2022,36 @@ void trackNoteOff(uint8_t track, uint8_t note) {
       break;
     case az2::kEngineKarplus: trackKarplusEngine[track].noteOff(1.0f); break;
     case az2::kEngineAnalog: break;
-    case az2::kEngineSampler: trackSamplerEngine[track].noteOff(); break;  // one-shot, ne fait rien (voir sa definition)
+    case az2::kEngineSampler:
+      if (trackSamplerGate[track]) {
+        trackSamplerEngine[track].stopNow();
+      } else {
+        // One-shot : le sample et son niveau naturel vont jusqu'a la fin.
+        // L'enveloppe ne doit donc pas declencher son release ici.
+        releaseEnvelope = false;
+      }
+      break;
+    case az2::kEngineDrum:
+      // AudioSynthSimpleDrum est un one-shot : la decay interne gere la fin.
+      break;
+#ifdef AZ2_EXTERNAL_RACK
+    case az2::kEngineGranular:
+      if (rackOwnerTrack[az2::kRackEngineGranular] == static_cast<int8_t>(track))
+        Serial7.printf("RACK_NOTE_OFF:GRANULAR:%u\n", note);
+      releaseEnvelope = false;
+      break;
+    case az2::kEngineSpectral:
+      if (rackOwnerTrack[az2::kRackEngineSpectral] == static_cast<int8_t>(track))
+        Serial7.printf("RACK_NOTE_OFF:SPECTRAL:%u\n", note);
+      releaseEnvelope = false;
+      break;
+#endif
   }
   // Meme enveloppe partagee qu'a l'allumage ci-dessus -- coupe TOUS les
   // moteurs, pas seulement ANALOG.
-  trackAnalogEnv[track].noteOff();
+  if (releaseEnvelope) {
+    trackAnalogEnv[track].noteOff();
+  }
 }
 
 void allTrackNotesOff() {
@@ -1195,6 +2062,34 @@ void allTrackNotesOff() {
       tr.stepPlaying = false;
     }
   }
+}
+
+void gbAudioResetStream();  // definie avec le chemin audio GB plus bas
+
+// Arret d'urgence global. Contrairement a allTrackNotesOff(), qui suit
+// seulement les notes connues du sequenceur, PANIC couvre aussi les pads,
+// la voix live et les one-shots encore actifs.
+void panicAllAudio() {
+  playing = false;
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    trackDexedEngine[t].panic();
+    for (uint8_t note = 0; note < 128; ++note)
+      trackEPianoEngine[t].noteOff(note);
+    trackKarplusEngine[t].noteOff(1.0f);
+    trackSamplerEngine[t].stopNow();
+    trackAnalogEnv[t].noteOff();
+    trackNoteHeld[t] = false;
+    SequencerTrack &tr = patterns[playingPattern][t];
+    tr.stepPlaying = false;
+    tr.activeFx = az2::kStepFxNone;
+    applyGroupGainNow(t);
+  }
+  liveVoice.panic();
+  for (uint8_t pad = 0; pad < az2::kPadCount; ++pad)
+    padSampler[pad].stopNow();
+  // PANIC remet aussi le chemin audio GB a zero (anneau, interpolateur) :
+  // c'etait le seul etat audio que rien ne savait vider avant un power-cycle.
+  gbAudioResetStream();
 }
 
 // Applique l'effet actif d'une piste sur le tick courant (ticksSinceTrigger
@@ -1255,10 +2150,12 @@ void triggerStepFx(uint8_t t) {
 // RETRIG, voir triggerStepFx()). Reste volontairement minimale : aucun
 // Serial.print ici (voir clockPending / updateSequencer()).
 void advanceTick() {
+  const uint32_t startedUs = micros();
   if (currentTick == 0) {
     allTrackNotesOff();
 
-    currentStep = static_cast<uint8_t>((currentStep + 1) % kStepCount);
+    const uint8_t activeSteps = static_cast<uint8_t>(patternMeasures[playingPattern] * az2::kStepsPerMeasure);
+    currentStep = (currentStep + 1 >= activeSteps) ? 0 : static_cast<uint8_t>(currentStep + 1);
     // Swing : voir le commentaire de swingAmount plus haut -- pas pairs
     // raccourcis, impairs allonges (classique "shuffle" de boite a
     // rythme, delai des "contretemps"). swingAmount est deja borne a
@@ -1268,12 +2165,6 @@ void advanceTick() {
     ticksForCurrentStep = (currentStep % 2 == 0)
                               ? static_cast<uint8_t>(kTicksPerStep - swingAmount)
                               : static_cast<uint8_t>(kTicksPerStep + swingAmount);
-    // Metronome (voir triggerMetronome()) -- un temps commence tous les
-    // stepsPerBeat pas ; accentue (plus aigu) sur le tout premier temps
-    // du pattern. no-op silencieux si metronomeEnabled est faux.
-    if (currentStep % stepsPerBeat == 0) {
-      triggerMetronome(currentStep == 0);
-    }
     if (currentStep == 0) {
       ++currentBar;
       // Compteur de passages du pattern (2026-09-17, PROB:/COND:) -- avance
@@ -1317,6 +2208,17 @@ void advanceTick() {
         tr.activeFx = tr.stepFx[currentStep];
         tr.activeFxVal = tr.stepFxVal[currentStep];
         tr.ticksSinceTrigger = 0;
+        // CRUSH/DELAY : applique UNE fois au declenchement du pas (pas a
+        // chaque tick comme ARP/CUT/RET dans triggerStepFx() -- ce sont des
+        // reglages d'effet continu, pas un ré-déclenchement de note). Reste
+        // actif sur la piste jusqu'au prochain pas qui change cet effet
+        // (comportement tracker classique : une valeur d'effet "tient"
+        // jusqu'a la prochaine commande).
+        if (tr.activeFx == kStepFxCrush) {
+          applyCrushPreset(t, tr.activeFxVal);
+        } else if (tr.activeFx == kStepFxDelay) {
+          applyDelayPreset(t, tr.activeFxVal);
+        }
       } else {
         tr.stepPlaying = false;
         tr.activeFx = kStepFxNone;
@@ -1335,6 +2237,8 @@ void advanceTick() {
   }
 
   currentTick = static_cast<uint8_t>((currentTick + 1) % ticksForCurrentStep);
+  const uint32_t elapsedUs = micros() - startedUs;
+  if (elapsedUs > maxIsrTime) maxIsrTime = elapsedUs;
 }
 
 // Appelee depuis loop() : se contente d'imprimer le CLOCK: en attente
@@ -1349,11 +2253,32 @@ void updateSequencer() {
 
 void startSequencer() {
   playing = true;
-  currentStep = kStepCount - 1;  // le prochain tick 0 (voir advanceTick()) ira au pas 0
+  const uint8_t firstPattern = (songMode && songLen > 0) ? songPatterns[0] : currentPattern;
+  currentStep = static_cast<uint8_t>(patternMeasures[firstPattern] * az2::kStepsPerMeasure - 1);
   currentTick = 0;
   songPos = 0;
   playingPattern = (songMode && songLen > 0) ? songPatterns[0] : currentPattern;
   sequencerTimer.begin(advanceTick, tickIntervalUs());
+}
+
+// PLEN:<pattern 0-7>:<mesures 1-8> -- longueur propre a chaque pattern.
+// Les donnees au-dela de la longueur restent en memoire afin qu'un
+// raccourcissement puis un agrandissement ne detruise pas la composition.
+void handlePatternLengthCommand(const String &line) {
+  const int i1 = line.indexOf(':');
+  const int i2 = line.indexOf(':', i1 + 1);
+  if (i1 < 0 || i2 < 0) {
+    sendCommandError("PLEN", "MALFORMED");
+    return;
+  }
+  const int pattern = line.substring(i1 + 1, i2).toInt();
+  const int measures = line.substring(i2 + 1).toInt();
+  if (pattern < 0 || pattern >= kPatternCount || measures < 1 || measures > az2::kMaxPatternMeasures) {
+    sendCommandError("PLEN", "OUT_OF_RANGE");
+    return;
+  }
+  patternMeasures[pattern] = static_cast<uint8_t>(measures);
+  relayLine(line);
 }
 
 void stopSequencer() {
@@ -1385,7 +2310,7 @@ void handleStepCommand(const String &line) {
   relayLine(line);  // confirme tel quel, utile pour que l'UI ESP32 se resynchronise
 }
 
-// NOTE:<piste>:<pas>:<note MIDI 0-127> -- edition de note par pas (voir
+// NOTE:<piste>:<pas>:<note 0-127> -- edition de note par pas (voir
 // SequencerTrack::stepNote), independante de STEP: (on/off). Portee de
 // MicroDexed-touch (seq.note_data[pattern][step], voir sequencer.cpp).
 void handleNoteCommand(const String &line) {
@@ -1688,14 +2613,35 @@ void handleEngineCommand(const String &line) {
     sendCommandError("ENGINE", "OUT_OF_RANGE");
     return;
   }
+#ifndef AZ2_EXTERNAL_RACK
+  // Audit 2026-09-22 ("asymetrie de compilation ESP32/Teensy") : sur ce
+  // firmware, GRANULAR/SPECTRAL n'ont AUCUN chemin audio (Serial7 meme pas
+  // initialise, voir setup()) -- avant ce garde-fou, selectionner l'un des
+  // deux depuis l'ecran mettait la piste a jour cote UI sans jamais
+  // produire un seul son, ni la moindre erreur. On refuse desormais
+  // explicitement, avec le meme mecanisme <COMMANDE>:ERROR:<raison> que
+  // les autres rejets de ce fichier -- l'ecran ignore aujourd'hui cette
+  // ligne (voir son commentaire dans sendCommandError()), donc ce garde-
+  // fou ne casse rien de plus : il empeche juste ENGINE: de relayer la
+  // selection et de la faire apparaitre comme active cote UI (voir
+  // relayLine() plus bas, qui echoue trackEngine[] a l'ecran).
+  if (engine == az2::kEngineGranular || engine == az2::kEngineSpectral) {
+    sendCommandError("ENGINE", "RACK_UNAVAILABLE");
+    return;
+  }
+#endif
 
   setTrackEngine(track, engine);
   relayLine(line);
-  // setTrackEngine() remet toujours le patch a 0 -- previens l'UI tout de
-  // suite, sinon elle resterait affichee sur l'ancien patch jusqu'au
-  // prochain changement.
-  az2::printPatchSelect(Serial, track, 0);
-  az2::printPatchSelect(Serial1, track, 0);
+  // setTrackEngine() remet toujours trackPatch[track] a une valeur de
+  // depart (0, sauf DEXED -> kDexedDefaultPatch, voir son commentaire) --
+  // previens l'UI tout de suite avec la VRAIE valeur, sinon elle resterait
+  // affichee sur l'ancien patch jusqu'au prochain changement. Envoyer un 0
+  // fixe ici desynchronisait l'ecran pour DEXED (2026-09-22, decouvert en
+  // reglant kDexedDefaultPatch) : le Teensy jouait le patch 120 mais
+  // l'ecran affichait "BRASS 1" (nom du patch 0).
+  az2::printPatchSelect(Serial, track, trackPatch[track]);
+  az2::printPatchSelect(Serial1, track, trackPatch[track]);
 }
 
 // PATCH:<piste 0-3>:<index de patch, voir az2::enginePatchCount(moteur actif)>
@@ -1722,6 +2668,29 @@ void handlePatchCommand(const String &line) {
   relayLine(line);
 }
 
+// SMODE:<piste 0-7>:<mode> -- comportement du sampleur chromatique de la
+// piste. 0 = one-shot (le sample va jusqu'a la fin), 1 = gate (note-off coupe
+// immediatement). Les sampleurs dedies aux 16 pads restent toujours
+// one-shot et ne sont pas concernes par cette commande.
+void handleSamplerModeCommand(const String &line) {
+  const int idx1 = line.indexOf(':');
+  const int idx2 = line.indexOf(':', idx1 + 1);
+  if (idx1 < 0 || idx2 < 0) {
+    sendCommandError("SMODE", "MALFORMED");
+    return;
+  }
+  const uint8_t track = static_cast<uint8_t>(line.substring(idx1 + 1, idx2).toInt());
+  const int mode = line.substring(idx2 + 1).toInt();
+  if (track >= kTrackCount || (mode != 0 && mode != 1)) {
+    sendCommandError("SMODE", "OUT_OF_RANGE");
+    return;
+  }
+  trackSamplerGate[track] = mode != 0;
+  // Si on repasse en gate pendant un sample en cours, on ne coupe pas le
+  // son de facon surprise : le prochain note-off appliquera le nouveau mode.
+  relayLine(line);
+}
+
 // Etat du bus d'effets maitre -- source commune pour FX:reverb:/FX:delay:
 // (serie) ET les potards 2/3 cables directement sur le Teensy (voir
 // updateLocalControls()), pour que les deux chemins restent coherents.
@@ -1729,11 +2698,37 @@ float masterVolume = 1.0f;  // potard 1
 float reverbWet = 0.0f;     // potard 2 ou FX:reverb:
 float delayWet = 0.0f;      // potard 3 ou FX:delay:
 
+// Le volume percu est logarithmique. L'ancienne courbe sqrt(normalized)
+// faisait exactement l'inverse de l'effet recherche : des la premiere partie
+// de la course le gain etait deja eleve, puis presque toute la plage semblait
+// ne rien changer avant la coupure nette a zero. Une courbe quadratique donne
+// une vraie reserve de reglage aux niveaux faibles et moyens, conserve le
+// silence numerique exact a 0 et rejoint progressivement la marge de tete au
+// maximum.
+float masterGainFromEncoder(uint8_t value) {
+  const float normalized = static_cast<float>(value) / 127.0f;
+  constexpr float kMasterHeadroom = 0.75f;
+  return kMasterHeadroom * normalized * normalized;
+}
+
 void applyMasterMix() {
   mixMaster.gain(0, masterVolume);
   mixMaster.gain(1, reverbWet * masterVolume);
   mixMaster.gain(2, delayWet * masterVolume);
-  mixMaster.gain(3, masterVolume);  // son GB (voir gbAudioQueue) -- suit le potard 1 comme le signal sec
+  mixMaster.gain(3, masterVolume);  // son GB (voir gbAudioSource) -- suit le potard 1 comme le signal sec
+#ifdef AZ2_EXTERNAL_RACK
+  // Le bus local est déjà pondéré ci-dessus. Le rack reçoit sa propre marge
+  // de tête mais suit le même volume général.
+  mixOutputL.gain(0, 1.0f);
+  mixOutputR.gain(0, 1.0f);
+  const float rackGain = kMuteExternalRackAudio ? 0.0f : 0.6f * masterVolume;
+  mixOutputL.gain(1, rackGain);
+  mixOutputR.gain(1, rackGain);
+  mixOutputL.gain(2, 0.0f);
+  mixOutputL.gain(3, 0.0f);
+  mixOutputR.gain(2, 0.0f);
+  mixOutputR.gain(3, 0.0f);
+#endif
 }
 
 // FX:reverb:<0-100> ou FX:delay:<0-100> -- bus d'effets maitre (voir
@@ -2248,11 +3243,23 @@ void handleScopeCommand(const String &line) {
       return;
     }
     scopeTrack = static_cast<int8_t>(track);
-    // trackFx[] (sortie de la chaine d'effets), pas trackFilter[]
-    // directement (2026-09-19) -- affiche ce qui est REELLEMENT
-    // entendu (filtre + bitcrusher + delay dedies), pas juste le signal
-    // avant les nouveaux effets par piste.
-    patchScopeTap.connect(trackFx[track], 0, scopeQueue, 0);
+    // Les moteurs internes passent dans trackFx[]. GRANULAR/SPECTRAL
+    // arrivent en revanche directement sur l'entree I2S rackAudioIn et
+    // contournent toute la chaine par piste : les brancher sur trackFx[]
+    // produisait donc une ligne plate dans PATCH. Le rack transporte les
+    // deux moteurs sur le meme flux stereo ; le moteur non joue etant
+    // silencieux, le canal gauche montre le signal reellement recu.
+#ifdef AZ2_EXTERNAL_RACK
+    if (trackEngine[track] == az2::kEngineGranular ||
+        trackEngine[track] == az2::kEngineSpectral) {
+      patchScopeTap.connect(rackAudioIn, 0, scopeQueue, 0);
+    } else
+#endif
+    {
+      // Sortie de la chaine d'effets : affiche ce qui est reellement
+      // entendu (filtre + bitcrusher + delay dedies).
+      patchScopeTap.connect(trackFx[track], 0, scopeQueue, 0);
+    }
     scopeQueue.begin();
   }
   relayLine(line);
@@ -2311,6 +3318,18 @@ void updateScope() {
   Serial1.write(az2::kScopePacketMagic);
   Serial1.write(az2::kScopeSamplesPerPacket);
   Serial1.write(scopeBuf, az2::kScopeSamplesPerPacket);
+  // Miroir sur Serial (USB) en plus de Serial1 (2026-09-22, diagnostic
+  // souffle DEXED -- voir AZ2_AUDIT_COMPLET_2026-09-22.md) : le scope
+  // n'etait jusque-la observable que cote UART/ecran (voir
+  // AZ2_ETAT_DES_LIEUX.md, "Fausse alerte sur SCOPE:"), jamais depuis le
+  // port USB de debug seul -- ce qui avait bloque le diagnostic DEXED du
+  // 18/09. Garde volontairement (pas juste temporaire) : permet de
+  // deboguer le moteur audio avec uniquement le cable USB du Teensy, sans
+  // l'ecran branche. Cout negligeable (~1,5 Ko/s max, seulement quand
+  // SCOPE:<piste> est actif).
+  Serial.write(az2::kScopePacketMagic);
+  Serial.write(az2::kScopeSamplesPerPacket);
+  Serial.write(scopeBuf, az2::kScopeSamplesPerPacket);
 }
 
 // CPU? -- charge processeur et memoire audio reelles, demande le
@@ -2332,6 +3351,30 @@ void reportCpuUsage() {
   Serial.println(kAudioMemoryBlocks);
 }
 
+void reportRackStats() {
+  uint8_t counts[az2::kEngineCount] = {};
+  for (uint8_t t = 0; t < kTrackCount; ++t)
+    if (trackEngine[t] < az2::kEngineCount) ++counts[trackEngine[t]];
+
+  Serial.print("AZ2:RACK:engines=");
+  for (uint8_t engine = 0; engine < az2::kEngineCount; ++engine) {
+    if (engine) Serial.print(',');
+    Serial.print(az2::engineName(engine));
+    Serial.print(':');
+    Serial.print(counts[engine]);
+  }
+  Serial.print(":cpu=");
+  Serial.print(AudioProcessorUsage(), 1);
+  Serial.print(":cpu_max=");
+  Serial.print(AudioProcessorUsageMax(), 1);
+  Serial.print(":mem=");
+  Serial.print(AudioMemoryUsage());
+  Serial.print(":mem_max=");
+  Serial.print(AudioMemoryUsageMax());
+  Serial.print(":mem_total=");
+  Serial.println(kAudioMemoryBlocks);
+}
+
 // ---------------------------------------------------------------------
 // Croix + 4 boutons + 3 potentiometres, cables DIRECTEMENT sur le Teensy
 // -- remplace le Pico/la matrice SparkFun, abandonnes le 2026-09-14
@@ -2344,7 +3387,11 @@ void reportCpuUsage() {
 // AZ2_EMULATION_JEUX.md).
 // ---------------------------------------------------------------------
 constexpr int kNavUpPin = 2, kNavDownPin = 3, kNavLeftPin = 4, kNavRightPin = 5;
+#ifdef AZ2_EXTERNAL_RACK
+constexpr int kBtnAPin = 6, kBtnBPin = 10, kBtnCPin = 9, kBtnDPin = 23;
+#else
 constexpr int kBtnAPin = 6, kBtnBPin = 8, kBtnCPin = 9, kBtnDPin = 23;
+#endif
 
 constexpr uint32_t kLocalDebounceMs = 15;
 
@@ -2388,12 +3435,15 @@ void updateDigitalControls() {
     }
     if ((now - c.lastChangeMs) >= kLocalDebounceMs && raw != c.state) {
       c.state = raw;
+      // Serial1 (ecran) AVANT Serial (USB) : l'USB n'est qu'un miroir de
+      // debug, et une ecriture USB peut attendre jusqu'a ~120 ms si l'hote
+      // ne lit pas le port. L'ecran ne doit jamais payer ce delai.
       if (c.isNav) {
-        az2::printNav(Serial, c.label, raw);
         az2::printNav(Serial1, c.label, raw);
+        az2::printNav(Serial, c.label, raw);
       } else {
-        az2::printBtn(Serial, c.label[0], raw);
         az2::printBtn(Serial1, c.label[0], raw);
+        az2::printBtn(Serial, c.label[0], raw);
       }
     }
   }
@@ -2452,8 +3502,8 @@ void updateEncoderButtons() {
     }
     if ((now - b.lastChangeMs) >= kLocalDebounceMs && raw != b.state) {
       b.state = raw;
+      az2::printEnc(Serial1, b.index, raw);  // ecran d'abord, voir updateDigitalControls()
       az2::printEnc(Serial, b.index, raw);
-      az2::printEnc(Serial1, b.index, raw);
     }
   }
 }
@@ -2502,6 +3552,13 @@ void updateEncoders() {
     if (rawDetents != encLastDetents[i] && (now - encPendingSinceMs[i]) >= kEncSettleMs) {
       const int32_t delta = (rawDetents - encLastDetents[i]) * kEncDirection;
       encLastDetents[i] = rawDetents;
+      // Mouvement RELATIF pour les interfaces de navigation. POT: garde
+      // sa valeur absolue pour les parametres continus, tandis que TURN:
+      // ne se bloque jamais aux bornes 0/127 et peut donc parcourir un
+      // menu indefiniment dans les deux sens.
+      const int8_t direction = delta > 0 ? 1 : -1;
+      Serial1.printf("TURN:%u:%d\n", i, direction);  // ecran d'abord
+      Serial.printf("TURN:%u:%d\n", i, direction);
       const int32_t next = static_cast<int32_t>(encValue[i]) + delta * kEncStepPerDetent;
       encValue[i] = static_cast<uint8_t>(constrain(next, 0, 127));
     }
@@ -2515,8 +3572,8 @@ void updateEncoders() {
     potLastSent[i] = encValue[i];
     potLastSentMs[i] = now;
 
+    az2::printPot(Serial1, i, encValue[i]);  // ecran d'abord
     az2::printPot(Serial, i, encValue[i]);
-    az2::printPot(Serial1, i, encValue[i]);
 
     // Encodeur 0 (volume) reste CABLE DIRECT (2026-09-19, "le volume il
     // bouge pas" -- role fixe, jamais reinterprete) : reagit meme si
@@ -2531,7 +3588,7 @@ void updateEncoders() {
     // choisit de les reaffecter au bus maitre sur certains ecrans (voir
     // handleFxCommand()).
     if (i == 0) {
-      masterVolume = static_cast<float>(encValue[i]) / 127.0f;
+      masterVolume = masterGainFromEncoder(encValue[i]);
       applyMasterMix();
     }
   }
@@ -2561,8 +3618,23 @@ void handlePadCommand(const String &line) {
     return;
   }
 
-  const uint8_t note = padToMidiNote(pad);
+  const uint8_t note = padToNote(pad);
   const bool pressed = line.indexOf(":DOWN") > 0;
+
+  // Un pad ouvert depuis le tracker porte toujours la piste cible : dans
+  // ce cas le son vient du moteur/patch de cette piste (y compris le moteur
+  // SAMPLER). Les samples affectés aux pads restent réservés au clavier
+  // libre, sans piste cible.
+  const int trackIdx = line.indexOf("track=");
+  const bool hasTrack = trackIdx >= 0;
+  uint8_t track = 0;
+  if (hasTrack) {
+    track = static_cast<uint8_t>(line.substring(trackIdx + 6).toInt());
+    if (track >= kTrackCount) {
+      sendCommandError("PAD", "TRACK_OUT_OF_RANGE");
+      return;
+    }
+  }
 
   // PRIORITE kit de batterie (2026-09-19, "faire un kit de batterie
   // deja config sur les pad") : si CE pad a un echantillon dedie charge
@@ -2571,7 +3643,7 @@ void handlePadCommand(const String &line) {
   // de kit ne se transpose pas). Sinon, comportement inchange (piste
   // ciblee ou voix live, voir plus bas) : les pads sans echantillon
   // assigne restent un clavier chromatique normal.
-  if (padSamplerLoaded[pad]) {
+  if (padSamplerLoaded[pad] && !hasTrack) {
     if (pressed) {
       uint8_t velocity = 100;
       const int velIdx = line.indexOf("vel=");
@@ -2596,17 +3668,6 @@ void handlePadCommand(const String &line) {
   // voix live Dexed fixe. Absent (page AUDIO ouverte depuis le menu
   // general, sans piste de reference) -> comportement inchange
   // (liveVoice).
-  const int trackIdx = line.indexOf("track=");
-  const bool hasTrack = trackIdx >= 0;
-  uint8_t track = 0;
-  if (hasTrack) {
-    track = static_cast<uint8_t>(line.substring(trackIdx + 6).toInt());
-    if (track >= kTrackCount) {
-      sendCommandError("PAD", "TRACK_OUT_OF_RANGE");
-      return;
-    }
-  }
-
   if (pressed) {
     uint8_t velocity = 100;
     const int velIdx = line.indexOf("vel=");
@@ -2626,30 +3687,6 @@ void handlePadCommand(const String &line) {
       liveVoice.keyup(note);
     }
     announceLed(pad, "OFF");
-  }
-}
-
-// MIDI IN (priorite #6 de la liste indispensable,
-// AZ2_BENCHMARK_CONCURRENCE.md) -- USB_MIDI_SERIAL deja actif dans
-// platformio.ini (usbtype du Teensy), rien a cabler, `usbMIDI` est
-// fourni par le core des que ce mode USB est choisi. MVP volontairement
-// modeste : notes MIDI (n'importe quel canal) declenchent la voix live
-// `liveVoice`, meme chemin que les pads tactiles/ecran -- pas de
-// synchro d'horloge MIDI, pas de MIDI OUT, pas de routage vers une
-// piste du sequenceur pour l'instant (voir AZ2_FEUILLE_DE_ROUTE.md).
-void updateMidiIn() {
-  while (usbMIDI.read()) {
-    const uint8_t type = usbMIDI.getType();
-    const uint8_t note = usbMIDI.getData1();
-    const uint8_t velocity = usbMIDI.getData2();
-    if (type == usbMIDI.NoteOn && velocity > 0) {
-      liveVoice.keydown(note, velocity);
-    } else if (type == usbMIDI.NoteOff || (type == usbMIDI.NoteOn && velocity == 0)) {
-      // velocity 0 sur un NoteOn = note-off (convention MIDI standard,
-      // beaucoup de controleurs l'envoient ainsi plutot qu'un vrai
-      // message NoteOff).
-      liveVoice.keyup(note);
-    }
   }
 }
 
@@ -2695,6 +3732,44 @@ void handleCommand(const String &line) {
     return;
   }
 
+  if (line == az2::kPanic) {
+#ifdef AZ2_EXTERNAL_RACK
+    Serial7.println("RACK:PANIC");
+#endif
+    AudioNoInterrupts();
+    panicAllAudio();
+    AudioInterrupts();
+    relayLine("PANIC:OK");
+    announceStatus(az2::kStatusStopped);
+    return;
+  }
+#ifdef AZ2_EXTERNAL_RACK
+  if (line.startsWith("GRANULAR_SAMPLE:")) {
+    const String path = line.substring(16);
+    startWavToGranular(path.c_str());
+    return;
+  }
+  if (line == "RACK:ON" || line == "RACK:OFF" || line == "RACK:PANIC" ||
+      line == "RACK:STATUS" || line.startsWith("RACK_ENGINE:") ||
+      line.startsWith("RACK_NOTE_ON:") || line.startsWith("RACK_NOTE_OFF:") ||
+      line.startsWith("RACK_PARAM:") || line.startsWith("RACK_PATCH:") ||
+      line.startsWith("RACK_PATCH_SAVE:") || line.startsWith("NOTE_ON:") ||
+      line.startsWith("NOTE_OFF:")) {
+    Serial7.println(line);
+    Serial.print("AZ2:RACK:FORWARDED:");
+    Serial.println(line);
+    if (line == "RACK:STATUS") {
+      const float peakL = rackPeakL.available() ? rackPeakL.read() : -1.0f;
+      const float peakR = rackPeakR.available() ? rackPeakR.read() : -1.0f;
+      const float finalL = rackFinalPeakL.available() ? rackFinalPeakL.read() : -1.0f;
+      const float finalR = rackFinalPeakR.available() ? rackFinalPeakR.read() : -1.0f;
+      Serial.printf("AZ2:RACK:INPUT:peak_l=%.6f:peak_r=%.6f:final_l=%.6f:final_r=%.6f\n",
+                    peakL, peakR, finalL, finalR);
+    }
+    return;
+  }
+#endif
+
   if (line.startsWith("PAD:")) {
     handlePadCommand(line);
     return;
@@ -2719,9 +3794,69 @@ void handleCommand(const String &line) {
       return;
     }
     const String path = line.substring(idx2 + 1);
+    if (path == "-") {
+      AudioNoInterrupts();
+      padSampler[pad].stopNow();
+      AudioInterrupts();
+      padSamplerLoaded[pad] = false;
+      padSamplePathLive[pad][0] = '\0';
+      Serial1.printf("PADSAMPLE:%d:CLEARED\n", pad);
+      return;
+    }
     if (!loadWavIntoPadSampler(static_cast<uint8_t>(pad), path.c_str())) {
       // Erreur deja rapportee par loadWavIntoPadSampler()/readWavPcm16Mono()
       // (prefixe "SAMPLER:PAD:<n>:..."), rien de plus a faire ici.
+    }
+    return;
+  }
+
+  // TRACKSAMPLE:<piste 0-7>:<chemin SD> -- meme principe que PADSAMPLE:
+  // ci-dessus, mais pour le moteur SAMPLER d'une PISTE (2026-09-23,
+  // "fusion" demandee entre la page PATCH et le navigateur SD des pads).
+  // Bascule automatiquement la piste sur kSamplerCustomPatch (voir
+  // loadWavIntoTrackSampler()) -- contrairement aux pads, une piste doit
+  // aussi rester utilisable avec les patches fixes 0-2 (Kick/Snare/GB
+  // Capture), donc SEUL ce chemin change le patch, jamais en silence.
+  if (line.startsWith("TRACKSAMPLE:")) {
+    const int idx1 = line.indexOf(':');
+    const int idx2 = line.indexOf(':', idx1 + 1);
+    if (idx1 < 0 || idx2 < 0) {
+      sendCommandError("TRACKSAMPLE", "MALFORMED");
+      return;
+    }
+    const int track = line.substring(idx1 + 1, idx2).toInt();
+    if (track < 0 || track >= static_cast<int>(kTrackCount)) {
+      sendCommandError("TRACKSAMPLE", "OUT_OF_RANGE");
+      return;
+    }
+    const String path = line.substring(idx2 + 1);
+    if (path == "-") {
+      AudioNoInterrupts();
+      trackSamplerEngine[track].stopNow();
+      AudioInterrupts();
+      trackSampleLoaded[track] = false;
+      trackSamplePathLive[track][0] = '\0';
+      Serial1.printf("TRACKSAMPLE:%d:CLEARED\n", track);
+      return;
+    }
+    if (!loadWavIntoTrackSampler(static_cast<uint8_t>(track), path.c_str())) {
+      // Erreur deja rapportee par loadWavIntoTrackSampler()/
+      // readWavPcm16Mono() (prefixe "SAMPLER:TRACK:<n>:..."), rien de
+      // plus a faire ici.
+    }
+    return;
+  }
+
+  if (line.startsWith("SAMPLELIST:")) {
+    listPadSamples(line);
+    return;
+  }
+
+  if (line == "PADSAMPLE?") {
+    for (uint8_t pad = 0; pad < az2::kPadCount; ++pad) {
+      if (padSamplerLoaded[pad] && padSamplePathLive[pad][0])
+        Serial1.printf("PADSAMPLE:%u:READY:path=%s\n", pad, padSamplePathLive[pad]);
+      else Serial1.printf("PADSAMPLE:%u:CLEARED\n", pad);
     }
     return;
   }
@@ -2772,6 +3907,11 @@ void handleCommand(const String &line) {
     return;
   }
 
+  if (line.startsWith("PLEN:")) {
+    handlePatternLengthCommand(line);
+    return;
+  }
+
   if (line.startsWith("FILL:")) {
     handleFillCommand(line);
     return;
@@ -2807,18 +3947,25 @@ void handleCommand(const String &line) {
     return;
   }
 
+  if (line.startsWith("STATUS_MS:")) {
+    const long v = line.substring(10).toInt();
+    statusIntervalMs = (v < 0) ? 0 : static_cast<uint32_t>(v);
+    Serial.print("AZ2:STATUS_MS:");
+    Serial.println(statusIntervalMs);
+    return;
+  }
+
   if (line.startsWith("SWING:")) {
     handleSwingCommand(line);
     return;
   }
 
   if (line.startsWith("METRO:")) {
-    metronomeEnabled = line.substring(6).toInt() != 0;
-    relayLine(line);
+    relayLine("METRO:0");
     return;
   }
 
-  // TEST:<piste>:<note MIDI>:<0|1> -- declenche/coupe une note
+  // TEST:<piste>:<note 0-127>:<0|1> -- declenche/coupe une note
   // DIRECTEMENT sur une piste, HORS sequenceur (2026-09-19, "il faut
   // utiliser le bouton B pour jouer une note qu'on entende les
   // modifications" -- la page PATCH n'avait aucun moyen d'entendre le
@@ -2855,6 +4002,11 @@ void handleCommand(const String &line) {
 
   if (line.startsWith("PATCH:")) {
     handlePatchCommand(line);
+    return;
+  }
+
+  if (line.startsWith("SMODE:")) {
+    handleSamplerModeCommand(line);
     return;
   }
 
@@ -2947,6 +4099,29 @@ void handleCommand(const String &line) {
   if (line == "CPU?") {
     reportCpuUsage();
     return;
+}
+
+  if (line == "RACKSTATS?") {
+    reportRackStats();
+    return;
+  }
+
+  if (line == "RACKRESETMAX") {
+    AudioProcessorUsageMaxReset();
+    AudioMemoryUsageMaxReset();
+    maxIsrTime = 0;
+    relayLine("RACKRESETMAX:OK");
+    return;
+  }
+
+  if (line == "ISRLOAD?") {
+    const uint32_t maxUs = maxIsrTime;  // lecture 32 bits atomique sur Cortex-M7
+    const uint32_t budgetUs = static_cast<uint32_t>(tickIntervalUs() + 0.5f);
+    Serial.printf("ISRLOAD:max_us=%lu:tick_us=%lu\n",
+                  static_cast<unsigned long>(maxUs), static_cast<unsigned long>(budgetUs));
+    Serial1.printf("ISRLOAD:max_us=%lu:tick_us=%lu\n",
+                   static_cast<unsigned long>(maxUs), static_cast<unsigned long>(budgetUs));
+    return;
   }
 
   // SIMNAV:<UP|DOWN|LEFT|RIGHT>:<0|1> et SIMBTN:<A|B|C|D>:<0|1> --
@@ -3020,23 +4195,20 @@ void handleCommand(const String &line) {
 // ce qui ajoutait des marches/aliasing audibles. On interpole desormais
 // lineairement entre deux echantillons en arithmetique Q16 : cout faible
 // sur Teensy 4.1 et aucune modification du protocole UART.
-constexpr size_t kGbRingCapacity = 2048;  // ~46ms a 44.1kHz
-int16_t gbRing[kGbRingCapacity];
-size_t gbRingHead = 0;
-size_t gbRingTail = 0;
+// L'anneau lui-meme vit dans gbAudioSource (voir AudioGbRingSource plus
+// haut) : c'est le seul tampon entre le paquet UART et l'I2S.
 uint32_t gbRingDrops = 0;
 uint32_t gbAudioPacketsRx = 0;
 uint32_t gbAudioBadLengths = 0;
 uint32_t gbAudioTimeouts = 0;
+uint32_t gbAudioLastPacketMs = 0;
+uint32_t gbRingFillMin = AudioGbRingSource::kCapacity;
+uint32_t gbRingFillMax = 0;
 
 void gbRingPush(int16_t sample) {
-  const size_t next = (gbRingHead + 1) % kGbRingCapacity;
-  if (next == gbRingTail) {
-    ++gbRingDrops;
-    return;  // jamais bloquer sequenceur/controles pour sauver un sample
+  if (!gbAudioSource.push(sample)) {
+    ++gbRingDrops;  // jamais bloquer sequenceur/controles pour sauver un sample
   }
-  gbRing[gbRingHead] = sample;
-  gbRingHead = next;
 }
 
 // ---------------------------------------------------------------------
@@ -3048,7 +4220,7 @@ void gbRingPush(int16_t sample) {
 // dans la SD du Teensy") + precisee le 2026-09-17 ("REC/STOP, ... une
 // routine pour capter les sons de l'emulateur"). Capture au format
 // NATIF de la source (14 kHz mono 16 bits signe, avant le
-// sur-echantillonnage vers 44.1kHz fait pour gbRing/gbAudioQueue plus
+// sur-echantillonnage vers 44.1kHz fait pour gbAudioSource plus
 // haut) -- fichiers plus petits, honnete sur la vraie qualite de la
 // source, pas de perte a upsampler puis re-downsampler plus tard.
 //
@@ -3231,11 +4403,69 @@ bool gbResampleHavePrev = false;
 int16_t gbResamplePrev = 0;
 uint32_t gbResamplePhaseQ16 = 0;
 constexpr uint32_t kGbResampleOneQ16 = 1u << 16;
-constexpr uint32_t kGbResampleStepQ16 =
+// Pas NOMINAL. Il suppose que la source emet exactement kGbAudioSampleRate
+// (14000 Hz) -- ce qui est FAUX par construction : l'ESP32 envoie
+// kGbAudioSamplesPerPacket (234, tronque depuis 234,398 par le cast uint8_t)
+// echantillons par frame, a sa propre cadence. A 59,70 fps mesures sur
+// materiel reel, ca fait 234 x 59,70 = 13 969,8 Hz, soit 44 005 ech/s apres
+// suréchantillonnage pour 44 100 consommes par l'I2S : un deficit permanent
+// de 95 ech/s, donc un trou de 128 echantillons toutes les ~1,3 s.
+constexpr uint32_t kGbResampleNominalQ16 =
     (az2::kGbAudioSampleRate * kGbResampleOneQ16 + 22050u) / 44100u;
+// Autorite de correction : +/-0,5 %, soit ~220 ech/s a 44,1 kHz. Large devant
+// les 95 ech/s de deficit nominal et devant la gigue de fps observee.
+constexpr int32_t kGbResampleMaxDevQ16 =
+    static_cast<int32_t>(kGbResampleNominalQ16) / 200;
+uint32_t gbResampleStepQ16 = kGbResampleNominalQ16;
+
+// Asservissement : deux horloges independantes (le quartz de l'ESP32 et celui
+// du Teensy) derivent forcement l'une par rapport a l'autre. Aucun arrondi
+// entier ne sauve ca -- 235 ech/paquet donnerait un EXCEDENT de 36 Hz au lieu
+// d'un deficit. La seule sortie est de rendre le pas variable et de le
+// corriger doucement sur le remplissage de l'anneau.
+//
+// Plus le pas est GRAND, moins on produit d'echantillons par echantillon
+// source, donc plus l'anneau se vide. Anneau trop plein -> augmenter le pas ;
+// trop vide -> le diminuer. Appele une fois par paquet (~60 Hz), toujours
+// AVANT d'empiler le paquet, donc au meme point de la dent de scie
+// production/consommation : la mesure est comparable d'un paquet a l'autre.
+// [2026-10-01] Regule sur le VRAI remplissage (gbAudioSource.fill()) et non
+// plus sur une estimation millis() qui derivait au premier trou.
+void gbUpdateResampleStep() {
+  const int32_t fill = static_cast<int32_t>(gbAudioSource.fill());
+  const int32_t target = static_cast<int32_t>(AudioGbRingSource::kTargetFill);
+  int32_t adj = ((fill - target) * kGbResampleMaxDevQ16) / target;
+  if (adj > kGbResampleMaxDevQ16) adj = kGbResampleMaxDevQ16;
+  if (adj < -kGbResampleMaxDevQ16) adj = -kGbResampleMaxDevQ16;
+  gbResampleStepQ16 =
+      static_cast<uint32_t>(static_cast<int32_t>(kGbResampleNominalQ16) + adj);
+}
+
+// Remise a zero complete du chemin audio GB : anneau, pre-remplissage,
+// interpolateur et pas d'asservissement. Appelee a la reprise d'un flux
+// (changement d'emulateur, ROM rechargee) et par PANIC -- avant ce correctif,
+// aucun chemin logiciel ne savait vider cet etat (voir
+// docs/AZ2_BIP_PARASITE_2026-09-28.md).
+void gbAudioResetStream() {
+  gbAudioSource.reset();
+  gbResampleHavePrev = false;
+  gbResamplePrev = 0;
+  gbResamplePhaseQ16 = 0;
+  gbResampleStepQ16 = kGbResampleNominalQ16;
+}
 
 void handleGbAudioPacket(const uint8_t *pcm, uint8_t len) {
   ++gbAudioPacketsRx;
+  // Reprise apres un arret (changement de page, ROM dechargee) : on repart
+  // d'une base propre plutot que d'interpoler depuis un echantillon perime.
+  if (gbAudioLastPacketMs != 0 && (millis() - gbAudioLastPacketMs) > 500) {
+    gbAudioResetStream();
+  }
+  gbAudioLastPacketMs = millis();
+  const uint32_t fill = gbAudioSource.fill();
+  if (fill < gbRingFillMin) gbRingFillMin = fill;
+  if (fill > gbRingFillMax) gbRingFillMax = fill;
+  gbUpdateResampleStep();
   for (uint8_t i = 0; i < len; ++i) {
     const int16_t current = static_cast<int16_t>((static_cast<int>(pcm[i]) - 128) << 8);
     gbRecPush(current);  // capture au taux natif AVANT re-echantillonnage
@@ -3251,31 +4481,10 @@ void handleGbAudioPacket(const uint8_t *pcm, uint8_t len) {
       const int32_t interp = static_cast<int32_t>(gbResamplePrev) +
           ((delta * static_cast<int32_t>(gbResamplePhaseQ16)) >> 16);
       gbRingPush(static_cast<int16_t>(interp));
-      gbResamplePhaseQ16 += kGbResampleStepQ16;
+      gbResamplePhaseQ16 += gbResampleStepQ16;
     }
     gbResamplePhaseQ16 -= kGbResampleOneQ16;
     gbResamplePrev = current;
-  }
-}
-
-// Vide l'anneau vers gbAudioQueue par blocs complets -- appelee depuis
-// loop(), independamment du rythme d'arrivee des paquets serie.
-void feedGbAudioQueue() {
-  while (gbAudioQueue.available()) {
-    const size_t ready = (gbRingHead >= gbRingTail) ? (gbRingHead - gbRingTail)
-                                                     : (kGbRingCapacity - gbRingTail + gbRingHead);
-    if (ready < AUDIO_BLOCK_SAMPLES) {
-      break;
-    }
-    int16_t *buf = gbAudioQueue.getBuffer();
-    if (buf == nullptr) {
-      break;
-    }
-    for (int i = 0; i < AUDIO_BLOCK_SAMPLES; ++i) {
-      buf[i] = gbRing[gbRingTail];
-      gbRingTail = (gbRingTail + 1) % kGbRingCapacity;
-    }
-    gbAudioQueue.playBuffer();
   }
 }
 
@@ -3473,6 +4682,25 @@ void reportGbAudioHealth() {
   Serial.print(gbAudioTimeouts);
   Serial.print(":ring_drop=");
   Serial.print(gbRingDrops);
+  // dry = famines de la source depuis le boot (une par arret d'emulateur
+  // est normale, au-dela c'est un trou audible) ; fill_min/max = excursion
+  // du remplissage de l'anneau mesure a l'arrivee de chaque paquet (cible
+  // AudioGbRingSource::kTargetFill) ; step = pas de reechantillonnage courant
+  // (nominal kGbResampleNominalQ16, +/-0,5 % d'autorite).
+  Serial.print(":dry=");
+  Serial.print(gbAudioSource.underruns());
+  Serial.print(":fill_min=");
+  Serial.print(gbRingFillMin == AudioGbRingSource::kCapacity ? 0 : gbRingFillMin);
+  Serial.print(":fill_max=");
+  Serial.print(gbRingFillMax);
+  Serial.print(":fill=");
+  Serial.print(gbAudioSource.fill());
+  Serial.print(":step=");
+  Serial.print(gbResampleStepQ16);
+  Serial.print("/");
+  Serial.print(kGbResampleNominalQ16);
+  gbRingFillMin = AudioGbRingSource::kCapacity;
+  gbRingFillMax = 0;
   Serial.print(":v2_ok=");
   Serial.print(gbAudioV2Accepted);
   Serial.print(":v2_crc=");
@@ -3592,8 +4820,17 @@ void checkHeapTest(uint32_t bytes) {
 }
 
 void sendStatus() {
+  // Intervalle pilotable (STATUS_MS:<ms>, 0 = coupe). Diagnostic du bip
+  // periodique du 2026-09-29 : c'est le SEUL evenement a 1 Hz de la machine,
+  // et il emet une trame sur l'USB ET sur Serial1 vers l'ecran, qui redessine
+  // en reponse. Une dalle RGB 480x480 qui se rafraichit a 1 Hz est une pointe
+  // de courant periodique dans l'alimentation partagee avec le PCM5102A.
+  // Couper cet intervalle permet de tester ce couplage sans reflasher.
+  if (statusIntervalMs == 0) {
+    return;
+  }
   const uint32_t now = millis();
-  if (now - lastStatusMs < 1000) {
+  if (now - lastStatusMs < statusIntervalMs) {
     return;
   }
 
@@ -3614,6 +4851,19 @@ void setup() {
   static uint8_t serial1RxBuf[2048];
   Serial1.addMemoryForRead(serial1RxBuf, sizeof(serial1RxBuf));
   Serial1.begin(az2::kControlBaud);
+  // Broches 34 (RX8) / 35 (TX8) du circuit MIDI jamais monte : figees par
+  // pull-down plutot que laissees flottantes (regle de
+  // docs/AZ2_BIP_PARASITE_2026-09-28.md, retiree par erreur le 2026-09-29).
+  // Sans circuit en face, le pull-down ne coute rien.
+  pinMode(34, INPUT_PULLDOWN);
+  pinMode(35, INPUT_PULLDOWN);
+#ifdef AZ2_EXTERNAL_RACK
+  // RX7 (pin 28) reste physiquement connecte au rack, mais peut flotter
+  // quand le S3 est eteint/non branche. Le pull-down interne evite que le
+  // bruit de la liaison soit interprete comme des octets de controle.
+  pinMode(28, INPUT_PULLDOWN);
+  Serial7.begin(115200);  // pins 28 RX7 / 29 TX7 vers le S3, contrôle seulement
+#endif
   // Graine pour random() (PROB:, voir advanceTick()) -- micros() au boot
   // varie assez d'un demarrage a l'autre (delais SD/audio/etc. avant ici)
   // pour eviter de rejouer EXACTEMENT le meme motif "aleatoire" a chaque
@@ -3638,12 +4888,6 @@ void setup() {
   // meme temps -- 694/700 blocs, CPU 8.9% (pic 10.4%), pas de
   // depassement.
   AudioMemory(kAudioMemoryBlocks);
-
-  // Son GB (voir gbAudioQueue plus haut) : NON_STALLING -- si l'anneau
-  // envoie plus vite que la queue ne se vide (ne devrait pas arriver,
-  // 80 blocs de marge sur Teensy 4.x), on ignore plutot que de bloquer
-  // tout loop() (sequenceur, controles...) en attendant de la place.
-  gbAudioQueue.setBehaviour(AudioPlayQueue::NON_STALLING);
 
   // init_braids() = init materielle obligatoire de la lib (osc.Init()),
   // sur LES 4 instances par piste (pas seulement celle active au boot) --
@@ -3708,16 +4952,22 @@ void setup() {
   mixFinal.gain(0, 0.8f);  // groupe pistes 0-3 (deja attenuees par groupMixer, voir setTrackEngine())
   mixFinal.gain(1, 0.8f);  // groupe pistes 4-7
   mixFinal.gain(2, 0.5f);  // voix live + bus pads (mixLiveAndPads, voir plus haut)
-  mixFinal.gain(3, 0.6f);  // metronome (voir triggerMetronome())
 
-  // Enveloppe "clic" du metronome : pas de sustain, decay seul ramene
-  // a zero -- une seule noteOn() par temps suffit, pas de noteOff() a
-  // gerer (voir triggerMetronome()).
-  metroClick.begin(WAVEFORM_SINE);
-  metroEnv.attack(1.0f);
-  metroEnv.decay(30.0f);
-  metroEnv.sustain(0.0f);
-  metroEnv.release(5.0f);
+  // Marge de tete du bus pads (2026-09-19, audit de code -- aucun gain
+  // n'etait regle sur ces 6 nouveaux mixeurs, tous restaient au defaut
+  // 1.0 de la lib) : sans attenuation, un kit de batterie joue souvent
+  // PLUSIEURS pads a la fois (fill rapide, plusieurs doigts) -- 4 pads
+  // d'un meme groupe a 1.0 chacun peuvent sommer jusqu'a 4x avant
+  // meme mixFinal. Meme principe/ordre de grandeur que les groupes de
+  // pistes ci-dessus (0.8), applique ici a l'entree de chaque groupe de
+  // pads plutot qu'en sortie -- une seule case a regler pour les 4
+  // groupes (memes reglages pour A/B/C/D).
+  for (uint8_t ch = 0; ch < 4; ++ch) {
+    mixPadsA.gain(ch, 0.7f);
+    mixPadsB.gain(ch, 0.7f);
+    mixPadsC.gain(ch, 0.7f);
+    mixPadsD.gain(ch, 0.7f);
+  }
 
   // Bus d'effets maitre : sec a fond, reverb/delay a 0 par defaut tant
   // que les potards n'ont pas ete lus une premiere fois (voir
@@ -3754,9 +5004,11 @@ void setup() {
 
 void loop() {
   readSerialCommands();
+#ifdef AZ2_EXTERNAL_RACK
+  serviceRackReplies();
+  serviceGranularSampleTransfer();
+#endif
   reportGbAudioHealth();
-  updateMidiIn();
-  feedGbAudioQueue();
   updateScope();
   updateSequencer();
   updateLocalControls();

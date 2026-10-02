@@ -18,13 +18,17 @@
 // bits a kGbAudioSampleRate Hz (voir AZ2_Protocol.h) et on l'envoie en
 // paquet binaire sur le MEME lien Serial1 que le reste du protocole
 // (voir sendGbAudioPacket() plus bas) -- volontairement basse
-// resolution pour tenir large dans le budget du lien 230400 bauds.
+// resolution pour tenir dans le budget du lien UART partage a 921600 bauds.
 // Cote Teensy : src_teensy/az2_audio/main.cpp recoit ces paquets,
 // re-echantillonne vers 44.1kHz et les joue via un AudioPlayQueue
 // branche sur le bus d'effets maitre (meme chemin que les moteurs de
 // synthese), donc avec reverb/delay/volume si les potards sont
 // tournes.
 
+// Optimisation propre a ce fichier (coeur Walnut-CGB inclus ici). Mesure
+// Zelda DX X2 du 2026-10-01, core_avg_us : -O2 14,9 ms, -O3 17,3 ms,
+// -Os 19,0 ms. Le reste du firmware ecran garde -O3 (utile au coeur NES).
+#pragma GCC optimize("O2")
 #include "gb_emulator.h"
 
 #define ENABLE_LCD 1
@@ -69,6 +73,12 @@ uint32_t romSize = 0;
 uint8_t *cartRam = nullptr;
 uint32_t cartRamSize = 0;
 bool cartRamDirty = false;
+// Empreinte du contenu deja present sur la SD : meme correctif que
+// gb_emulator_peanut.cpp (b211b4d). Sans elle la sauvegarde auto reecrivait
+// le .sav pour une SRAM revenue a l'identique et figeait le jeu ~0,8 s
+// (mesure Zelda DX du 2026-10-01).
+uint32_t cartRamSavedCrc = 0;
+bool cartRamSavedCrcValid = false;
 // La copie .bak est l'unique sauvegarde valide apres recuperation.
 bool cartRamRecoveredFromBackup = false;
 
@@ -79,7 +89,7 @@ bool cartRamRecoveredFromBackup = false;
 bool cartHasRtc = false;
 bool rtcRecoveredFromBackup = false;
 uint8_t rtcLastSaved[5] = {0};
-char rtcPath[96] = {0};
+char rtcPath[192] = {0};
 
 // Sauvegarde periodique (2026-09-19, voir gbRunFrame()) -- remis a
 // zero a chaque chargement de ROM (voir gbLoadRom()) pour que le
@@ -91,15 +101,24 @@ uint32_t gbLastAutosaveMs = 0;
 GbRuntimeStats runtimeStats;
 uint32_t statsWindowStartUs = 0;
 uint32_t statsWorkAccumUs = 0;
+uint32_t statsCoreAccumUs = 0;
+uint32_t statsAudioAccumUs = 0;
+uint32_t statsDisplayAccumUs = 0;
+uint32_t statsCoreMaxUs = 0;
+uint32_t statsDisplayMaxUs = 0;
+uint32_t statsAudioMaxUs = 0;
 uint32_t statsWindowFrames = 0;
 uint32_t statsWindowMaxUs = 0;
+constexpr uint8_t kStatsSamplesCapacity = 64;
+uint32_t statsWorkSamples[kStatsSamplesCapacity] = {};
+uint8_t statsWorkSampleCount = 0;
 char romTitle[17] = {0};
 // Chemin de sauvegarde (cart RAM) pour la ROM courante, meme nom que la
 // ROM avec l'extension remplacee par .sav, a cote d'elle dans /games --
 // convention classique d'emulateur (rom.gb + rom.sav). Vide si aucune
 // ROM chargee ou si la cartouche n'a pas de RAM (cartRamSize==0).
-constexpr size_t kSavePathCapacity = 96;
-// /games/ + nom + extension .sav eventuellement un octet plus longue
+constexpr size_t kSavePathCapacity = 192;
+// /games/ + chemin relatif + extension .sav eventuellement un octet plus longue
 // que .gb + terminateur : ne pas modifier la taille de liste sans
 // ajuster l'espace alloue au chemin SD.
 static_assert(kGbRomNameLen + sizeof("/games/") <= kSavePathCapacity,
@@ -108,26 +127,26 @@ char saveRamPath[kSavePathCapacity] = {0};
 static_assert(sizeof(rtcPath) == kSavePathCapacity,
               "GB: RTC/save path capacities must match");
 
-uint8_t romRead(struct gb_s *, const uint_fast32_t addr) {
+IRAM_ATTR uint8_t romRead(struct gb_s *, const uint_fast32_t addr) {
   return (addr < romSize) ? romData[addr] : 0xFF;
 }
 
-uint16_t romRead16(struct gb_s *, const uint_fast32_t addr) {
+IRAM_ATTR uint16_t romRead16(struct gb_s *, const uint_fast32_t addr) {
   if (addr + 1 >= romSize) return 0xFFFF;
   return static_cast<uint16_t>(romData[addr]) | (static_cast<uint16_t>(romData[addr + 1]) << 8);
 }
 
-uint32_t romRead32(struct gb_s *, const uint_fast32_t addr) {
+IRAM_ATTR uint32_t romRead32(struct gb_s *, const uint_fast32_t addr) {
   if (addr + 3 >= romSize) return 0xFFFFFFFF;
   return static_cast<uint32_t>(romData[addr]) | (static_cast<uint32_t>(romData[addr + 1]) << 8) |
          (static_cast<uint32_t>(romData[addr + 2]) << 16) | (static_cast<uint32_t>(romData[addr + 3]) << 24);
 }
 
-uint8_t cartRamRead(struct gb_s *, const uint_fast32_t addr) {
+IRAM_ATTR uint8_t cartRamRead(struct gb_s *, const uint_fast32_t addr) {
   return (addr < cartRamSize) ? cartRam[addr] : 0xFF;
 }
 
-void cartRamWrite(struct gb_s *, const uint_fast32_t addr, const uint8_t val) {
+IRAM_ATTR void cartRamWrite(struct gb_s *, const uint_fast32_t addr, const uint8_t val) {
   if (addr < cartRamSize) {
     if (cartRam[addr] != val) {
       cartRam[addr] = val;
@@ -299,7 +318,14 @@ bool gbSaveCartRam() {
     Serial.println("GB:SAVE_UNAVAILABLE");
     return false;
   }
+  const uint32_t crc = crc32Buffer(cartRam, cartRamSize);
+  if (cartRamSavedCrcValid && crc == cartRamSavedCrc) {
+    cartRamDirty = false;  // identique a la SD : aucune ecriture
+    return true;
+  }
   if (atomicSaveRaw(saveRamPath, cartRam, cartRamSize)) {
+    cartRamSavedCrc = crc;
+    cartRamSavedCrcValid = true;
     cartRamDirty = false;
     cartRamRecoveredFromBackup = false;
     Serial.print("GB:SAVED:");
@@ -534,6 +560,8 @@ bool gbLoadCartRamIfPresent() {
   if (gbLoadCartRamFile(saveRamPath)) {
     cartRamDirty = false;
     cartRamRecoveredFromBackup = false;
+    cartRamSavedCrc = crc32Buffer(cartRam, cartRamSize);
+    cartRamSavedCrcValid = true;
     return true;
   }
 
@@ -658,6 +686,61 @@ void sendGbAudioPacket() {
 
 }  // namespace
 
+namespace {
+// Moteur de triche local à l'unité de compilation
+constexpr uint8_t kMaxCheats = 8;
+GbCheat activeCheats[kMaxCheats];
+uint8_t activeCheatCount = 0;
+
+void initCheatsForRom() {
+  activeCheatCount = 0;
+  memset(activeCheats, 0, sizeof(activeCheats));
+  
+  if (romTitle[0] == '\0') return;
+  
+  String t = String(romTitle);
+  t.toUpperCase();
+  
+  if (t.indexOf("TETRIS") >= 0) {
+    activeCheats[0] = {"Inf. Lines", 0xC0A0, 99, false};
+    activeCheats[1] = {"Max Score 1", 0xC0A2, 0x99, false};
+    activeCheats[2] = {"Max Score 2", 0xC0A1, 0x99, false};
+    activeCheatCount = 3;
+  } else if (t.indexOf("MARIO") >= 0 || t.indexOf("SML") >= 0) {
+    activeCheats[0] = {"Inf. Lives", 0xDA15, 99, false};
+    activeCheats[1] = {"Inf. Time 1", 0xC101, 9, false};
+    activeCheats[2] = {"Inf. Time 2", 0xC100, 9, false};
+    activeCheats[3] = {"Superball", 0xFF99, 2, false};
+    activeCheatCount = 4;
+  } else if (t.indexOf("ZELDA") >= 0 || t.indexOf("LINK") >= 0) {
+    activeCheats[0] = {"Inf. Hearts", 0xDB5A, 0x08, false};
+    activeCheats[1] = {"Max Rupees 1", 0xDB5D, 0x99, false};
+    activeCheats[2] = {"Max Rupees 2", 0xDB5E, 0x09, false};
+    activeCheats[3] = {"Inf. Bombs", 0xDB4C, 30, false};
+    activeCheats[4] = {"Inf. Arrows", 0xDB4D, 30, false};
+    activeCheatCount = 5;
+  }
+}
+
+void applyCheats() {
+  for (uint8_t i = 0; i < activeCheatCount; ++i) {
+    if (activeCheats[i].enabled) {
+      uint16_t addr = activeCheats[i].address;
+      uint8_t val = activeCheats[i].value;
+      if (addr >= 0xC000 && addr <= 0xDFFF) {
+        gb.wram[addr - 0xC000] = val;
+      } else if (addr >= 0xFF80 && addr <= 0xFFFE) {
+        gb.hram_io[addr - 0xFF00] = val;
+      } else if (addr >= 0xA000 && addr <= 0xBFFF) {
+        if (cartRam && addr - 0xA000 < cartRamSize) {
+          cartRam[addr - 0xA000] = val;
+        }
+      }
+    }
+  }
+}
+}  // namespace
+
 bool gbIsLoaded() {
   return romLoaded;
 }
@@ -674,6 +757,7 @@ bool gbUnload() {
       return false;
     }
   }
+  activeCheatCount = 0;
   if (romData != nullptr) {
     heap_caps_free(romData);
     romData = nullptr;
@@ -688,6 +772,7 @@ bool gbUnload() {
   rtcPath[0] = '\0';
   cartRamDirty = false;
   cartRamRecoveredFromBackup = false;
+  cartRamSavedCrcValid = false;
   cartHasRtc = false;
   rtcRecoveredFromBackup = false;
   memset(rtcLastSaved, 0, sizeof(rtcLastSaved));
@@ -696,6 +781,13 @@ bool gbUnload() {
   statsWorkAccumUs = 0;
   statsWindowFrames = 0;
   statsWindowMaxUs = 0;
+  statsCoreAccumUs = 0;
+  statsAudioAccumUs = 0;
+  statsDisplayAccumUs = 0;
+  statsCoreMaxUs = 0;
+  statsDisplayMaxUs = 0;
+  statsAudioMaxUs = 0;
+  statsWorkSampleCount = 0;
   return true;
 }
 
@@ -704,6 +796,36 @@ bool gbSaveNow() {
   const bool ramOk = gbSaveCartRam();
   const bool rtcOk = gbSaveRtc();
   return ramOk && rtcOk;
+}
+
+bool gbLoadNow() {
+  if (!romLoaded) return true;
+  bool ramOk = true;
+  if (cartRam && cartRamSize > 0) {
+    ramOk = gbLoadCartRamIfPresent();
+  }
+  bool rtcOk = true;
+  if (cartHasRtc) {
+    rtcOk = gbLoadRtcIfPresent();
+  }
+  return ramOk && rtcOk;
+}
+
+uint8_t gbGetCheatCount() {
+  return activeCheatCount;
+}
+
+GbCheat* gbGetCheat(uint8_t index) {
+  if (index < activeCheatCount) {
+    return &activeCheats[index];
+  }
+  return nullptr;
+}
+
+void gbToggleCheat(uint8_t index) {
+  if (index < activeCheatCount) {
+    activeCheats[index].enabled = !activeCheats[index].enabled;
+  }
 }
 
 void gbSetAudioV2Ready(bool ready) {
@@ -736,6 +858,43 @@ void sortRomNames(char names[][kGbRomNameLen], uint8_t count) {
   }
 }
 
+static GbRomKind romKind = GbRomKind::Any;
+
+static bool romKindAccepts(const String &name) {
+  const bool isGb = name.endsWith(".gb") || name.endsWith(".GB");
+  const bool isGbc = name.endsWith(".gbc") || name.endsWith(".GBC");
+  switch (romKind) {
+    case GbRomKind::Dmg: return isGb;
+    case GbRomKind::Cgb: return isGbc;
+    default: return isGb || isGbc;
+  }
+}
+
+void scanGbDir(File &dir, const String &prefix, char names[][kGbRomNameLen],
+               uint8_t &count) {
+  for (File entry = dir.openNextFile(); entry && count < kGbMaxRoms;
+       entry = dir.openNextFile()) {
+    const String fullName = entry.name();
+    const int slash = fullName.lastIndexOf('/');
+    const String base = (slash >= 0) ? fullName.substring(slash + 1) : fullName;
+    const String relative = prefix.length() ? prefix + "/" + base : base;
+    if (entry.isDirectory()) {
+      scanGbDir(entry, relative, names, count);
+    } else if (romKindAccepts(fullName)) {
+      if (relative.length() >= kGbRomNameLen) {
+        Serial.print("GB:ROM_PATH_TOO_LONG:");
+        Serial.println(relative);
+      } else {
+        strncpy(names[count], relative.c_str(), kGbRomNameLen);
+        ++count;
+      }
+    }
+    entry.close();
+  }
+}
+
+void gbSetRomKind(GbRomKind kind) { romKind = kind; }
+
 uint8_t gbScanRoms(char names[][kGbRomNameLen]) {
   uint8_t count = 0;
 
@@ -749,27 +908,7 @@ uint8_t gbScanRoms(char names[][kGbRomNameLen]) {
     return 0;
   }
 
-  for (File entry = dir.openNextFile(); entry && count < kGbMaxRoms; entry = dir.openNextFile()) {
-    const String name = entry.name();
-    if (!entry.isDirectory() && (name.endsWith(".gb") || name.endsWith(".gbc") ||
-                                  name.endsWith(".GB") || name.endsWith(".GBC"))) {
-      // entry.name() peut renvoyer le chemin complet ("/games/xxx.gb")
-      // selon la version de la lib SD -- ne garder que le nom de fichier.
-      const int slash = name.lastIndexOf('/');
-      const String base = (slash >= 0) ? name.substring(slash + 1) : name;
-      // Ne pas tronquer les noms : deux ROM differant seulement apres
-      // le 39e caractere devenaient indiscernables et pouvaient charger
-      // la mauvaise cartouche (ou partager accidentellement un .sav).
-      if (base.length() >= kGbRomNameLen) {
-        Serial.print("GB:ROM_NAME_TOO_LONG:");
-        Serial.println(base);
-      } else {
-        strncpy(names[count], base.c_str(), kGbRomNameLen);
-        ++count;
-      }
-    }
-    entry.close();
-  }
+  scanGbDir(dir, "", names, count);
   dir.close();
 
   if (count == 0) {
@@ -781,9 +920,8 @@ uint8_t gbScanRoms(char names[][kGbRomNameLen]) {
 }
 
 bool gbLoadRom(const char *filename) {
-  if (filename == nullptr || filename[0] == '\0' || strchr(filename, '/') != nullptr ||
-      strchr(filename, '\\') != nullptr || strcmp(filename, ".") == 0 ||
-      strcmp(filename, "..") == 0) {
+  if (filename == nullptr || filename[0] == '\0' || filename[0] == '/' ||
+      strchr(filename, '\\') != nullptr || strstr(filename, "..") != nullptr) {
     Serial.println("GB:ROM_INVALID_NAME");
     return false;
   }
@@ -856,6 +994,7 @@ bool gbLoadRom(const char *filename) {
   cartRamSize = static_cast<uint32_t>(detectedSaveSize);
   cartRamDirty = false;
   cartRamRecoveredFromBackup = false;
+  cartRamSavedCrcValid = false;
 
   const uint8_t cartridgeType = romData[0x147];
   cartHasRtc = (cartridgeType == 0x0F || cartridgeType == 0x10);
@@ -880,6 +1019,9 @@ bool gbLoadRom(const char *filename) {
   gbLastAutosaveMs = millis();  // reparti a zero pour cette partie, voir gbRunFrame()
   runtimeStats = GbRuntimeStats{};
   statsWindowStartUs = micros();
+  statsCoreAccumUs = 0;
+  statsAudioAccumUs = 0;
+  statsWorkSampleCount = 0;
   if (cartRamSize > 0) {
     cartRam = static_cast<uint8_t *>(heap_caps_malloc(cartRamSize, MALLOC_CAP_SPIRAM));
     if (cartRam != nullptr) {
@@ -923,10 +1065,23 @@ bool gbLoadRom(const char *filename) {
   // lignes en bandes pour supprimer l'ancien cout de 144 transactions par
   // frame. Un mode economie pourra etre ajoute plus tard, mais ne doit pas
   // etre le comportement par defaut d'une machine visant l'emulation native.
-  gb.direct.frame_skip = false;
+  // Le cœur continue d'exécuter chaque frame et de produire l'audio, mais
+  // saute un rendu LCD sur deux -- l'image reste ainsi fluide autour de
+  // 30 Hz tandis que la logique du jeu conserve sa cadence proche de
+  // 59,7 Hz. Passe brievement a `false` le 2026-09-24 pour mesurer en
+  // direct sur materiel reel via GB:PERF (voir
+  // docs/AZ2_MESURE_EMULATEUR_GB_2026-09-24.md) : le vrai goulet est le
+  // COEUR (core_avg_us ~37000us, CPU+PPU interne), PAS le panneau RGB/
+  // PSRAM comme l'affirmait sans preuve l'ancienne version de ce
+  // commentaire (display_avg_us ~16500us, net secondaire). Remis a `true`
+  // une fois la mesure faite -- desactiver le frame-skip degradait
+  // l'affichage (~21fps mesures) sans aucun benefice tant qu'un coeur plus
+  // rapide (etude Peanut-GB en cours) n'est pas integre.
+  gb.direct.frame_skip = true;
 
   gb_get_rom_name(&gb, romTitle);
   romLoaded = true;
+  initCheatsForRom();
 
   Serial.print("GB:LOADED:title=");
   Serial.print(romTitle);
@@ -952,19 +1107,46 @@ constexpr uint32_t kGbAutosaveIntervalMs = 30000;
 void gbRunFrame() {
   if (!romLoaded) return;
 
+  applyCheats();
+
   const uint32_t workStartUs = micros();
   // Walnut-CGB recommande ce chemin : deux opcodes sont recuperes par
   // chaine de dispatch et les transferts DMA 32 bits restent actifs. Les
   // optimisations 16 bits experimentales connues pour casser des jeux
   // restent, elles, desactivees dans walnut_cgb.h.
+  // X3 ecrit 2,25 fois plus de pixels qu'X2 dans la PSRAM que l'ecran RGB
+  // lit en continu et ou vit la ROM : 1 image dessinee sur 3 (20 Hz) au lieu
+  // d'1 sur 2 (30 Hz) soulage le bus. Logique et son restent a 59,7 Hz.
+  extern uint8_t gbDisplayScale;
+  gb.direct.frame_skip_ratio = (gbDisplayScale >= 3) ? 3 : 2;
   gb_run_frame_dualfetch(&gb);
+  // Filet de securite double-coeur (voir le commentaire pres de
+  // gGbBandCheckedOut dans main.cpp) : recupere un buffer de bande laisse
+  // "sorti" par un blanking LCD qui a saute la fin de bande cette frame.
+  // No-op (et meme absent) si AZ2_GB_DUAL_CORE_BLIT n'est pas defini.
+  extern void gbBlitEndOfFrame();
+  gbBlitEndOfFrame();
+  const uint32_t coreUs = micros() - workStartUs;
+  extern volatile uint32_t gGbDisplayLastUs;
+  const uint32_t displayUs = gGbDisplayLastUs;
+  const uint32_t audioStartUs = micros();
   sendGbAudioPacket();
-  const uint32_t workUs = micros() - workStartUs;
+  const uint32_t audioUs = micros() - audioStartUs;
+  const uint32_t workUs = coreUs + audioUs;
 
   ++runtimeStats.totalFrames;
   ++statsWindowFrames;
   statsWorkAccumUs += workUs;
+  statsCoreAccumUs += coreUs;
+  statsDisplayAccumUs += displayUs;
+  statsAudioAccumUs += audioUs;
+  if (coreUs > statsCoreMaxUs) statsCoreMaxUs = coreUs;
+  if (displayUs > statsDisplayMaxUs) statsDisplayMaxUs = displayUs;
+  if (audioUs > statsAudioMaxUs) statsAudioMaxUs = audioUs;
   if (workUs > statsWindowMaxUs) statsWindowMaxUs = workUs;
+  if (statsWorkSampleCount < kStatsSamplesCapacity) {
+    statsWorkSamples[statsWorkSampleCount++] = workUs;
+  }
 
   const uint32_t nowUs = micros();
   const uint32_t windowUs = nowUs - statsWindowStartUs;
@@ -972,11 +1154,40 @@ void gbRunFrame() {
     runtimeStats.fpsX10 = static_cast<uint16_t>(
         (static_cast<uint64_t>(statsWindowFrames) * 10000000ull + windowUs / 2) / windowUs);
     runtimeStats.avgWorkUs = statsWorkAccumUs / statsWindowFrames;
+    runtimeStats.avgCoreUs = statsCoreAccumUs / statsWindowFrames;
+    runtimeStats.avgDisplayUs = statsDisplayAccumUs / statsWindowFrames;
+    runtimeStats.avgAudioUs = statsAudioAccumUs / statsWindowFrames;
+    runtimeStats.maxCoreUs = statsCoreMaxUs;
+    runtimeStats.maxDisplayUs = statsDisplayMaxUs;
+    runtimeStats.maxAudioUs = statsAudioMaxUs;
     runtimeStats.maxWorkUs = statsWindowMaxUs;
+    for (uint8_t i = 1; i < statsWorkSampleCount; ++i) {
+      const uint32_t value = statsWorkSamples[i];
+      uint8_t j = i;
+      while (j > 0 && statsWorkSamples[j - 1] > value) {
+        statsWorkSamples[j] = statsWorkSamples[j - 1];
+        --j;
+      }
+      statsWorkSamples[j] = value;
+    }
+    if (statsWorkSampleCount > 0) {
+      const uint8_t p99Index = static_cast<uint8_t>((statsWorkSampleCount * 99U) / 100U);
+      runtimeStats.p99WorkUs = statsWorkSamples[p99Index >= statsWorkSampleCount ?
+                                                   statsWorkSampleCount - 1 : p99Index];
+    } else {
+      runtimeStats.p99WorkUs = 0;
+    }
     statsWindowStartUs = nowUs;
     statsWorkAccumUs = 0;
+    statsCoreAccumUs = 0;
+    statsDisplayAccumUs = 0;
+    statsAudioAccumUs = 0;
+    statsCoreMaxUs = 0;
+    statsDisplayMaxUs = 0;
+    statsAudioMaxUs = 0;
     statsWindowFrames = 0;
     statsWindowMaxUs = 0;
+    statsWorkSampleCount = 0;
   }
 
   const uint32_t now = millis();
