@@ -2108,43 +2108,59 @@ void drawEngMiniPatch() {
 // Zone graphique compacte : une silhouette par moteur et deux valeurs
 // directement pilotables par les potentiometres 2/3. Elle reste dans le
 // bandeau existant pour conserver la navigation tactile actuelle.
+// [2026-10-02] Le bandeau est redessine ~12 fois/s (animation) : l'effacer
+// puis le redessiner directement dans le framebuffer que le DMA de l'ecran
+// lit en continu laissait voir un etat a moitie efface ("la fenetre des
+// moteurs sautille"). On dessine maintenant hors ecran dans un petit canvas
+// (PSRAM, 432x66) puis on le copie d'un bloc : jamais d'etat intermediaire.
+Arduino_Canvas *engVizCanvas = nullptr;
+
 void drawEngVisualizer() {
   const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
   const uint16_t accent = patchAccent(t);
-  const int16_t x = kMargin;
-  const int16_t y = kEngMiniY;
   const int16_t w = static_cast<int16_t>(kScreenSize - 2 * kMargin);
   const int16_t h = kEngMiniH;
-  const uint8_t phase = static_cast<uint8_t>(engineAnimFrame & 0x3f);
-  gfx->fillRect(x, y, w, h, RGB565_BLACK);
-  gfx->drawRect(x, y, w, h, accent);
-  const int16_t cx = static_cast<int16_t>(x + 32);
-  const int16_t cy = static_cast<int16_t>(y + h / 2 + 3);
-  gfx->drawCircle(cx, cy, 20, kFaint);
-  gfx->drawCircle(cx, cy, static_cast<int16_t>(10 + phase / 8), accent);
-  if (trackEngine[t] == az2::kEngineDexed) {
-    for (uint8_t i = 0; i < 4; ++i) {
-      gfx->drawLine(cx - 18 + i * 12, cy - 15, cx - 9 + i * 12, cy + 15, accent);
-    }
-  } else if (trackEngine[t] == az2::kEngineDrum) {
-    gfx->fillCircle(cx, cy, static_cast<int16_t>(5 + phase / 16), accent);
-    gfx->drawCircle(cx, cy, 15, accent);
-  } else if (trackEngine[t] == az2::kEngineSampler) {
-    gfx->drawLine(cx - 18, cy + 10, cx - 6, cy - 12, accent);
-    gfx->drawLine(cx - 6, cy - 12, cx + 8, cy + 5, accent);
-    gfx->drawLine(cx + 8, cy + 5, cx + 18, cy - 15, accent);
-  } else {
-    for (int16_t i = -18; i < 18; i += 3) {
-      gfx->drawPixel(static_cast<int16_t>(cx + i), static_cast<int16_t>(cy + ((i * 7 + phase * 3) % 18)), accent);
+  if (engVizCanvas == nullptr) {
+    engVizCanvas = new Arduino_Canvas(w, h, gfx, kMargin, kEngMiniY);
+    if (!engVizCanvas->begin(GFX_SKIP_OUTPUT_BEGIN)) {
+      delete engVizCanvas;
+      engVizCanvas = nullptr;
     }
   }
-  gfx->setTextSize(1);
-  gfx->setTextColor(kDim);
-  gfx->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 4));
-  gfx->print(engineParamBank == 0 ? "FILTRE  POT2/POT3" : "PATCH  POT2/POT3");
-  gfx->setTextColor(RGB565_WHITE);
-  gfx->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 16));
-  gfx->print(az2::engineName(trackEngine[t]));
+  // Repli sans canvas (memoire insuffisante) : ancien dessin direct.
+  Arduino_GFX *g = engVizCanvas != nullptr ? static_cast<Arduino_GFX *>(engVizCanvas) : gfx;
+  const int16_t x = engVizCanvas != nullptr ? 0 : kMargin;
+  const int16_t y = engVizCanvas != nullptr ? 0 : kEngMiniY;
+  const uint8_t phase = static_cast<uint8_t>(engineAnimFrame & 0x3f);
+  g->fillRect(x, y, w, h, RGB565_BLACK);
+  g->drawRect(x, y, w, h, accent);
+  const int16_t cx = static_cast<int16_t>(x + 32);
+  const int16_t cy = static_cast<int16_t>(y + h / 2 + 3);
+  g->drawCircle(cx, cy, 20, kFaint);
+  g->drawCircle(cx, cy, static_cast<int16_t>(10 + phase / 8), accent);
+  if (trackEngine[t] == az2::kEngineDexed) {
+    for (uint8_t i = 0; i < 4; ++i) {
+      g->drawLine(cx - 18 + i * 12, cy - 15, cx - 9 + i * 12, cy + 15, accent);
+    }
+  } else if (trackEngine[t] == az2::kEngineDrum) {
+    g->fillCircle(cx, cy, static_cast<int16_t>(5 + phase / 16), accent);
+    g->drawCircle(cx, cy, 15, accent);
+  } else if (trackEngine[t] == az2::kEngineSampler) {
+    g->drawLine(cx - 18, cy + 10, cx - 6, cy - 12, accent);
+    g->drawLine(cx - 6, cy - 12, cx + 8, cy + 5, accent);
+    g->drawLine(cx + 8, cy + 5, cx + 18, cy - 15, accent);
+  } else {
+    for (int16_t i = -18; i < 18; i += 3) {
+      g->drawPixel(static_cast<int16_t>(cx + i), static_cast<int16_t>(cy + ((i * 7 + phase * 3) % 18)), accent);
+    }
+  }
+  g->setTextSize(1);
+  g->setTextColor(kDim);
+  g->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 4));
+  g->print(engineParamBank == 0 ? "FILTRE  POT2/POT3" : "PATCH  POT2/POT3");
+  g->setTextColor(RGB565_WHITE);
+  g->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 16));
+  g->print(az2::engineName(trackEngine[t]));
   char buf[36];
   if (engineParamBank == 0) {
     snprintf(buf, sizeof(buf), "CUTOFF %3u  RESO %3u", trackCutoff[t], trackReso[t]);
@@ -2153,12 +2169,13 @@ void drawEngVisualizer() {
   } else {
     snprintf(buf, sizeof(buf), "ATTACK %3u  DECAY %3u", trackAttack[t], trackDecay[t]);
   }
-  gfx->setTextColor(accent);
-  gfx->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 30));
-  gfx->print(buf);
-  gfx->setTextColor(kDim);
-  gfx->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 47));
-  gfx->print("B / ENC1 : changer de banque");
+  g->setTextColor(accent);
+  g->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 30));
+  g->print(buf);
+  g->setTextColor(kDim);
+  g->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 47));
+  g->print("B / ENC1 : changer de banque");
+  if (engVizCanvas != nullptr) engVizCanvas->flush();
 }
 
 bool hitTestEngMini(int16_t x, int16_t y) {
@@ -2293,6 +2310,19 @@ uint8_t trackAlgo[kSeqTrackCount] = {};
 uint8_t trackFeedback[kSeqTrackCount] = {};
 uint8_t rackParamVal[kSeqTrackCount][az2::kRackGranularParamCount] = {};
 uint8_t patchExtraVal[kSeqTrackCount][17] = {};
+// Section EFFETS de la page PATCH (2026-10-02) : 7 lignes communes a tous
+// les moteurs, apres les lignes propres au moteur -- miroir de
+// trackFxVal[] cote Teensy, envoyees par TFX:<piste>:<param>:<valeur>.
+// Independantes du moteur : survivent a un changement de moteur.
+constexpr uint8_t kFxRowCount = 7;
+constexpr const char *kFxRowLabel[kFxRowCount] = {
+    "DRIVE", "CRUSH", "LFO RATE", "LFO DEPTH", "DELAY", "FEEDBACK", "DLY MIX",
+};
+constexpr uint8_t kFxRowDefault[kFxRowCount] = {0, 0, 40, 0, 0, 0, 0};
+uint8_t trackFxVal[kSeqTrackCount][kFxRowCount] = {
+    {0, 0, 40, 0, 0, 0, 0}, {0, 0, 40, 0, 0, 0, 0}, {0, 0, 40, 0, 0, 0, 0}, {0, 0, 40, 0, 0, 0, 0},
+    {0, 0, 40, 0, 0, 0, 0}, {0, 0, 40, 0, 0, 0, 0}, {0, 0, 40, 0, 0, 0, 0}, {0, 0, 40, 0, 0, 0, 0},
+};
 
 // Miroir cote ecran de rackOwnerTrack[] (source de verite cote Teensy,
 // voir son commentaire dans src_teensy/az2_audio/main.cpp) -- tenu a jour
@@ -2409,7 +2439,9 @@ uint8_t &patchParamRef(uint8_t track, uint8_t row) {
 // voir patchVolRow()/patchSlotRow() -- au lieu d'etre fixes a 6/7).
 // KARPLUS/ANALOG n'ont rien de plus a exposer (0 ligne extra, page
 // inchangee -- meme mise en page qu'avant ce chantier).
-uint8_t patchExtraCount(uint8_t track) {
+// Lignes propres au moteur seulement (voir patchExtraCount() pour le total
+// avec la section EFFETS).
+uint8_t patchEngineExtraCount(uint8_t track) {
   switch (trackEngine[track]) {
     case az2::kEngineDexed: return 17;   // parametres globaux DX7 (hors algo/feedback deja lignes 2-3, hors nom)
     case az2::kEngineEPiano: return 12;  // les 12 parametres continus mdaEPiano
@@ -2422,6 +2454,19 @@ uint8_t patchExtraCount(uint8_t track) {
     case az2::kEngineSpectral: return az2::kRackSpectralParamCount - 6;
     default: return 0;
   }
+}
+// Total des lignes extra = lignes du moteur + section EFFETS commune.
+uint8_t patchExtraCount(uint8_t track) {
+  return static_cast<uint8_t>(patchEngineExtraCount(track) + kFxRowCount);
+}
+bool patchExtraIsFx(uint8_t track, uint8_t extraIdx) {
+  return extraIdx >= patchEngineExtraCount(track);
+}
+// Valeur d'une ligne extra, moteur ou EFFETS.
+uint8_t &patchExtraValRef(uint8_t track, uint8_t extraIdx) {
+  const uint8_t engineCount = patchEngineExtraCount(track);
+  if (extraIdx >= engineCount) return trackFxVal[track][extraIdx - engineCount];
+  return patchExtraVal[track][extraIdx];
 }
 uint8_t patchVolRow(uint8_t track) { return static_cast<uint8_t>(6 + patchExtraCount(track)); }
 uint8_t patchSlotRow(uint8_t track) { return static_cast<uint8_t>(patchVolRow(track) + 1); }
@@ -2438,7 +2483,7 @@ uint8_t patchTotalRows(uint8_t track) { return static_cast<uint8_t>(patchSlotRow
 // ligne visuelle) : centralise ici pour que les deux sens restent
 // coherents, plutot que deux implementations paralleles qui pourraient
 // diverger.
-constexpr uint8_t kPatchMaxKeptRows = 24;  // 6 fixes + 17 extra (DEXED, le pire cas) + volume, marge incluse
+constexpr uint8_t kPatchMaxKeptRows = 32;  // 6 fixes + 17 extra (DEXED) + 7 EFFETS + volume, marge incluse
 uint8_t patchKeptRows(uint8_t track, uint8_t (&out)[kPatchMaxKeptRows]) {
   const uint8_t volRow = patchVolRow(track);
   uint8_t count = 0;
@@ -2581,6 +2626,7 @@ constexpr const char *kEPianoExtraLabel[12] = {
 constexpr const char *kBraidsExtraLabel[2] = {"COLOR", "TIMBRE"};
 
 const char *patchExtraLabel(uint8_t track, uint8_t extraIdx) {
+  if (patchExtraIsFx(track, extraIdx)) return kFxRowLabel[extraIdx - patchEngineExtraCount(track)];
   switch (trackEngine[track]) {
     case az2::kEngineDexed: return kDexedExtraLabel[extraIdx];
     case az2::kEngineEPiano: return kEPianoExtraLabel[extraIdx];
@@ -2596,6 +2642,7 @@ const char *patchExtraLabel(uint8_t track, uint8_t extraIdx) {
 }
 
 uint8_t patchExtraMax(uint8_t track, uint8_t extraIdx) {
+  if (patchExtraIsFx(track, extraIdx)) return 127;
   // EPIANO/BRAIDS : toutes leurs lignes extra sont sur l'echelle
   // 0-127 (voir EXP:/BXP: cote Teensy) -- seul DEXED a une plage
   // reelle differente par parametre (voir kDexedExtraMax, reprise des
@@ -2656,6 +2703,12 @@ void drawSamplerTrackPanel(uint8_t track) {
 
 void sendPatchExtra(uint8_t track, uint8_t extraIdx) {
   char msg[48];
+  if (patchExtraIsFx(track, extraIdx)) {
+    const uint8_t fx = static_cast<uint8_t>(extraIdx - patchEngineExtraCount(track));
+    snprintf(msg, sizeof(msg), "TFX:%d:%d:%d", track, fx, trackFxVal[track][fx]);
+    sendToTeensy(msg);
+    return;
+  }
   switch (trackEngine[track]) {
     case az2::kEngineDexed:
       snprintf(msg, sizeof(msg), "DXR:%d:%d:%d", track, kDexedExtraRaw[extraIdx], patchExtraVal[track][extraIdx]);
@@ -2722,7 +2775,7 @@ void sendPatchExtra(uint8_t track, uint8_t extraIdx) {
 // pas grave : color/timbre partent a 0 a l'affectation du moteur, une
 // valeur de depart raisonnable pour 2 reglages de couleur sonore).
 void queryPatchExtra(uint8_t track) {
-  const uint8_t count = patchExtraCount(track);
+  const uint8_t count = patchEngineExtraCount(track);
   char msg[16];
   for (uint8_t i = 0; i < count; ++i) {
     if (trackEngine[track] == az2::kEngineDexed) {
@@ -3125,7 +3178,9 @@ void drawPatchExtraRow(uint8_t logicalRow) {
   gfx->drawRect(x, y, w, rowH, rowSelected ? accent : kFaint);
 
   gfx->setTextSize(1);
-  gfx->setTextColor(kDim);
+  // Section EFFETS : libelle en couleur d'accent pour la distinguer des
+  // reglages propres au moteur.
+  gfx->setTextColor(patchExtraIsFx(track, extraIdx) ? accent : kDim);
   gfx->setCursor(static_cast<int16_t>(x + 4), static_cast<int16_t>(y + 3));
   gfx->print(patchExtraLabel(track, extraIdx));
 
@@ -3143,7 +3198,7 @@ void drawPatchExtraRow(uint8_t logicalRow) {
   }
 
   char buf[6];
-  snprintf(buf, sizeof(buf), "%3d", patchExtraVal[track][extraIdx]);
+  snprintf(buf, sizeof(buf), "%3d", patchExtraValRef(track, extraIdx));
   gfx->setTextColor(RGB565_WHITE);
   gfx->setCursor(static_cast<int16_t>(x + w - 34), static_cast<int16_t>(y + 3));
   gfx->print(buf);
@@ -3968,7 +4023,7 @@ void patchApplyDelta(uint8_t t, int delta) {
     }
   } else if (selectedPatchRow >= 6) {
     const uint8_t extraIdx = static_cast<uint8_t>(selectedPatchRow - 6);
-    uint8_t &val = patchExtraVal[t][extraIdx];
+    uint8_t &val = patchExtraValRef(t, extraIdx);
     val = static_cast<uint8_t>(
         constrain(static_cast<int>(val) + delta, 0, static_cast<int>(patchExtraMax(t, extraIdx))));
     drawPatchExtraRow(static_cast<uint8_t>(selectedPatchRow));
@@ -5378,6 +5433,13 @@ void saveProject(uint8_t slot) {
                trackReso[t], trackAttack[t], trackDecay[t], trackSustain[t], trackRelease[t], trackAlgo[t],
                trackFeedback[t], trackVolume[t], trackMuted[t] ? 1 : 0);
     }
+    // Section EFFETS par piste (2026-10-02) -- ligne ignoree par les
+    // anciens firmwares (validateur et chargeur ne lisent que les cles
+    // connues).
+    for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
+      f.printf("TFX:%d,%d,%d,%d,%d,%d,%d,%d\n", t, trackFxVal[t][0], trackFxVal[t][1], trackFxVal[t][2],
+               trackFxVal[t][3], trackFxVal[t][4], trackFxVal[t][5], trackFxVal[t][6]);
+    }
     // Kit de batterie / echantillons assignes aux pads (2026-09-19, "il
     // faut pouvoir aussi les sauvegarder dans le projet global") --
     // seulement les pads REELLEMENT assignes (padSamplePath[pad][0] !=
@@ -5559,7 +5621,7 @@ bool projectStructureValid(File &f) {
       }
       const int p = values[0], t = values[1], s = values[2];
       if (p >= kPatternCount || t >= kSeqTrackCount || s >= kSeqStepCount || seenStep[p][t][s] ||
-          values[3] > 1 || values[4] > 127 || values[6] > 3 ||
+          values[3] > 1 || values[4] > 127 || values[6] >= kStepFxCount ||
           (count == 10 && values[8] > 100)) {
         valid = false;
         continue;
@@ -5725,6 +5787,23 @@ void loadProject(uint8_t slot) {
         }
         if (idx >= 13) {
           snprintf(msg, sizeof(msg), "MUTE:%d:%d", t, vals[12]);
+          sendToTeensy(msg);
+        }
+      }
+    } else if (line.startsWith("TFX:")) {
+      int vals[1 + kFxRowCount] = {};
+      int idx = 0, start = 0;
+      const String rest = afterColon(line);
+      for (int i = 0; i <= rest.length() && idx < 1 + kFxRowCount; ++i) {
+        if (i == rest.length() || rest.charAt(i) == ',') {
+          vals[idx++] = rest.substring(start, i).toInt();
+          start = i + 1;
+        }
+      }
+      if (idx == 1 + kFxRowCount && vals[0] >= 0 && vals[0] < kSeqTrackCount) {
+        for (uint8_t fx = 0; fx < kFxRowCount; ++fx) {
+          trackFxVal[vals[0]][fx] = static_cast<uint8_t>(constrain(vals[1 + fx], 0, 127));
+          snprintf(msg, sizeof(msg), "TFX:%d:%d:%d", vals[0], fx, trackFxVal[vals[0]][fx]);
           sendToTeensy(msg);
         }
       }
@@ -7610,6 +7689,18 @@ void handleTeensyLine(const String &line) {
         if (currentScreen == Screen::Sequencer && track == selectedSeqTrack && !screensaverActive) {
           drawDetailRow(step);
         }
+      }
+    }
+  } else if (line.startsWith("TFX:")) {
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    const int i3 = line.indexOf(':', i2 + 1);
+    if (i1 >= 0 && i2 >= 0 && i3 >= 0) {
+      const int track = line.substring(i1 + 1, i2).toInt();
+      const int fx = line.substring(i2 + 1, i3).toInt();
+      const int value = line.substring(i3 + 1).toInt();
+      if (track >= 0 && track < kSeqTrackCount && fx >= 0 && fx < kFxRowCount && value >= 0 && value <= 127) {
+        trackFxVal[track][fx] = static_cast<uint8_t>(value);
       }
     }
   } else if (line.startsWith("SFX:")) {

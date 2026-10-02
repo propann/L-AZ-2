@@ -75,11 +75,31 @@ class Teensy:
         return m.groups() if m else None
 
 
+PATCH_COUNTS = {0: 255, 1: 105, 2: 43, 3: 100, 4: 11, 5: 3, 6: 6}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", default="/dev/ttyACM0")
     ap.add_argument("--track", type=int, default=0)
+    ap.add_argument("--all", action="store_true",
+                    help="balaye TOUS les patches des moteurs Teensy (~20 min)")
+    ap.add_argument("--csv", help="ecrit aussi les mesures dans ce fichier CSV")
+    ap.add_argument("--only", help="liste moteur:patch separee par des virgules (ex. 0:31,3:50)")
+    ap.add_argument("--hold", type=float, default=HOLD_S)
+    ap.add_argument("--release", type=float, default=RELEASE_WAIT_S)
     args = ap.parse_args()
+    engines = ENGINES
+    if args.all:
+        engines = {e: (ENGINES[e][0], list(range(n))) for e, n in PATCH_COUNTS.items()}
+    if args.only:
+        engines = {}
+        for item in args.only.split(","):
+            e, pt = (int(v) for v in item.split(":"))
+            engines.setdefault(e, (ENGINES[e][0], []))[1].append(pt)
+    out = open(args.csv, "w") if args.csv else None
+    if out:
+        out.write("moteur,id,patch,note,apres,cpu_max,blocs_max,verdict\n")
     t = Teensy(args.port)
     tr = args.track
 
@@ -90,7 +110,7 @@ def main():
     print(f"plancher de bruit (rien ne joue) : {floor:.5f}")
     print(f"{'moteur':9} {'patch':>5} {'note':>8} {'apres':>8} {'cpu%':>6} {'blocs':>6}  verdict")
 
-    for eid, (name, patches) in ENGINES.items():
+    for eid, (name, patches) in engines.items():
         r = t.cmd(f"ENGINE:{tr}:{eid}", 0.4)
         if "ERR" in r:
             print(f"{name:9} indisponible ({r.strip()})")
@@ -99,9 +119,9 @@ def main():
             t.cmd(f"PATCH:{tr}:{p}", 0.4)
             t.cmd("RACKRESETMAX", 0.05)
             t.peak()
-            t.cmd(f"TEST:{tr}:{NOTE}:1", HOLD_S)
+            t.cmd(f"TEST:{tr}:{NOTE}:1", args.hold)
             on = t.peak()
-            t.cmd(f"TEST:{tr}:{NOTE}:0", RELEASE_WAIT_S)
+            t.cmd(f"TEST:{tr}:{NOTE}:0", args.release)
             t.peak()
             time.sleep(TAIL_S)
             tail = t.peak()
@@ -116,7 +136,11 @@ def main():
                 verdict.append("NOTE BLOQUEE/SOUFFLE")
             print(f"{name:9} {p:5d} {on if on is not None else -1:8.4f} "
                   f"{tail if tail is not None else -1:8.4f} {cpu_max:>6} {blocks_max:>6}  "
-                  f"{', '.join(verdict) or 'ok'}")
+                  f"{', '.join(verdict) or 'ok'}", flush=True)
+            if out:
+                out.write(f"{name},{eid},{p},{on},{tail},{cpu_max},{blocks_max},"
+                          f"{'|'.join(verdict) or 'ok'}\n")
+                out.flush()
         t.cmd("PANIC", 0.5)
 
     t.cmd(f"ENGINE:{tr}:4", 0.3)  # remet ANALOG, moteur de reference
