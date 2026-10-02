@@ -642,12 +642,32 @@ float trackEffectiveGain(uint8_t track) {
 // une piste -- SUR pour Braids grace a trackNoteHeld[] (voir plus
 // haut) : si aucune note n'est tenue, reste a 0 (repos naturel de ce
 // moteur, ne "reveille" jamais une porte qui devrait etre fermee).
+// Compensation de niveau par moteur (2026-10-02). Mesure du banc
+// tools/engine_bench.py, meme note, meme volume : crete de sortie de 0,007
+// (EPIANO) a 0,18 (BRAIDS), soit jusqu'a x25 d'ecart en changeant de moteur.
+// Cible : le niveau d'ANALOG (~0,15), moteur de reference. Valeurs a
+// re-mesurer apres chaque changement de banque de patches. GRANULAR et
+// SPECTRAL reviennent par l'entree I2S du rack, pas par ce mixeur : leur
+// niveau se regle dans le firmware du rack.
+constexpr float kEngineLevelTrim[az2::kEngineCount] = {
+    3.5f,   // DEXED     ~0,04 mediane (0,02-0,09 selon le patch)
+    3.5f,   // EPIANO    voir loadEPianoPatch() : volume interne deja releve
+    0.8f,   // BRAIDS    ~0,18
+    1.4f,   // KARPLUS   ~0,10 mediane, tres variable selon le preset
+    1.0f,   // ANALOG    reference ~0,15
+    1.0f,   // SAMPLER   0,14-0,17
+    2.2f,   // DRUM      ~0,065
+    1.0f,   // GRANULAR  (rack, sans effet ici)
+    1.0f,   // SPECTRAL  (rack, sans effet ici)
+};
+
 void applyGroupGainNow(uint8_t track) {
+  const float trim = kEngineLevelTrim[trackEngine[track] % az2::kEngineCount];
   if (trackEngine[track] == az2::kEngineBraids) {
-    const float g = trackNoteHeld[track] ? kBraidsActiveGain * trackEffectiveGain(track) : 0.0f;
+    const float g = trackNoteHeld[track] ? kBraidsActiveGain * trim * trackEffectiveGain(track) : 0.0f;
     trackGroupMixer(track).gain(trackGroupChannel(track), g);
   } else {
-    trackGroupMixer(track).gain(trackGroupChannel(track), 0.5f * trackEffectiveGain(track));
+    trackGroupMixer(track).gain(trackGroupChannel(track), 0.5f * trim * trackEffectiveGain(track));
   }
 }
 
@@ -821,7 +841,11 @@ void loadEPianoPatch(AudioSynthEPiano &engine, uint8_t patch) {
   engine.setTune(p[8]);
   engine.setDetune(p[9]);
   engine.setOverdrive(p[10]);
-  engine.setVolume(p[11]);
+  // mdaEPiano sort tres bas (volume = valeur x 0,16 en interne) : crete
+  // ~0,01 contre ~0,15 pour ANALOG au banc du 2026-10-02. Gain releve ici, en
+  // flottant dans le moteur, plutot que tout au mixeur (meilleure resolution
+  // avant conversion 16 bits). Le reste est compense par kEngineLevelTrim.
+  engine.setVolume(p[11] * 4.0f);
 }
 
 void loadDexedPatch(AudioSynthDexed &engine, uint8_t patch) {
