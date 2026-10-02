@@ -174,6 +174,10 @@ AudioMixer4 mixFinal;    // groupe A + groupe B + voix live (entree 3 libre)
 // 2026-09-15, "il faut un emulateur complet classe ... pour que le DAC
 // le joue").
 AudioEffectFreeverb reverbUnit;
+// Entree de la reverb (2026-10-02) : 0 = mix complet (dose par reverbWet,
+// meme rendu qu'avant puisque la reverb est lineaire), 1-2 = envois par
+// piste (revSendA/B). Le retour reverb est desormais au volume general.
+AudioMixer4 reverbIn;
 AudioEffectDelay delayUnit;
 AudioMixer4 mixMaster;
 AudioOutputI2S i2sOut;
@@ -352,6 +356,16 @@ AudioMixer4 trackFx[kTrackCount];  // 0=sec (toujours a 1.0), 1=retour delay (re
 AudioEffectWaveshaper trackDrive[kTrackCount];
 AudioSynthWaveform trackLfo[kTrackCount];
 AudioMixer4 trackFbMix[kTrackCount];  // 0=signal (bitcrusher), 1=retour du delay (feedback)
+// Lot 2 (2026-10-02) : MOD (tremolo ou ring mod = multiplication par un
+// oscillateur), FLANGER (ligne de retard modulee, passthru quand coupe) et
+// ENVOI REVERB par piste vers la reverb maitre (voir reverbIn plus bas).
+AudioSynthWaveform trackModOsc[kTrackCount];
+AudioEffectMultiply trackMod[kTrackCount];
+AudioEffectFlange trackFlange[kTrackCount];
+constexpr int kFlangeDelayLength = 4 * AUDIO_BLOCK_SAMPLES;  // ~11,6 ms
+DMAMEM short trackFlangeLine[kTrackCount][kFlangeDelayLength];
+AudioMixer4 revSendA;  // pistes 0-3 -> reverb
+AudioMixer4 revSendB;  // pistes 4-7 -> reverb
 
 // Connexion FIXE enveloppe -> filtre, POUR LES 5 MOTEURS (2026-09-18,
 // voir le commentaire de trackAnalogEnv[] plus haut pour le bug que ca
@@ -395,20 +409,40 @@ AudioConnection patchLfoToFilter[kTrackCount] = {
     AudioConnection(trackLfo[4], 0, trackFilter[4], 1), AudioConnection(trackLfo[5], 0, trackFilter[5], 1),
     AudioConnection(trackLfo[6], 0, trackFilter[6], 1), AudioConnection(trackLfo[7], 0, trackFilter[7], 1),
 };
+// bitcrusher -> MOD (multiplication par trackModOsc) -> FLANGER -> {sec,
+// delay}. Le flanger remplace le bitcrusher comme source du sec et du delay.
+AudioConnection patchCrushToMod[kTrackCount] = {
+    AudioConnection(trackCrush[0], 0, trackMod[0], 0), AudioConnection(trackCrush[1], 0, trackMod[1], 0),
+    AudioConnection(trackCrush[2], 0, trackMod[2], 0), AudioConnection(trackCrush[3], 0, trackMod[3], 0),
+    AudioConnection(trackCrush[4], 0, trackMod[4], 0), AudioConnection(trackCrush[5], 0, trackMod[5], 0),
+    AudioConnection(trackCrush[6], 0, trackMod[6], 0), AudioConnection(trackCrush[7], 0, trackMod[7], 0),
+};
+AudioConnection patchModOscToMod[kTrackCount] = {
+    AudioConnection(trackModOsc[0], 0, trackMod[0], 1), AudioConnection(trackModOsc[1], 0, trackMod[1], 1),
+    AudioConnection(trackModOsc[2], 0, trackMod[2], 1), AudioConnection(trackModOsc[3], 0, trackMod[3], 1),
+    AudioConnection(trackModOsc[4], 0, trackMod[4], 1), AudioConnection(trackModOsc[5], 0, trackMod[5], 1),
+    AudioConnection(trackModOsc[6], 0, trackMod[6], 1), AudioConnection(trackModOsc[7], 0, trackMod[7], 1),
+};
+AudioConnection patchModToFlange[kTrackCount] = {
+    AudioConnection(trackMod[0], 0, trackFlange[0], 0), AudioConnection(trackMod[1], 0, trackFlange[1], 0),
+    AudioConnection(trackMod[2], 0, trackFlange[2], 0), AudioConnection(trackMod[3], 0, trackFlange[3], 0),
+    AudioConnection(trackMod[4], 0, trackFlange[4], 0), AudioConnection(trackMod[5], 0, trackFlange[5], 0),
+    AudioConnection(trackMod[6], 0, trackFlange[6], 0), AudioConnection(trackMod[7], 0, trackFlange[7], 0),
+};
 AudioConnection patchCrushToFxDry[kTrackCount] = {
-    AudioConnection(trackCrush[0], 0, trackFx[0], 0), AudioConnection(trackCrush[1], 0, trackFx[1], 0),
-    AudioConnection(trackCrush[2], 0, trackFx[2], 0), AudioConnection(trackCrush[3], 0, trackFx[3], 0),
-    AudioConnection(trackCrush[4], 0, trackFx[4], 0), AudioConnection(trackCrush[5], 0, trackFx[5], 0),
-    AudioConnection(trackCrush[6], 0, trackFx[6], 0), AudioConnection(trackCrush[7], 0, trackFx[7], 0),
+    AudioConnection(trackFlange[0], 0, trackFx[0], 0), AudioConnection(trackFlange[1], 0, trackFx[1], 0),
+    AudioConnection(trackFlange[2], 0, trackFx[2], 0), AudioConnection(trackFlange[3], 0, trackFx[3], 0),
+    AudioConnection(trackFlange[4], 0, trackFx[4], 0), AudioConnection(trackFlange[5], 0, trackFx[5], 0),
+    AudioConnection(trackFlange[6], 0, trackFx[6], 0), AudioConnection(trackFlange[7], 0, trackFx[7], 0),
 };
 // bitcrusher -> trackFbMix (0) -> delay ; delay -> trackFbMix (1) : boucle
 // de feedback (une boucle dans le graphe Teensy Audio est permise, elle
 // ajoute un bloc de latence, sans importance pour un echo).
 AudioConnection patchCrushToFbMix[kTrackCount] = {
-    AudioConnection(trackCrush[0], 0, trackFbMix[0], 0), AudioConnection(trackCrush[1], 0, trackFbMix[1], 0),
-    AudioConnection(trackCrush[2], 0, trackFbMix[2], 0), AudioConnection(trackCrush[3], 0, trackFbMix[3], 0),
-    AudioConnection(trackCrush[4], 0, trackFbMix[4], 0), AudioConnection(trackCrush[5], 0, trackFbMix[5], 0),
-    AudioConnection(trackCrush[6], 0, trackFbMix[6], 0), AudioConnection(trackCrush[7], 0, trackFbMix[7], 0),
+    AudioConnection(trackFlange[0], 0, trackFbMix[0], 0), AudioConnection(trackFlange[1], 0, trackFbMix[1], 0),
+    AudioConnection(trackFlange[2], 0, trackFbMix[2], 0), AudioConnection(trackFlange[3], 0, trackFbMix[3], 0),
+    AudioConnection(trackFlange[4], 0, trackFbMix[4], 0), AudioConnection(trackFlange[5], 0, trackFbMix[5], 0),
+    AudioConnection(trackFlange[6], 0, trackFbMix[6], 0), AudioConnection(trackFlange[7], 0, trackFbMix[7], 0),
 };
 AudioConnection patchFbMixToDelay[kTrackCount] = {
     AudioConnection(trackFbMix[0], 0, trackDelay[0], 0), AudioConnection(trackFbMix[1], 0, trackDelay[1], 0),
@@ -438,6 +472,13 @@ AudioConnection patchFxToGroup[kTrackCount] = {
     AudioConnection(trackFx[2], 0, mixTracksA, 2), AudioConnection(trackFx[3], 0, mixTracksA, 3),
     AudioConnection(trackFx[4], 0, mixTracksB, 0), AudioConnection(trackFx[5], 0, mixTracksB, 1),
     AudioConnection(trackFx[6], 0, mixTracksB, 2), AudioConnection(trackFx[7], 0, mixTracksB, 3),
+};
+// Envoi reverb par piste (post-volume, voir applyGroupGainNow()).
+AudioConnection patchFxToRevSend[kTrackCount] = {
+    AudioConnection(trackFx[0], 0, revSendA, 0), AudioConnection(trackFx[1], 0, revSendA, 1),
+    AudioConnection(trackFx[2], 0, revSendA, 2), AudioConnection(trackFx[3], 0, revSendA, 3),
+    AudioConnection(trackFx[4], 0, revSendB, 0), AudioConnection(trackFx[5], 0, revSendB, 1),
+    AudioConnection(trackFx[6], 0, revSendB, 2), AudioConnection(trackFx[7], 0, revSendB, 3),
 };
 AudioConnection patchGroupA(mixTracksA, 0, mixFinal, 0);
 AudioConnection patchGroupB(mixTracksB, 0, mixFinal, 1);
@@ -514,7 +555,10 @@ AudioConnection patchLiveIn(mixLiveAndPads, 0, mixFinal, 2);
 // debut de temps (currentStep % stepsPerBeat == 0), accentue (plus
 // aigu) sur le premier temps du pattern.
 AudioConnection patchFinalToMaster(mixFinal, 0, mixMaster, 0);  // signal sec
-AudioConnection patchFinalToReverb(mixFinal, 0, reverbUnit, 0);
+AudioConnection patchFinalToReverb(mixFinal, 0, reverbIn, 0);
+AudioConnection patchRevSendAToReverb(revSendA, 0, reverbIn, 1);
+AudioConnection patchRevSendBToReverb(revSendB, 0, reverbIn, 2);
+AudioConnection patchReverbInToReverb(reverbIn, 0, reverbUnit, 0);
 AudioConnection patchReverbToMaster(reverbUnit, 0, mixMaster, 1);
 AudioConnection patchFinalToDelay(mixFinal, 0, delayUnit, 0);
 AudioConnection patchDelayToMaster(delayUnit, 0, mixMaster, 2);
@@ -684,6 +728,11 @@ float trackEffectiveGain(uint8_t track) {
 // une piste -- SUR pour Braids grace a trackNoteHeld[] (voir plus
 // haut) : si aucune note n'est tenue, reste a 0 (repos naturel de ce
 // moteur, ne "reveille" jamais une porte qui devrait etre fermee).
+// Reglages de la section EFFETS par piste (voir handleTrackFxCommand()) --
+// declares ici car applyGroupGainNow() lit l'envoi reverb (index 11).
+constexpr uint8_t kTrackFxParamCount = 14;
+uint8_t trackFxVal[kTrackCount][kTrackFxParamCount] = {};
+
 // Compensation de niveau par moteur (2026-10-02). Mesure du banc
 // tools/engine_bench.py, meme note, meme volume : crete de sortie de 0,007
 // (EPIANO) a 0,18 (BRAIDS), soit jusqu'a x25 d'ecart en changeant de moteur.
@@ -722,12 +771,16 @@ float patchLevelTrim(uint8_t track) {
 
 void applyGroupGainNow(uint8_t track) {
   const float trim = kEngineLevelTrim[trackEngine[track] % az2::kEngineCount] * patchLevelTrim(track);
+  float g;
   if (trackEngine[track] == az2::kEngineBraids) {
-    const float g = trackNoteHeld[track] ? kBraidsActiveGain * trim * trackEffectiveGain(track) : 0.0f;
-    trackGroupMixer(track).gain(trackGroupChannel(track), g);
+    g = trackNoteHeld[track] ? kBraidsActiveGain * trim * trackEffectiveGain(track) : 0.0f;
   } else {
-    trackGroupMixer(track).gain(trackGroupChannel(track), 0.5f * trim * trackEffectiveGain(track));
+    g = 0.5f * trim * trackEffectiveGain(track);
   }
+  trackGroupMixer(track).gain(trackGroupChannel(track), g);
+  // Envoi reverb post-volume : suit volume, mute, solo et la porte Braids.
+  AudioMixer4 &send = track < 4 ? revSendA : revSendB;
+  send.gain(track % 4, g * static_cast<float>(trackFxVal[track][11]) / 127.0f);
 }
 
 // Pas de vrai panoramique pour l'instant : la chaine est MONO de bout
@@ -2618,6 +2671,8 @@ void handleSongModeCommand(const String &line) {
 }
 
 // BPM:<valeur, 30-300>
+void resyncTrackFxTempo();  // definie avec la section EFFETS
+
 void handleBpmCommand(const String &line) {
   const int idx = line.indexOf(':');
   if (idx < 0) {
@@ -2630,6 +2685,7 @@ void handleBpmCommand(const String &line) {
     return;
   }
   bpm = value;
+  resyncTrackFxTempo();  // LFO / delay synchronises au tempo
   if (playing) {
     // Reajuste la periode de l'ISR tout de suite, sans couper/reprendre
     // la lecture (IntervalTimer::update() change juste l'intervalle).
@@ -2798,7 +2854,12 @@ float masterGainFromEncoder(uint8_t value) {
 
 void applyMasterMix() {
   mixMaster.gain(0, masterVolume);
-  mixMaster.gain(1, reverbWet * masterVolume);
+  // Reverb : dosage a l'ENTREE (reverbIn) pour que les envois par piste
+  // s'entendent meme quand le potard de reverb globale est a 0.
+  reverbIn.gain(0, reverbWet);
+  reverbIn.gain(1, 1.0f);
+  reverbIn.gain(2, 1.0f);
+  mixMaster.gain(1, masterVolume);
   mixMaster.gain(2, delayWet * masterVolume);
   mixMaster.gain(3, masterVolume);  // son GB (voir gbAudioSource) -- suit le potard 1 comme le signal sec
 #ifdef AZ2_EXTERNAL_RACK
@@ -3000,10 +3061,27 @@ void handleCrushCommand(const String &line) {
 //   4 DELAY      0 a 500 ms
 //   5 FEEDBACK   0 a 0,85 (repetitions)
 //   6 MIX        niveau du retour delay
+//   7 FILTRE     mode : 0-42 passe-bas, 43-85 passe-bande, 86-127 passe-haut
+//   8 TREMOLO    profondeur de modulation de volume (vitesse = LFO)
+//   9 RING MOD   0 = coupe, sinon 30 Hz a 3 kHz (prioritaire sur TREMOLO)
+//  10 FLANGER    profondeur (0 = coupe), vitesse liee au LFO
+//  11 REVERB     envoi vers la reverb maitre (post-volume)
+//  12 SYNC LFO   0 = libre (LFO RATE), sinon division du tempo
+//  13 SYNC DLY   0 = libre (DELAY), sinon division du tempo (<= 500 ms)
 // Les effets de pas CRUSH/DELAY du tracker ecrivent les memes objets ; la
 // derniere commande gagne, comme avant.
-constexpr uint8_t kTrackFxParamCount = 7;
-uint8_t trackFxVal[kTrackCount][kTrackFxParamCount] = {};
+constexpr uint8_t kTrackFxParamCountDecl = 14;  // voir declaration anticipee pres de kEngineLevelTrim
+static_assert(kTrackFxParamCountDecl == kTrackFxParamCount, "trackFxVal");
+
+// Divisions de tempo pour SYNC LFO / SYNC DLY, en noires. Une valeur 1-127
+// choisit l'entree (127 / 11 par case). Libelles identiques cote ecran.
+constexpr float kFxSyncBeats[] = {16.0f, 8.0f, 4.0f, 2.0f, 1.0f, 0.75f, 0.5f,
+                                  1.0f / 3.0f, 0.25f, 1.0f / 6.0f, 0.125f};
+constexpr uint8_t kFxSyncCount = sizeof(kFxSyncBeats) / sizeof(kFxSyncBeats[0]);
+float fxSyncBeats(uint8_t value) {
+  const uint8_t idx = static_cast<uint8_t>((static_cast<uint16_t>(value - 1) * kFxSyncCount) / 127);
+  return kFxSyncBeats[idx < kFxSyncCount ? idx : kFxSyncCount - 1];
+}
 
 void setTrackDrive(uint8_t track, uint8_t value) {
   // Table de 65 points : y = 0,8.tanh(k.x)/tanh(0,8.k), k de 1 a 10.
@@ -3024,20 +3102,95 @@ void setTrackDrive(uint8_t track, uint8_t value) {
   AudioInterrupts();
 }
 
+// Frequence du LFO de piste : libre (LFO RATE) ou calee sur le tempo.
+float trackLfoHz(uint8_t track) {
+  const uint8_t sync = trackFxVal[track][12];
+  if (sync > 0) return (bpm / 60.0f) / fxSyncBeats(sync);
+  return 0.05f * powf(400.0f, static_cast<float>(trackFxVal[track][2]) / 127.0f);
+}
+
+// Oscillateur de MOD : ring mod (audio) prioritaire, sinon tremolo (LFO),
+// sinon gain constant 1 (multiplication transparente).
+void applyTrackMod(uint8_t track) {
+  const uint8_t ring = trackFxVal[track][9];
+  const float trem = static_cast<float>(trackFxVal[track][8]) / 127.0f;
+  if (ring > 0) {
+    trackModOsc[track].frequency(30.0f * powf(100.0f, static_cast<float>(ring) / 127.0f));
+    trackModOsc[track].amplitude(1.0f);
+    trackModOsc[track].offset(0.0f);
+  } else {
+    // PIEGE (mesure au banc) : AudioSynthWaveform a amplitude 0 n'emet AUCUN
+    // bloc, quel que soit offset() -- la multiplication sortait alors du
+    // silence et coupait toute la piste. Amplitude plancher non nulle
+    // (magnitude 1/65536, inaudible) pour garder une sortie ~1,0 au neutre.
+    const float amp = trem > 0.0f ? 0.5f * trem : 0.00002f;
+    trackModOsc[track].frequency(trackLfoHz(track));
+    trackModOsc[track].amplitude(amp);
+    trackModOsc[track].offset(trem > 0.0f ? 1.0f - 0.5f * trem : 0.9999f);
+  }
+}
+
+void applyTrackFlange(uint8_t track) {
+  const uint8_t depth = trackFxVal[track][10];
+  if (depth == 0) {
+    trackFlange[track].voices(FLANGE_DELAY_PASSTHRU, 0, 0.0f);
+  } else {
+    trackFlange[track].voices(kFlangeDelayLength / 4,
+                              (kFlangeDelayLength / 4) * depth / 127, 0.5f * trackLfoHz(track));
+  }
+}
+
+void applyTrackFilterMode(uint8_t track) {
+  const uint8_t v = trackFxVal[track][7];
+  const uint8_t output = v < 43 ? 0 : (v < 86 ? 1 : 2);  // LP / BP / HP
+  AudioNoInterrupts();
+  patchFilterToDrive[track].disconnect();
+  patchFilterToDrive[track].connect(trackFilter[track], output, trackDrive[track], 0);
+  AudioInterrupts();
+}
+
+void applyGroupGainNow(uint8_t track);  // envoi reverb post-volume
+
 void applyTrackFx(uint8_t track, uint8_t param) {
   const uint8_t v = trackFxVal[track][param];
   const float n = static_cast<float>(v) / 127.0f;
   switch (param) {
     case 0: setTrackDrive(track, v); break;
     case 1: trackCrush[track].bits(static_cast<uint8_t>(16 - (v * 14) / 127)); break;
-    case 2: trackLfo[track].frequency(0.05f * powf(400.0f, n)); break;
+    case 2:
+    case 12:
+      // La vitesse du LFO pilote aussi tremolo et flanger.
+      trackLfo[track].frequency(trackLfoHz(track));
+      applyTrackMod(track);
+      applyTrackFlange(track);
+      break;
     case 3:
       trackFilter[track].octaveControl(4.0f * n);
       trackLfo[track].amplitude(v == 0 ? 0.0f : 1.0f);
       break;
-    case 4: trackDelay[track].delay(0, v == 0 ? 1.0f : 500.0f * n); break;
+    case 4:
+    case 13: {
+      const uint8_t sync = trackFxVal[track][13];
+      float ms = trackFxVal[track][4] == 0 ? 1.0f : 500.0f * static_cast<float>(trackFxVal[track][4]) / 127.0f;
+      if (sync > 0) ms = fminf(500.0f, 60000.0f / bpm * fxSyncBeats(sync));
+      trackDelay[track].delay(0, ms);
+      break;
+    }
     case 5: trackFbMix[track].gain(1, 0.85f * n); break;
     case 6: trackFx[track].gain(1, n); break;
+    case 7: applyTrackFilterMode(track); break;
+    case 8:
+    case 9: applyTrackMod(track); break;
+    case 10: applyTrackFlange(track); break;
+    case 11: applyGroupGainNow(track); break;
+  }
+}
+
+// Changement de tempo : recalcule tout ce qui est synchronise.
+void resyncTrackFxTempo() {
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    if (trackFxVal[t][12] > 0) applyTrackFx(t, 12);
+    if (trackFxVal[t][13] > 0) applyTrackFx(t, 13);
   }
 }
 
@@ -5101,6 +5254,8 @@ void setup() {
     trackLfo[t].amplitude(0.0f);
     trackLfo[t].frequency(1.0f);
     trackFxVal[t][2] = 40;  // LFO RATE ~0,5 Hz par defaut, utile des que DEPTH monte
+    trackModOsc[t].begin(WAVEFORM_SINE);
+    trackFlange[t].begin(trackFlangeLine[t], kFlangeDelayLength, FLANGE_DELAY_PASSTHRU, 0, 0.0f);
     for (uint8_t fx = 0; fx < kTrackFxParamCount; ++fx) applyTrackFx(t, fx);
   }
 
