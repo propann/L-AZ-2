@@ -2834,6 +2834,8 @@ bool scopeRendered = false;
 bool patchUiNeedsRedraw = false;
 
 constexpr int16_t kPatchTrackRowY = 66;
+constexpr int16_t kPatchEngineBtnW = 56;
+constexpr int16_t kPatchEngineBtnX = kScreenSize - kMargin - kPatchEngineBtnW;
 constexpr int16_t kPatchScopeTop = 96;
 constexpr int16_t kPatchScopeH = 90;
 constexpr int16_t kPatchScopeW = 232;
@@ -2874,6 +2876,16 @@ void drawPatchTrackRow() {
   const int16_t textW = static_cast<int16_t>(strlen(buf) * 12);
   gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - textW / 2), kPatchTrackRowY);
   gfx->print(buf);
+  // Bouton rapide MOTEUR (2026-10-02, "changer vite fait de moteur") : passe
+  // au moteur suivant sans repasser par la page MOTEURS.
+  gfx->fillRect(kPatchEngineBtnX, kPatchTrackRowY, kPatchEngineBtnW, 22, patchAccent(t));
+  gfx->setTextColor(RGB565_BLACK);
+  gfx->setCursor(static_cast<int16_t>(kPatchEngineBtnX + 4), static_cast<int16_t>(kPatchTrackRowY + 3));
+  gfx->print("MOT>");
+}
+
+bool hitTestPatchEngineBtn(int16_t x, int16_t y) {
+  return inBox(x, y, kPatchEngineBtnX, kPatchTrackRowY, kPatchEngineBtnW, 22);
 }
 
 void keepPatchListVisible() {
@@ -9385,7 +9397,13 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
     // deplace aussi le focus croix sur la ligne PISTE (patchOnTrackRow),
     // meme reflexe que hitTestEngTrackPrev/Next sur la page MOTEURS.
     const uint8_t t = static_cast<uint8_t>(patchTrack);
-    if (hitTestPatchTrackPrev(x, y) || hitTestPatchTrackNext(x, y)) {
+    if (hitTestPatchEngineBtn(x, y)) {
+      // Moteur suivant (boucle). L'echo ENGINE: du Teensy redessine la page
+      // (patches du nouveau moteur, lignes moteur ; section EFFETS conservee).
+      char msg[16];
+      snprintf(msg, sizeof(msg), "ENGINE:%d:%d", t, (trackEngine[t] + 1) % az2::kEngineCount);
+      sendToTeensy(msg);
+    } else if (hitTestPatchTrackPrev(x, y) || hitTestPatchTrackNext(x, y)) {
       patchTrack = static_cast<int8_t>((patchTrack + (hitTestPatchTrackNext(x, y) ? 1 : kSeqTrackCount - 1)) %
                                         kSeqTrackCount);
       scopeHasData = false;
