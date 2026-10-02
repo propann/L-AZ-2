@@ -1201,6 +1201,9 @@ bool metronomeOn = false;  // 2026-09-19, voir METRO: cote Teensy
 // il faut toujours une piste/un pas valides des le boot.
 int8_t selectedSeqTrack = 0;
 int8_t selectedSeqStep = 0;
+// SEQ. PAS : A a servi a editer la note (A + HAUT/BAS) -> pas de bascule
+// du pas au relachement de A.
+bool stepSeqAEdited = false;
 
 // Vue tracker (colonnes NOTE/INST/FX/VAL/PROB/COND d'UNE piste, comme l'ecran
 // phrase de LSDJ/M8 -- voir AZ2_TRACKER_ETUDE.md) -- devenue la SEULE
@@ -2329,15 +2332,36 @@ uint8_t patchExtraVal[kSeqTrackCount][17] = {};
 // les moteurs, apres les lignes propres au moteur -- miroir de
 // trackFxVal[] cote Teensy, envoyees par TFX:<piste>:<param>:<valeur>.
 // Independantes du moteur : survivent a un changement de moteur.
-constexpr uint8_t kFxRowCount = 7;
+// Ordre = index TFX cote Teensy (voir handleTrackFxCommand()).
+constexpr uint8_t kFxRowCount = 14;
 constexpr const char *kFxRowLabel[kFxRowCount] = {
     "DRIVE", "CRUSH", "LFO RATE", "LFO DEPTH", "DELAY", "FEEDBACK", "DLY MIX",
+    "FILTRE", "TREMOLO", "RING MOD", "FLANGER", "REVERB", "SYNC LFO", "SYNC DLY",
 };
-constexpr uint8_t kFxRowDefault[kFxRowCount] = {0, 0, 40, 0, 0, 0, 0};
+#define AZ2_FX_DEFAULTS {0, 0, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 uint8_t trackFxVal[kSeqTrackCount][kFxRowCount] = {
-    {0, 0, 40, 0, 0, 0, 0}, {0, 0, 40, 0, 0, 0, 0}, {0, 0, 40, 0, 0, 0, 0}, {0, 0, 40, 0, 0, 0, 0},
-    {0, 0, 40, 0, 0, 0, 0}, {0, 0, 40, 0, 0, 0, 0}, {0, 0, 40, 0, 0, 0, 0}, {0, 0, 40, 0, 0, 0, 0},
+    AZ2_FX_DEFAULTS, AZ2_FX_DEFAULTS, AZ2_FX_DEFAULTS, AZ2_FX_DEFAULTS,
+    AZ2_FX_DEFAULTS, AZ2_FX_DEFAULTS, AZ2_FX_DEFAULTS, AZ2_FX_DEFAULTS,
 };
+// Divisions de tempo de SYNC LFO / SYNC DLY -- meme table que kFxSyncBeats
+// cote Teensy (1-127 decoupe en 11 cases, 0 = libre).
+constexpr const char *kFxSyncLabel[] = {"4 MES", "2 MES", "1 MES", "1/2", "1/4", "1/4.",
+                                        "1/8", "1/4T", "1/16", "1/8T", "1/32"};
+constexpr uint8_t kFxSyncLabelCount = sizeof(kFxSyncLabel) / sizeof(kFxSyncLabel[0]);
+
+// Texte affiche pour une valeur d'effet (5 caracteres max, colonne valeur).
+void fxRowValueText(uint8_t fx, uint8_t value, char *out, size_t size) {
+  if (fx == 7) {
+    snprintf(out, size, "%s", value < 43 ? " LP" : (value < 86 ? " BP" : " HP"));
+  } else if ((fx == 12 || fx == 13) && value > 0) {
+    const uint8_t idx = static_cast<uint8_t>((static_cast<uint16_t>(value - 1) * kFxSyncLabelCount) / 127);
+    snprintf(out, size, "%s", kFxSyncLabel[idx < kFxSyncLabelCount ? idx : kFxSyncLabelCount - 1]);
+  } else if ((fx == 9 || fx == 12 || fx == 13 || fx == 10 || fx == 8) && value == 0) {
+    snprintf(out, size, "OFF");
+  } else {
+    snprintf(out, size, "%3d", value);
+  }
+}
 
 // Miroir cote ecran de rackOwnerTrack[] (source de verite cote Teensy,
 // voir son commentaire dans src_teensy/az2_audio/main.cpp) -- tenu a jour
@@ -2498,7 +2522,7 @@ uint8_t patchTotalRows(uint8_t track) { return static_cast<uint8_t>(patchSlotRow
 // ligne visuelle) : centralise ici pour que les deux sens restent
 // coherents, plutot que deux implementations paralleles qui pourraient
 // diverger.
-constexpr uint8_t kPatchMaxKeptRows = 32;  // 6 fixes + 17 extra (DEXED) + 7 EFFETS + volume, marge incluse
+constexpr uint8_t kPatchMaxKeptRows = 40;  // 6 fixes + 17 extra (DEXED) + 14 EFFETS + volume, marge incluse
 uint8_t patchKeptRows(uint8_t track, uint8_t (&out)[kPatchMaxKeptRows]) {
   const uint8_t volRow = patchVolRow(track);
   uint8_t count = 0;
@@ -3212,10 +3236,17 @@ void drawPatchExtraRow(uint8_t logicalRow) {
     return;
   }
 
-  char buf[6];
-  snprintf(buf, sizeof(buf), "%3d", patchExtraValRef(track, extraIdx));
+  char buf[8];
+  int16_t valueX = static_cast<int16_t>(x + w - 34);
+  if (patchExtraIsFx(track, extraIdx)) {
+    fxRowValueText(static_cast<uint8_t>(extraIdx - patchEngineExtraCount(track)),
+                   patchExtraValRef(track, extraIdx), buf, sizeof(buf));
+    valueX = static_cast<int16_t>(x + w - 4 - 12 * static_cast<int16_t>(strlen(buf)));
+  } else {
+    snprintf(buf, sizeof(buf), "%3d", patchExtraValRef(track, extraIdx));
+  }
   gfx->setTextColor(RGB565_WHITE);
-  gfx->setCursor(static_cast<int16_t>(x + w - 34), static_cast<int16_t>(y + 3));
+  gfx->setCursor(valueX, static_cast<int16_t>(y + 3));
   gfx->print(buf);
 }
 
@@ -5452,8 +5483,9 @@ void saveProject(uint8_t slot) {
     // anciens firmwares (validateur et chargeur ne lisent que les cles
     // connues).
     for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
-      f.printf("TFX:%d,%d,%d,%d,%d,%d,%d,%d\n", t, trackFxVal[t][0], trackFxVal[t][1], trackFxVal[t][2],
-               trackFxVal[t][3], trackFxVal[t][4], trackFxVal[t][5], trackFxVal[t][6]);
+      f.printf("TFX:%d", t);
+      for (uint8_t fx = 0; fx < kFxRowCount; ++fx) f.printf(",%d", trackFxVal[t][fx]);
+      f.printf("\n");
     }
     // Kit de batterie / echantillons assignes aux pads (2026-09-19, "il
     // faut pouvoir aussi les sauvegarder dans le projet global") --
@@ -5815,8 +5847,10 @@ void loadProject(uint8_t slot) {
           start = i + 1;
         }
       }
-      if (idx == 1 + kFxRowCount && vals[0] >= 0 && vals[0] < kSeqTrackCount) {
-        for (uint8_t fx = 0; fx < kFxRowCount; ++fx) {
+      // 7 valeurs (premiere version) ou 14 : les effets absents gardent
+      // leur valeur par defaut.
+      if (idx >= 8 && vals[0] >= 0 && vals[0] < kSeqTrackCount) {
+        for (uint8_t fx = 0; fx < idx - 1; ++fx) {
           trackFxVal[vals[0]][fx] = static_cast<uint8_t>(constrain(vals[1 + fx], 0, 127));
           snprintf(msg, sizeof(msg), "TFX:%d:%d:%d", vals[0], fx, trackFxVal[vals[0]][fx]);
           sendToTeensy(msg);
@@ -6373,6 +6407,31 @@ void handleTeensyLine(const String &line) {
 
       if (index >= 0) {
         navState[index] = pressed;
+        // [2026-10-02] SEQ. PAS : A maintenu + HAUT/BAS change la hauteur de
+        // la note au curseur (geste du tracker classique, jamais cable ici) ;
+        // HAUT/BAS seuls changent de piste.
+        if (pressed && currentScreen == Screen::StepSeq && (index == 0 || index == 1)) {
+          if (btnState[0]) {
+            const uint8_t track = static_cast<uint8_t>(selectedSeqTrack);
+            const uint8_t step = static_cast<uint8_t>(selectedSeqStep);
+            const uint8_t newNote = nextNoteInScale(seqStepNote[currentPattern][track][step],
+                                                     static_cast<int8_t>(index == 0 ? 1 : -1));
+            seqStepNote[currentPattern][track][step] = newNote;
+            char msg[20];
+            snprintf(msg, sizeof(msg), "NOTE:%d:%d:%d", track, step, newNote);
+            sendToTeensy(msg);
+            if (!seqStepOn[currentPattern][track][step]) {
+              seqStepOn[currentPattern][track][step] = true;
+              snprintf(msg, sizeof(msg), "STEP:%d:%d:1", track, step);
+              sendToTeensy(msg);
+            }
+            stepSeqAEdited = true;
+          } else {
+            selectedSeqTrack = static_cast<int8_t>(
+                (selectedSeqTrack + (index == 1 ? 1 : kSeqTrackCount - 1)) % kSeqTrackCount);
+          }
+          drawStepSeqPage();
+        }
         if (pressed && currentScreen == Screen::StepSeq && (index == 2 || index == 3)) {
           // GAUCHE/DROITE deplace le curseur de pas sur toute la longueur
           // reelle du pattern (pas seulement la fenetre de 32 affichee) --
@@ -7218,10 +7277,13 @@ void handleTeensyLine(const String &line) {
         // (2026-09-26), meme transport.
         sendToTeensy(seqPlaying ? az2::kStop : az2::kPlay);
       } else if (pressed && letter == 'A' && currentScreen == Screen::StepSeq) {
+        stepSeqAEdited = false;  // la bascule se decide au relachement
+      } else if (!pressed && letter == 'A' && currentScreen == Screen::StepSeq && !stepSeqAEdited) {
         // [2026-09-26] Bascule ON/OFF du pas au curseur -- meme message
         // que le tracker classique (STEP:piste:pas:0/1, voir
         // hitTestDetailRow()), juste declenche par A ici au lieu du
-        // double-toucher.
+        // double-toucher. [2026-10-02] Au RELACHEMENT de A, et seulement si A
+        // n'a pas servi a changer la note (A + HAUT/BAS, voir NAV:).
         const uint8_t track = static_cast<uint8_t>(selectedSeqTrack);
         const uint8_t step = static_cast<uint8_t>(selectedSeqStep);
         const bool newState = !seqStepOn[currentPattern][track][step];
