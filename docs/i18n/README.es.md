@@ -6,12 +6,12 @@
 
 ## Construir un instrumento
 
-AZ-2 combina una groovebox, un tracker de ocho pistas y nueve motores de audio. El repositorio contiene prototipos de Game Boy / Game Boy Color, pero **actualmente no hay ningún emulador funcional y validado en la máquina**. El prototipo activo utiliza Teensy, el ESP32-S3 de pantalla, un ESP32-S3 granular y un ESP-WROOM-32D espectral.
+AZ-2 combina una groovebox, un tracker de ocho pistas y nueve motores de audio. Incluye una consola de juegos: **Game Boy y Game Boy Color funcionan a velocidad completa (59,7 fps en X2 y X3, medido en la máquina)**, NES a 49–50 fps. El prototipo activo utiliza Teensy, el ESP32-S3 de pantalla, un ESP32-S3 granular y un ESP-WROOM-32D espectral.
 
 | Placa | Funciones | Almacenamiento |
 | --- | --- | --- |
-| Teensy 4.1 | Temporización del tracker, motores de audio, MIDI, grabación WAV, reproducción de samples y salida I²S al DAC PCM5102A | Su propia tarjeta SD para grabaciones; PSRAM para el sample dinámico |
-| ESP32-S3 VIEWE UEDX48480040E-WB | Pantalla táctil 480×480, menús y prototipos GB/GBC sin validar | Su propia tarjeta SD para datos de interfaz y pruebas de ROM |
+| Teensy 4.1 | Temporización del tracker, motores de audio, grabación WAV, reproducción de samples y salida I²S al DAC PCM5102A | Su propia tarjeta SD para grabaciones; PSRAM para el sample dinámico |
+| ESP32-S3 VIEWE UEDX48480040E-WB | Pantalla táctil 480×480, menús, emuladores GB/GBC (Walnut-CGB) y NES | Su propia tarjeta SD para datos de interfaz y ROM (`/games`) |
 | ESP32-S3 N16R8 | GRANULAR, PSRAM y agregación de audio | Samples transferidos desde la SD del Teensy |
 | ESP-WROOM-32D | SPECTRAL | No necesita almacenamiento local |
 
@@ -27,17 +27,19 @@ cd L-AZ-2
 python -m pip install platformio==6.1.19
 python tools/check_firmware_contract.py
 pio test -e native
-pio run -e master_teensy -e screen_esp
+pio run -e master_teensy_rack_lab -e screen_esp_walnut_gbc_core_task
 # Solo después de comprobar el hardware y guardar copias:
-pio run -e master_teensy -t upload
-pio run -e screen_esp -t upload
+pio run -e master_teensy_rack_lab -t upload
+pio run -e screen_esp_walnut_gbc_core_task -t upload
 ```
 
 Compila los dos binarios desde el **mismo commit de Git**. No actualices una sola placa después de un cambio incompatible del protocolo. El repositorio no incluye ROMs comerciales ni archivos privados del usuario.
 
 ## Emulación, partidas y música
 
-- **GB/GBC:** Walnut-CGB y GNUBOY son prototipos de desarrollo. Actualmente ningún núcleo se considera funcional en AZ-2; carga, vídeo, controles, audio y guardado deben validarse juntos antes de anunciar compatibilidad.
+- **GB/GBC:** un único núcleo, Walnut-CGB, validado en la máquina a 59,7 fps en X2 y X3 (Zelda `.gb` y Zelda DX `.gbc`). La tarjeta GAME BOY muestra los `.gb` y la tarjeta GAME BOY COLOR los `.gbc`. Pantalla de doble núcleo: 30 Hz en pantalla en X2, 20 Hz en X3, juego y sonido a 59,7 Hz. Falta validar una compatibilidad más amplia y sesiones largas.
+- **NES:** Anemoia-ESP32, 49–50 fps (~82 %) con frameskip.
+- **Neo Geo Pocket:** retirada el 2 de octubre de 2026 (el núcleo RACE es solo GPLv2, incompatible con la GPLv3 de AZ-2).
 - **SRAM del cartucho:** guardado periódico y manual en `.sav/.bak`. Un error de escritura impide descargar el cartucho para no perder silenciosamente los cambios en RAM.
 - **RTC MBC3:** archivo `.rtc` independiente y versionado, con CRC32 y recuperación desde `.bak`. El tiempo transcurrido con la máquina apagada solo se aplica cuando el reloj del sistema ESP32 es válido; queda pendiente probar la resistencia a cortes de alimentación en el hardware.
 - **Audio GB:** V1 PCM8 mono a 14 kHz hacia Teensy. En modo experimental, V2 transporta PCM8 estéreo L/R entrelazado a 14 kHz con CRC16, números de secuencia y negociación; está **desactivado de forma predeterminada**. El bus de salida del Teensy sigue siendo mono incluso al usar V2.

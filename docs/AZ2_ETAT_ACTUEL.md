@@ -1,4 +1,4 @@
-# AZ-2 — état actuel vérifié au 27 septembre 2026 (soir)
+# AZ-2 — état actuel vérifié au 2 octobre 2026
 
 Ce document est la source de vérité de l’état courant. Les audits datés dans
 `docs/` sont historiques et peuvent décrire des états antérieurs.
@@ -7,19 +7,12 @@ Ce document est la source de vérité de l’état courant. Les audits datés da
 
 - Branche de travail : `nes-emulation`.
 - Teensy 4.1 : maître audio, séquenceur, moteurs locaux, SD et DAC I²S.
-- ESP32-S3 écran : interface tactile, page EMULATEURS (4 cartes) et les
-  backends Walnut-CGB, NES et NGP RACE intégrés dans la cible courante.
-- Firmware audio de référence : `master_teensy_rack_lab`.
-- Firmware écran de référence pour la passe actuelle : `screen_esp`.
-  Les variantes GB/GBC séparées restent buildables pour les essais de cœur,
-  mais `screen_esp` est la cible flashee qui regroupe le menu et le support
-  NES.
+  Firmware : `master_teensy_rack_lab`.
+- ESP32-S3 écran : interface tactile, page ÉMULATEURS (3 cartes : GAME BOY,
+  GAME BOY COLOR, NES). Firmware : `screen_esp_walnut_gbc_core_task`
+  (`default_envs` de `platformio.ini`).
 - Navigation : le bouton JEUX du menu principal ouvre directement la page
-  EMULATEURS (Screen::EmuPicker) au lieu de passer par une sous-liste a un
-  seul choix -- categorie a un seul item sautee automatiquement
-  (`enterMenuCategory()`). 4 cartes : GAME BOY, GAME BOY COLOR, NES et NEO
-  GEO POCKET. Le build flashé reste le `screen_esp` standard restauré après
-  la sonde d’affichage direct ; aucune sonde expérimentale n’est active.
+  ÉMULATEURS.
 
 ## Rack audio
 
@@ -33,90 +26,53 @@ Ce document est la source de vérité de l’état courant. Les audits datés da
 - Les tests et réglages fins des moteurs externes restent à poursuivre, mais
   le chemin rack audio de base est fonctionnel.
 
-## Game Boy
+## Game Boy et Game Boy Color — validés à pleine vitesse
 
-- Cœur de la cible courante : Walnut-CGB (`gb_emulator.cpp`). Le backend
-  Peanut-GB (`gb_emulator_peanut.cpp`) reste disponible dans les
-  environnements labo mais est explicitement exclu de `screen_esp`.
-- La sonde `AZ2_GB_DUAL_CORE_BLIT` déporte la copie+flush du framebuffer sur
-  le core 0 avec double buffer et attentes bornées. Elle est validée dans les
-  environnements labo core-task, mais n’est pas activée dans le build standard
-  actuellement flashé.
-- **X3 : validé à 59,76 fps sur matériel réel** dans le backend Peanut-GB de
-  labo (référence 59,73 fps, soit **100,1 %**). Cette mesure ne doit pas être
-  attribuée automatiquement au backend Walnut de la cible courante.
-  X2 reste dispo si besoin d’une marge supplémentaire.
-- Boutons AFFICHAGE (X2/X3) agrandis (150×34, texte taille 2) sur la page
-  JEUX.
-- Audio GB : transmis vers le Teensy en mono pour la chaîne actuelle.
-- Capture : fonctionnelle en X2, jusqu’à 30 secondes, WAV écrit sur la SD du
-  Teensy sous `/samples/SAMPLE_###.wav`.
-- Le dernier fichier capturé peut être chargé dans le slot dynamique
-  `SAMPLER / GB Capture`.
-- Matrice de compatibilité ROM DMG, fidélité APU et sauvegardes prolongées
-  restent à qualifier plus largement (une seule ROM en session longue à ce
-  jour).
+- Un seul cœur : **Walnut-CGB**, pour les jeux `.gb` comme `.gbc`. Peanut-GB
+  n'est plus utilisé en production (`screen_esp_peanut_gb_*` reste buildable
+  en labo).
+- Chaque carte ne liste que ses ROM : GAME BOY les `.gb`, GAME BOY COLOR les
+  `.gbc` (`gbSetRomKind()`), y compris dans les sous-dossiers de `/games`.
+- Mesures sur matériel du 1er octobre 2026 (`GB:PERF`, port série écran) :
 
-## Game Boy Color
+| Jeu | Mode | Cadence | Cœur moyen |
+| --- | --- | --- | --- |
+| Zelda: Link's Awakening DX (`.gbc`) | X2 | 59,6–60,0 fps | ~15 ms |
+| Zelda: Link's Awakening DX (`.gbc`) | X3 | 59,6–59,8 fps | ~8 ms |
+| Zelda: Link's Awakening (`.gb`) | X3 | 59,0–60,0 fps | ~9 ms |
 
-- Cœur : Walnut-CGB (`WALNUT_FULL_GBC_SUPPORT=1`), même découpage double
-  cœur que Peanut-GB ci-dessus. Firmware de validation séparé :
-  `screen_esp_walnut_gbc_core_task` reste une sonde de validation du blit sur
-  l’autre cœur ; **il ne faut pas le flasher pendant cette pause**.
-- Bug de blocage trouvé et corrigé (2026-09-27) : `gb_run_frame_dualfetch()`
-  saute `gbBlitLine()` entièrement quand `gb->lcd_blank` est vrai
-  (walnut_cgb.h) ; si ça arrive en plein milieu d’une bande de 8 lignes, le
-  buffer correspondant restait "sorti" du pool indéfiniment -- après 2
-  bandes abandonnées, `loop()` se figeait totalement (tactile/boutons
-  compris), nécessitant une récupération en mode BOOT physique. Corrigé par
-  `gbBlitEndOfFrame()` (récupère un buffer abandonné à la fin de chaque
-  frame, appelé depuis `gbRunFrame()`) + attentes bornées partout dans le
-  pipeline de blit (voir ci-dessus) au lieu de `portMAX_DELAY`.
-- Validé sur matériel réel après correctif : *Zelda: Link’s Awakening DX*
-  charge et tourne à **59,64-59,82 fps** en jeu normal, `core_avg_us`
-  ~12,4ms. Ralentissement à ~47-51fps observé pendant l’intro du jeu,
-  identifié comme le mode double-vitesse du GBC (comportement authentique
-  de la cartouche, pas un bug AZ-2) : `core_avg_us` grimpe à ~16,4-17,2ms
-  pendant l’intro puis redescend en jeu normal.
-- Page EMULATEURS : la carte GAME BOY COLOR lance réellement une partie sur
-  la cible courante (`#ifndef AZ2_GB_CORE_PEANUT`).
-- Reste à qualifier : matrice de compatibilité ROM plus large (une seule
-  ROM testée), session longue (30 min), aller-retour sauvegarde complet,
-  confirmation visuelle utilisateur détaillée (couleurs/scintillement).
+- Affichage : le cœur 1 émule et transmet les lignes source ; le cœur 0
+  agrandit et écrit le framebuffer (pool d'une image entière, le cœur 1
+  n'attend plus l'affichage). Une image dessinée sur 2 en X2 (30 Hz), sur 3
+  en X3 (20 Hz) ; logique et son restent à 59,7 Hz.
+- Écran RGB à 10 MHz (au lieu de 12) : supprime les lignes affichées au
+  mauvais endroit. Un léger sautillement subsiste parfois en X3 (débit PSRAM
+  partagé entre écran, affichage et ROM).
+- Sauvegarde automatique toutes les 30 s : n'écrit sur la SD que si la SRAM
+  a réellement changé (empreinte CRC32) — plus d'arrêt de 0,4–0,8 s.
+- Audio GB : 14 kHz mono vers le Teensy ; le Teensy le tire directement par
+  son ISR audio avec asservissement sur le remplissage réel (voir
+  `docs/AZ2_BIP_PARASITE_2026-09-28.md`, mise à jour du 1er octobre).
+- Capture : WAV sur la SD du Teensy (`/samples/SAMPLE_###.wav`), dernier
+  fichier chargeable dans `SAMPLER / GB Capture`.
+- Reste à qualifier : matrice de compatibilité plus large, session longue de
+  30 min, aller-retour complet des sauvegardes.
 
 ## NES
 
-- Support intégré dans `screen_esp` : chargement ROM, contrôleur, audio APU,
-  sauvegardes SRAM et rendu 256×240 vers l’écran 480×480.
-- Mesure matérielle de référence : 49–50 FPS d’émulation stable, avec
-  `FRAMESKIP` actif ; la cible NTSC reste 60,1 FPS, soit **81,5–83,2 %**.
-- Le reboot watchdog et le débordement du blit vidéo ont été corrigés.
-- Le pipeline d’affichage Core 0 a été essayé puis retiré après une mesure
-  régressive à 36,8 FPS. Les détails sont dans
-  `docs/AZ2_NES_VALIDATION_2026-09-27.md`.
+- Intégré : chargement ROM, contrôleur, audio APU, sauvegardes SRAM.
+- Mesure de référence : 49–50 fps avec `FRAMESKIP`, soit 81,5–83,2 % de la
+  cadence NTSC. Le son est donc lui aussi en dessous du temps réel.
+  Détails : `docs/AZ2_NES_VALIDATION_2026-09-27.md`.
 
-## Neo Geo Pocket / Color
+## Neo Geo Pocket — retiré le 2 octobre 2026
 
-- Le cœur RACE est maintenant compilé dans `screen_esp` avec son adaptateur
-  AZ-2 (`src_esp32/az2_screen/ngp_emulator.cpp`) et le bouton jaune NEO GEO
-  POCKET est raccordé à la navigation, aux commandes, au son et aux fichiers
-  de sauvegarde.
-- Le firmware standard a été restauré après la sonde Core 0 / framebuffer
-  direct. L’intégration NGP compilée n’est **pas encore qualifiée en
-  production** ; la seule mesure reproductible est la cible labo isolée :
-  environ 17 fps, soit **28,3 %** d’une cadence 60 Hz.
-- Le pipeline NGP double cœur/direct est désactivé dans `screen_esp` après
-  régression d’affichage et de commandes. Il reste du code conditionnel pour
-  une reprise séparée, mais il ne fait pas partie du firmware flashé.
-- RACE est GPLv2-only : la présence de ses sources dans le build courant est
-  un point juridique à traiter avant une diffusion de production. Voir
-  l’audit et `docs/AZ2_NGP_ETUDE_2026-09-27.md`.
-
-## Cœurs archivés / étudiés
-
-- GNUBOY : probe séparée, non retenue pour la production.
-- RACE conserve aussi une cible labo isolée `screen_esp_ngp_race_lab`, utile
-  pour reproduire la mesure des 17 fps sans toucher aux autres émulateurs.
+Le cœur RACE (GPLv2 seule) était incompatible avec la licence GPLv3 d'AZ-2.
+Il a été **supprimé** du dépôt avec son adaptateur, sa cible labo et la carte
+de la page ÉMULATEURS. Il ne tournait de toute façon qu'à ~17 fps (28 %).
+Les études restent consultables pour l'historique
+(`AZ2_NGP_ETUDE_2026-09-27.md`). Une reprise demanderait un cœur sous licence
+compatible (piste : NgpCraft, MIT).
 
 ## MIDI
 
@@ -136,22 +92,20 @@ Ce document est la source de vérité de l’état courant. Les audits datés da
   6N138 (voir `docs/AZ2_RACK_PINOUT.md`). Le code MIDI supprimé reste
   consultable dans l'historique git.
 
-## Bip parasite périodique — NON RÉSOLU
+## Bip parasite périodique — non reproduit depuis le 1er octobre
 
-- Bip d'environ une fois par seconde, présent dans **toute** l'application
-  (pas seulement les émulateurs), qui survit à STOP et à PANIC et que **seule
-  une coupure d'alimentation** fait disparaître.
-- Absent sur la version figée du 28 septembre 2026, après redémarrage. **La
-  cause n'est pas identifiée.**
-- C'est un état **verrouillé** : `panicAllAudio()` ne coupe que les voix,
-  aucun chemin logiciel ne remet le bus audio à zéro (anneau GB,
-  rééchantillonneur, reverb, delay, retour rack).
-- Trois tentatives sont épuisées et ne doivent pas être recommencées
-  (métronome, MIDI, retour rack). Le MIDI est **définitivement écarté**.
-- À la prochaine occurrence : relever `RACK:STATUS` et `GB:AUDIO_RX`
-  **avant** de redémarrer — le redémarrage détruit la preuve.
-- Détail complet, mesures et étapes suivantes :
-  `docs/AZ2_BIP_PARASITE_2026-09-28.md`.
+- Bip d'environ une fois par seconde, présent dans toute l'application, qui
+  survivait à STOP et PANIC et que seule une coupure d'alimentation faisait
+  disparaître.
+- 1er octobre 2026 : chemin audio GB refait (source tirée par l'ISR, PANIC
+  vide désormais l'anneau GB). Validé à l'écoute : plus de bruit parasite,
+  séquenceur et moteurs OK. **La cause racine n'est pas prouvée** : le bip
+  disparaissait déjà après chaque coupure de courant.
+- Indice matériel du même soir : déconnexions USB en cascade et hub tombé —
+  l'alimentation reste un suspect.
+- À la prochaine occurrence : relever `RACK:STATUS` et `GB:AUDIO_RX` avant
+  de redémarrer, puis redémarrer les cartes une par une.
+- Détail complet : `docs/AZ2_BIP_PARASITE_2026-09-28.md`.
 
 ## Audio et sampleur
 
@@ -167,38 +121,22 @@ Le chantier Pico, Button Pad et matrice LED est archivé. Les documents
 `AZ2_CABLAGE_PICO*.md` sont historiques et ne sont pas des références de
 câblage de production.
 
-## Vérifications
+## Vérifications du 2 octobre 2026
 
-- Préparation SD ROM documentée dans `docs/AZ2_SD_ROM_SETUP.md`. Le format
-  produit attendu est MBR + une partition FAT32 unique avec `/games/gb`,
-  `/games/gbc`, `/games/ngpc` et `/nes`. La validation complète de copie reste
-  bloquée par des erreurs du lecteur Broadcom interne du MacBook Pro pendant
-  les transferts (`ADMA`, timeout et remount FAT en lecture seule).
+- Compilation :
 
-- **Campagne de compilation des 22 environnements du 28 septembre 2026 :
-  18 OK, 4 en échec.** Détail et causes dans
-  `docs/AZ2_AUDIT_FIRMWARE_ET_FEUILLE_DE_ROUTE_2026-09-28.md`.
-- `pio run -e screen_esp_peanut_gb_lab` : **ÉCHEC** — assertion statique
-  `gb_emulator_peanut.cpp:109` ; `kSavePathCapacity` est resté à 96 dans le
-  backend Peanut alors que Walnut est passé à 192 pour `kGbRomNameLen = 160`.
-- `pio run -e screen_esp_peanut_gb_core_task` : **ÉCHEC**, même cause.
-  La mesure de référence **59,76 fps en X3** vient de cette cible : elle
-  n'est **pas reproductible** tant que le build n'est pas réparé.
-- `pio run -e screen_esp_walnut_gbc_core_task` : **ÉCHEC** — `dram0_0_seg`
-  dépassé de 6 488 octets. Pas une erreur de code : `screen_esp` occupe déjà
-  76,7 % de la DRAM et l'intégration NES puis NGP a consommé la marge. La
-  validation GBC citée plus haut n'est donc pas reproductible en l'état.
-- `pio run -e screen_esp_gb_direct` : **ÉCHEC** — `z80.h` introuvable ; son
-  filtre de sources prend `ngp_emulator.cpp` sans inclure le cœur RACE ni
-  définir `CZ80`.
-- `pio run -e screen_esp` : OK après restauration du build standard ; le
-  firmware a redémarré avec `DISPLAY:ALIVE:TICK`, audio prêt et événements de
-  boutons confirmés sur le port série.
-- `pio run -e master_teensy_rack_lab` : OK.
-- `pio test -e native` : 21/21 tests réussis lors de la dernière campagne.
-- Bug d'entrelacement série trouvé (des lignes `GB:PERF`/`TOUCH:...` se
-  mélangent sous forte charge) : confirmé indépendant du code firmware
-  (persiste même sur un simple `Serial.println()` isolé et sur un
-  `Serial.write()` unique) -- probablement le lien USB/CH340 sous rafale,
-  pas un bug AZ-2. N'affecte que la lisibilité du débogage série, pas le
-  jeu réel. Non corrigé, pas de piste firmware restante à essayer.
+| Environnement | Rôle | Résultat |
+| --- | --- | --- |
+| `master_teensy_rack_lab` | Teensy production | OK |
+| `master_teensy` | Teensy sans rack | OK |
+| `screen_esp_walnut_gbc_core_task` | écran production | OK |
+| `screen_esp` | écran sans affichage double cœur | OK |
+| `screen_esp_peanut_gb_lab` / `_core_task` | labo Peanut-GB | OK |
+| `engine_rack_granular_s3_teensy_slave` | rack GRANULAR | OK |
+| `engine_rack_spectral_esp32` | rack SPECTRAL | OK |
+| `screen_esp_gb_direct` | sonde RGB directe | **ÉCHEC** : exclut `nes_core/` mais compile `nes_emulator.cpp` (`Cpu6502` non défini) |
+
+- `pio test -e native` : 21/21. `tools/check_firmware_contract.py` : PASS.
+- Préparation SD ROM : `docs/AZ2_SD_ROM_SETUP.md`.
+- Bug d'entrelacement série du port de debug (`GB:PERF` mélangé) : lié au
+  lien USB/CH340 sous rafale, pas au firmware ; n'affecte que la lisibilité.

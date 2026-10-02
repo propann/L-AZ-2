@@ -18,7 +18,6 @@ Structure cible :
   GameBoy/
   GameBoyColor/
   NES/
-  NeoGeoPocket/
 /nes/
 /projects/
 /kits/
@@ -38,9 +37,9 @@ donc être rangées par console dans des sous-dossiers :
 ```
 
 Les extensions `.gb`, `.gbc` et `.nes` doivent rester en minuscules pour
-faciliter la détection. Le code NGP cherche aussi `.ngp`, `.NGP`, `.ngc` et
-`.NGC` sous `/games/`. L’intégration est encore en qualification et ne doit
-pas être annoncée comme un émulateur de production validé.
+faciliter la détection. Chaque carte de la page ÉMULATEURS ne liste que ses
+extensions : GAME BOY les `.gb`, GAME BOY COLOR les `.gbc`, NES les `.nes`.
+La Neo Geo Pocket a été retirée le 2 octobre 2026 (licence du cœur RACE).
 
 Les WAV et samples ne vont pas sur cette carte : ils appartiennent à la carte
 SD du Teensy, dans `/samples/`.
@@ -52,8 +51,6 @@ SD du Teensy, dans `/samples/`.
   World/USA lorsque la version française n’existe pas.
 - NES : archive `.nes` ; exclure les entrées Pirate, doublons et hacks
   multiples ; privilégier Europe/France, World puis USA.
-- Neo Geo Pocket : collection NGPC ; conserver les ROMs dans `/games/` et
-  valider séparément le chargement, l’audio et les sauvegardes.
 
 Les archives originales de `Downloads/` ne doivent pas être supprimées.
 

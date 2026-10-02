@@ -1,5 +1,7 @@
 # AZ-2 — prototype Neo Geo Pocket / Color RACE (2026-09-27)
 
+> **Historique — RACE retiré du dépôt le 2 octobre 2026.** Le cœur RACE est sous GPLv2 seule, incompatible avec la GPLv3 d'AZ-2 ; le code, l'adaptateur et la cible labo décrits ici ont été supprimés (consultables dans l'historique Git). Voir `AZ2_ETAT_ACTUEL.md` et `AZ2_LICENCES.md`.
+
 ## Cible et licence
 
 La cible labo reste isolée dans l’environnement PlatformIO
