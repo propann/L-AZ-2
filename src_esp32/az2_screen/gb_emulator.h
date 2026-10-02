@@ -25,6 +25,12 @@ constexpr uint8_t kGbMaxRoms = 100;
 // kGbMaxRoms), remplit `names` avec les chemins relatifs a /games
 // (ex. "GameBoyColor/jeu.gbc").
 uint8_t gbScanRoms(char names[][kGbRomNameLen]);
+// Filtre de gbScanRoms() (2026-10-01) : chaque carte de la page EMULATEURS ne
+// liste que ses ROM -- GAME BOY les .gb, GAME BOY COLOR les .gbc. Le meme
+// coeur Walnut-CGB fait tourner les deux. Peanut-GB (DMG seul) ignore le
+// filtre et ne liste que les .gb.
+enum class GbRomKind : uint8_t { Any, Dmg, Cgb };
+void gbSetRomKind(GbRomKind kind);
 
 // Charge et demarre le fichier /games/<filename> (nom tel que renvoye
 // par gbScanRoms()). Renvoie false (message Serial clair) en cas

@@ -858,6 +858,18 @@ void sortRomNames(char names[][kGbRomNameLen], uint8_t count) {
   }
 }
 
+static GbRomKind romKind = GbRomKind::Any;
+
+static bool romKindAccepts(const String &name) {
+  const bool isGb = name.endsWith(".gb") || name.endsWith(".GB");
+  const bool isGbc = name.endsWith(".gbc") || name.endsWith(".GBC");
+  switch (romKind) {
+    case GbRomKind::Dmg: return isGb;
+    case GbRomKind::Cgb: return isGbc;
+    default: return isGb || isGbc;
+  }
+}
+
 void scanGbDir(File &dir, const String &prefix, char names[][kGbRomNameLen],
                uint8_t &count) {
   for (File entry = dir.openNextFile(); entry && count < kGbMaxRoms;
@@ -868,8 +880,7 @@ void scanGbDir(File &dir, const String &prefix, char names[][kGbRomNameLen],
     const String relative = prefix.length() ? prefix + "/" + base : base;
     if (entry.isDirectory()) {
       scanGbDir(entry, relative, names, count);
-    } else if (fullName.endsWith(".gb") || fullName.endsWith(".gbc") ||
-               fullName.endsWith(".GB") || fullName.endsWith(".GBC")) {
+    } else if (romKindAccepts(fullName)) {
       if (relative.length() >= kGbRomNameLen) {
         Serial.print("GB:ROM_PATH_TOO_LONG:");
         Serial.println(relative);
@@ -881,6 +892,8 @@ void scanGbDir(File &dir, const String &prefix, char names[][kGbRomNameLen],
     entry.close();
   }
 }
+
+void gbSetRomKind(GbRomKind kind) { romKind = kind; }
 
 uint8_t gbScanRoms(char names[][kGbRomNameLen]) {
   uint8_t count = 0;

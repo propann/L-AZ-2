@@ -808,6 +808,8 @@ void scanGbDir(File &dir, const String &prefix, char names[][kGbRomNameLen],
   }
 }
 
+void gbSetRomKind(GbRomKind) {}  // Peanut-GB : .gb seulement, voir scanGbDir()
+
 uint8_t gbScanRoms(char names[][kGbRomNameLen]) {
   uint8_t count = 0;
 

@@ -4638,10 +4638,17 @@ void drawEmuCard(uint8_t index, int16_t y, const char *sub, const char *cta, uin
 void drawEmuPickerPage() {
   drawSubHeader("EMULATEURS", kPalette[2]);
   constexpr uint16_t kGameBoyYellow = RGB565(255, 225, 80);
-  drawEmuCard(0, kEmuCardGbY, "Walnut-CGB DMG - 59,7fps", "JOUER >", kGameBoyYellow, true);
-  drawEmuCard(1, kEmuCardGbcY, "Walnut-CGB - 59,7fps", "JOUER >", kGameBoyYellow, true);
-  drawEmuCard(2, kEmuCardNesY, "NES 6502 - 49-50fps", "JOUER >", kGameBoyYellow, true);
-  drawEmuCard(3, kEmuCardNeoY, "RACE TLCS-900H - Neo Geo Pocket", "QUALIF EN COURS",
+  // Libelles = coeur reellement compile + cadence mesuree sur materiel
+  // (2026-10-01, Zelda / Zelda DX, X2 et X3).
+#ifdef AZ2_GB_CORE_PEANUT
+  drawEmuCard(0, kEmuCardGbY, "Peanut-GB - jeux .gb - 59,7 fps X2/X3", "JOUER >", kGameBoyYellow, true);
+  drawEmuCard(1, kEmuCardGbcY, "Walnut-CGB - firmware separe", "INDISPONIBLE", kGameBoyYellow, true);
+#else
+  drawEmuCard(0, kEmuCardGbY, "Walnut-CGB - jeux .gb - 59,7 fps X2/X3", "JOUER >", kGameBoyYellow, true);
+  drawEmuCard(1, kEmuCardGbcY, "Walnut-CGB - jeux .gbc - 59,7 fps X2/X3", "JOUER >", kGameBoyYellow, true);
+#endif
+  drawEmuCard(2, kEmuCardNesY, "Anemoia 6502 - jeux .nes - 49-50 fps", "JOUER >", kGameBoyYellow, true);
+  drawEmuCard(3, kEmuCardNeoY, "RACE TLCS-900H - jeux .ngp/.ngc", "QUALIF EN COURS",
               kGameBoyYellow, true);
 }
 
@@ -4665,11 +4672,13 @@ void emuPickerActivate(uint8_t index) {
     return;
   }
   if (index == 0) {
+    gbSetRomKind(GbRomKind::Dmg);  // carte GAME BOY : .gb seulement
     goTo(Screen::Retro);
     return;
   }
 #ifndef AZ2_GB_CORE_PEANUT
   if (index == 1) {
+    gbSetRomKind(GbRomKind::Cgb);  // carte GAME BOY COLOR : .gbc seulement
     goTo(Screen::Retro);
     return;
   }
@@ -4912,7 +4921,9 @@ void drawRetroPage() {
   }
 
   if (gbRomCount > 0) {
-    drawSubHeader("JEUX - choisis une ROM", kPalette[2]);
+    drawSubHeader(emuPickerSelected == 1 ? "GAME BOY COLOR - choisis une ROM"
+                                         : "GAME BOY - choisis une ROM",
+                  kPalette[2]);
     // Choix du rendu avant le lancement : 2× garde le plein débit, 3×
     // remplit la largeur de l'écran. Le choix reste actif pour la ROM
     // suivante jusqu'à ce que l'utilisateur le change.
