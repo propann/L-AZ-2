@@ -38,11 +38,10 @@
 #include <Preferences.h>
 #include "gb_emulator.h"
 #include "nes_emulator.h"
-#include "ngp_emulator.h"
 #ifdef AZ2_DIRECT_PANEL
 #include "AZ2_RGB_Direct.h"
 #endif
-#if defined(AZ2_GB_DUAL_CORE_BLIT) || defined(AZ2_NES_DUAL_CORE_BLIT) || defined(AZ2_NGP_DUAL_CORE_BLIT)
+#if defined(AZ2_GB_DUAL_CORE_BLIT) || defined(AZ2_NES_DUAL_CORE_BLIT)
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
@@ -51,8 +50,6 @@
 void drawGbViewportFrame();
 void flushUiCanvas();
 uint8_t gbDisplayScale = 2;
-
-void ngpRenderFrameOnCore(const uint16_t *pixels);
 
 namespace {
 
@@ -301,7 +298,7 @@ bool inBox(int16_t x, int16_t y, int16_t bx, int16_t by, int16_t bw, int16_t bh)
 // ---------------------------------------------------------------------
 // Etat partage entre les pages / le lien Teensy
 // ---------------------------------------------------------------------
-enum class Screen : uint8_t { Menu, Controls, Audio, Sampler, Sequencer, Engines, Retro, Config, Links, About, Patch, Song, Project, Mixer, StepSeq, EmuPicker, NesRetro, NgpRetro };
+enum class Screen : uint8_t { Menu, Controls, Audio, Sampler, Sequencer, Engines, Retro, Config, Links, About, Patch, Song, Project, Mixer, StepSeq, EmuPicker, NesRetro };
 Screen currentScreen = Screen::Menu;
 // "Retour" (2026-09-19, "il faut pas que ca revienne aux menu general
 // il faut que ca revienne d'un etage seulement") -- UN SEUL niveau
@@ -365,8 +362,7 @@ constexpr int16_t kEmuCardGap = 10;
 constexpr int16_t kEmuCardGbY = 76;
 constexpr int16_t kEmuCardGbcY = kEmuCardGbY + kEmuCardH + kEmuCardGap;
 constexpr int16_t kEmuCardNesY = kEmuCardGbcY + kEmuCardH + kEmuCardGap;
-constexpr int16_t kEmuCardNeoY = kEmuCardNesY + kEmuCardH + kEmuCardGap;
-constexpr uint8_t kEmuCardCount = 4;
+constexpr uint8_t kEmuCardCount = 3;
 int8_t emuPickerSelected = 0;
 
 // Exclue de la page SEQUENCEUR depuis le 2026-09-19 ("on peut enlever
@@ -4325,7 +4321,7 @@ void romRowRect(uint8_t visibleRow, int16_t &y) {
 
 // index : absolu dans gbRomNames[], pas relatif a la page -- ne dessine
 // rien s'il tombe hors de la fenetre visible actuelle (gbRomScroll).
-// Libelle lisible d'une ROM pour les listes JEUX / NES / NGP : garde le nom
+// Libelle lisible d'une ROM pour les listes JEUX / NES : garde le nom
 // du jeu seul (sans dossier, sans extension, sans les tags No-Intro du type
 // "(France) (Rev 1) [!]"), puis tronque avec ".." pour tenir dans le cadre.
 // L'identifiant SD complet reste intact dans les tableaux *RomNames[].
@@ -4587,16 +4583,11 @@ void drawGbSettingsMenu() {
 //       le meme firmware).
 //   2 = NES : etude faite (Anemoia-ESP32, GPLv3, coeur decouple du
 //       materiel), pas encore implemente.
-//   3 = NEO GEO POCKET : pas etudie, a faire plus tard. PAS le Neo Geo
-//       arcade/AES (celui-la est hors de portee : cartouches 40-100+ Mo,
-//       double CPU 68000+Z80, aucun projet microcontroleur connu). Le
-//       Neo Geo Pocket (Color) est une console portable SNK 1998-99,
-//       TLCS-900H, cartouches 2-4 Mo, 160x152 -- echelle comparable au
-//       GB/GBC deja valides, PAS comparable au Neo Geo arcade.
+// [2026-10-02] La 4e carte NEO GEO POCKET (coeur RACE) est retiree : RACE
+// est sous GPLv2 seule, incompatible avec la GPLv3 d'AZ-2.
 // kEmuCardTitles utilise par emuPickerActivate() -- garder synchronise avec
 // drawEmuPickerPage() si l'ordre change.
-constexpr const char *kEmuCardTitles[kEmuCardCount] = {"GAME BOY", "GAME BOY COLOR", "NES",
-                                                        "NEO GEO POCKET"};
+constexpr const char *kEmuCardTitles[kEmuCardCount] = {"GAME BOY", "GAME BOY COLOR", "NES"};
 
 // Couleur "en cours" (ni pret/vert ni desactive/gris) -- meme convention
 // RGB565() que kDim/kFaint plus haut dans ce fichier.
@@ -4648,17 +4639,14 @@ void drawEmuPickerPage() {
   drawEmuCard(1, kEmuCardGbcY, "Walnut-CGB - jeux .gbc - 59,7 fps X2/X3", "JOUER >", kGameBoyYellow, true);
 #endif
   drawEmuCard(2, kEmuCardNesY, "Anemoia 6502 - jeux .nes - 49-50 fps", "JOUER >", kGameBoyYellow, true);
-  drawEmuCard(3, kEmuCardNeoY, "RACE TLCS-900H - jeux .ngp/.ngc", "QUALIF EN COURS",
-              kGameBoyYellow, true);
 }
 
 // Active la carte selectionnee (tap ou croix+A). Le build courant compile
 // Walnut-CGB, qui detecte DMG vs GBC depuis l'entete de chaque ROM ; les
 // cartes GAME BOY et GAME BOY COLOR restent donc une distinction de parcours.
 // Les environnements Peanut-GB labo utilisent l'autre backend et excluent la
-// carte GBC pour eviter la collision de symboles. NES (index 2) et Neo Geo
-// Pocket (index 3) sont integres dans screen_esp, avec NGP encore en
-// qualification materielle.
+// carte GBC pour eviter la collision de symboles. NES (index 2) est integre
+// dans screen_esp.
 void emuPickerActivate(uint8_t index) {
   emuPickerSelected = static_cast<int8_t>(index);
 #ifdef AZ2_NES_ENABLED
@@ -4667,10 +4655,6 @@ void emuPickerActivate(uint8_t index) {
     return;
   }
 #endif
-  if (index == 3) {
-    goTo(Screen::NgpRetro);
-    return;
-  }
   if (index == 0) {
     gbSetRomKind(GbRomKind::Dmg);  // carte GAME BOY : .gb seulement
     goTo(Screen::Retro);
@@ -4849,53 +4833,6 @@ void nesBlitBandImpl(int bandIndex, const uint16_t *pixels) {
 #endif
 }
 
-char (*ngpRomNames)[kNgpRomNameLen] = nullptr;  // PSRAM, voir gbRomNames
-uint8_t ngpRomCount = 0;
-int8_t ngpRomScroll = 0;
-uint8_t ngpSelectedRomIndex = 0;
-constexpr uint8_t kNgpVisibleRows = 10;
-constexpr int16_t kNgpRowH = 36;
-constexpr int16_t kNgpRowTop = 70;
-
-void drawNgpPage() {
-  if (ngpIsLoaded()) {
-    gfx->fillRect(0, 0, kScreenSize, 12, RGB565_BLACK);
-    gfx->fillRect(0, 468, kScreenSize, 12, RGB565_BLACK);
-    gfx->setTextSize(1);
-    gfx->setTextColor(kDim);
-    gfx->setCursor(kMargin, 4);
-    gfx->print(ngpRomTitle());
-    gfx->setCursor(static_cast<int16_t>(kScreenSize - kMargin - 66), 4);
-    gfx->print("C:QUITTER");
-    return;
-  }
-  drawSubHeader("NEO GEO POCKET - choisis une ROM", kPalette[2]);
-  if (ngpRomCount == 0) {
-    gfx->setTextSize(1);
-    gfx->setTextColor(kDim);
-    gfx->setCursor(kMargin, 80);
-    gfx->print("Aucune ROM .ngp/.ngc dans /games.");
-    return;
-  }
-  gfx->fillRect(kMargin, kNgpRowTop, static_cast<int16_t>(kScreenSize - 2 * kMargin),
-                static_cast<int16_t>(kNgpVisibleRows * kNgpRowH), RGB565_BLACK);
-  const uint8_t visible = static_cast<uint8_t>(min<int>(kNgpVisibleRows, ngpRomCount - ngpRomScroll));
-  for (uint8_t i = 0; i < visible; ++i) {
-    const uint8_t idx = static_cast<uint8_t>(ngpRomScroll + i);
-    const int16_t y = static_cast<int16_t>(kNgpRowTop + i * kNgpRowH);
-    const bool selected = (idx == ngpSelectedRomIndex);
-    gfx->fillRect(kMargin, y, static_cast<int16_t>(kScreenSize - 2 * kMargin),
-                  static_cast<int16_t>(kNgpRowH - 6), selected ? kPalette[1] : RGB565_BLACK);
-    gfx->drawRect(kMargin, y, static_cast<int16_t>(kScreenSize - 2 * kMargin),
-                  static_cast<int16_t>(kNgpRowH - 6), selected ? kPalette[1] : kPalette[idx % kPaletteCount]);
-    gfx->setTextSize(2);
-    gfx->setTextColor(selected ? RGB565_BLACK : RGB565_WHITE);
-    gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(y + 8));
-    char label[kRomLabelChars + 1];
-    formatRomLabel(ngpRomNames[idx], label, sizeof(label));
-    gfx->print(label);
-  }
-}
 
 void drawRetroPage() {
   if (gbIsLoaded()) {
@@ -6014,7 +5951,6 @@ void drawScreen(Screen s) {
 #else
     case Screen::NesRetro: break;
 #endif
-    case Screen::NgpRetro: drawNgpPage(); break;
     case Screen::Retro: drawRetroPage(); break;
     case Screen::Config: drawConfigPage(); break;
     case Screen::Links: drawLinksPage(); break;
@@ -6045,9 +5981,6 @@ void goTo(Screen s) {
     gfx->setCursor(kMargin, 5);
     gfx->print("SD SAVE ERROR - C:RETRY");
     return;
-  }
-  if (s != Screen::NgpRetro && ngpIsLoaded()) {
-    ngpUnload();
   }
   // Parents stables des pages imbriquees : entrer dans PATCH depuis
   // MOTEURS doit permettre PATCH -> MOTEURS -> page d'origine, sans que
@@ -6083,11 +6016,6 @@ void goTo(Screen s) {
     nesSelectedRomIndex = 0;
   }
 #endif
-  if (s == Screen::NgpRetro && !ngpIsLoaded()) {
-    ngpRomCount = ngpScanRoms(ngpRomNames);
-    ngpRomScroll = 0;
-    ngpSelectedRomIndex = 0;
-  }
   if (s == Screen::EmuPicker) {
     emuPickerSelected = 0;
   }
@@ -6453,18 +6381,6 @@ void handleTeensyLine(const String &line) {
           drawNesPage();
         }
 #endif
-        if (currentScreen == Screen::NgpRetro && ngpIsLoaded()) {
-          ngpSetButton(static_cast<NgpButton>(index), pressed);
-        }
-        if (pressed && currentScreen == Screen::NgpRetro && !ngpIsLoaded() && ngpRomCount > 0 &&
-            (index == 0 || index == 1)) {
-          if (index == 1 && ngpSelectedRomIndex + 1 < ngpRomCount) ++ngpSelectedRomIndex;
-          if (index == 0 && ngpSelectedRomIndex > 0) --ngpSelectedRomIndex;
-          if (ngpSelectedRomIndex < ngpRomScroll) ngpRomScroll = ngpSelectedRomIndex;
-          if (ngpSelectedRomIndex >= ngpRomScroll + kNgpVisibleRows)
-            ngpRomScroll = ngpSelectedRomIndex - kNgpVisibleRows + 1;
-          drawNgpPage();
-        }
         // Page JEUX, liste de ROM (pas encore charge) : HAUT/BAS
         // deplacent la selection surlignee (voir selectedRomIndex plus
         // haut, demande 2026-09-17 -- "je peux pas selectionner une rom
@@ -7033,10 +6949,6 @@ void handleTeensyLine(const String &line) {
           gbSetButton(kGbMap[index], pressed);
         }
       }
-      const bool inNgpGame = (currentScreen == Screen::NgpRetro && ngpIsLoaded());
-      if (inNgpGame && index < 2) {
-        ngpSetButton(static_cast<NgpButton>(static_cast<uint8_t>(NgpButton::A) + index), pressed);
-      }
 #ifdef AZ2_NES_ENABLED
       if (currentScreen == Screen::NesRetro && nesIsLoaded() && index < 2) {
         nesSetButton(static_cast<NesButton>(index), pressed);
@@ -7045,10 +6957,6 @@ void handleTeensyLine(const String &line) {
         nesSaveRam();
       }
 #endif
-      if (pressed && letter == 'A' && screenAtButton == Screen::NgpRetro &&
-          currentScreen == Screen::NgpRetro && !ngpIsLoaded() && ngpRomCount > 0) {
-        if (ngpLoadRom(ngpRomNames[ngpSelectedRomIndex])) drawNgpPage();
-      }
       // Page JEUX, liste de ROM (pas encore charge) : A charge la ROM
       // choisie par la croix -- meme convention que le tactile
       // (toucher une ligne), et que A pour confirmer ailleurs (menu).
@@ -7229,7 +7137,7 @@ void handleTeensyLine(const String &line) {
         sendToTeensy(msg);
         drawStepSeqPage();
       } else if (pressed && letter == 'C' && currentScreen != Screen::Menu && !inGbGame &&
-                 !inNgpGame && !(currentScreen == Screen::NesRetro && nesIsLoaded())) {
+                 !(currentScreen == Screen::NesRetro && nesIsLoaded())) {
         // Toute page ouverte depuis une catégorie revient à cette
         // catégorie, même après un détour par MOTEURS, PATCH ou AUDIO.
         // Les pages ouvertes hors menu gardent le retour d'un niveau.
@@ -7244,9 +7152,6 @@ void handleTeensyLine(const String &line) {
           nesUnload();
           goTo(Screen::EmuPicker);
 #endif
-        } else if (currentScreen == Screen::NgpRetro) {
-          ngpUnload();
-          goTo(Screen::EmuPicker);
         } else if (menuReturnCategory >= 0) {
           goTo(Screen::Menu);
         } else {
@@ -7635,19 +7540,6 @@ void handleTeensyLine(const String &line) {
           }
         }
 #endif
-        if (currentScreen == Screen::NgpRetro && ngpIsLoaded()) {
-          if (index == 1) {
-            ngpSetButton(NgpButton::Select, pressed);
-          } else if (index == 2) {
-            ngpSetButton(NgpButton::Start, pressed);
-          }
-          if ((index == 1 || index == 2) && encSwState[1] && encSwState[2]) {
-            ngpSetButton(NgpButton::Select, false);
-            ngpSetButton(NgpButton::Start, false);
-            ngpUnload();
-            goTo(navPrevious);
-          }
-        }
         if (currentScreen == Screen::Audio && index == 1 && !pressed) {
           const bool longPress = (millis() - encPressStartedMs[index]) >= kEncoderLongPressMs;
           if (longPress) {
@@ -8456,127 +8348,6 @@ void nesBlitBand(int bandIndex, const uint16_t *pixels) {
   nesBlitBandImpl(bandIndex, pixels);
 }
 
-namespace {
-
-constexpr size_t kNgpFramePixels = 160U * 152U;
-
-#if defined(AZ2_NGP_DUAL_CORE_BLIT) && defined(AZ2_DIRECT_PANEL)
-QueueHandle_t ngpBlitReadyQueue = nullptr;
-QueueHandle_t ngpBlitFreeQueue = nullptr;
-TaskHandle_t ngpBlitTaskHandle = nullptr;
-uint16_t *ngpBlitBuffers[2] = {nullptr, nullptr};
-bool ngpBlitPipelineReady = false;
-
-void ngpBlitConsumerTask(void *) {
-  uint16_t *buffer = nullptr;
-  for (;;) {
-    if (xQueueReceive(ngpBlitReadyQueue, &buffer, portMAX_DELAY) != pdTRUE) continue;
-    ngpRenderFrameOnCore(buffer);
-    xQueueSend(ngpBlitFreeQueue, &buffer, portMAX_DELAY);
-  }
-}
-
-bool ngpStartBlitPipeline() {
-  if (ngpBlitPipelineReady) return true;
-  ngpBlitReadyQueue = xQueueCreate(2, sizeof(uint16_t *));
-  ngpBlitFreeQueue = xQueueCreate(2, sizeof(uint16_t *));
-  if (!ngpBlitReadyQueue || !ngpBlitFreeQueue) return false;
-  for (uint8_t i = 0; i < 2; ++i) {
-    ngpBlitBuffers[i] = static_cast<uint16_t *>(
-        heap_caps_malloc(kNgpFramePixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM));
-    if (!ngpBlitBuffers[i]) return false;
-    xQueueSend(ngpBlitFreeQueue, &ngpBlitBuffers[i], 0);
-  }
-  if (xTaskCreatePinnedToCore(ngpBlitConsumerTask, "ngp_blit", 8192, nullptr, 2,
-                              &ngpBlitTaskHandle, 0) != pdPASS) {
-    return false;
-  }
-  ngpBlitPipelineReady = true;
-  Serial.println("NGP:BLIT:CORE0:READY");
-  return true;
-}
-
-#endif
-
-}  // namespace
-
-// RACE produit 160x152 RGB565. Le framebuffer RGB de l'AZ-2 est ecrit
-// directement, avec les memes axes retournes que GB/NES. Le mapping precalcule
-// evite les divisions dans les 218 880 pixels de chaque frame.
-void ngpRenderFrameOnCore(const uint16_t *pixels) {
-#ifdef AZ2_DIRECT_PANEL
-  uint16_t *framebuffer = nullptr;
-#else
-  uint16_t *framebuffer = gfx->getFramebuffer();
-#endif
-#ifdef AZ2_DIRECT_PANEL
-  if (!pixels) return;
-#else
-  if (!framebuffer || !pixels) return;
-#endif
-  // Ecriture par bandes courtes : le panneau RGB lit la framebuffer en DMA.
-  // Une publication par frame complete provoque du tearing/tremblement ; 8
-  // lignes source est le compromis deja valide pour GB/NES.
-  constexpr int16_t kSourceRowsPerBand = 8;
-  for (int16_t bandStart = 0; bandStart < 152; bandStart += kSourceRowsPerBand) {
-#ifdef AZ2_DIRECT_PANEL
-    // Reprendre le buffer arriere a chaque bande : le callback du panneau
-    // peut changer le buffer libre pendant le calcul RACE.
-    framebuffer = static_cast<uint16_t *>(directPanel.writableFrameBuffer());
-    if (!framebuffer) return;
-#endif
-    const int16_t bandEnd = min<int16_t>(bandStart + kSourceRowsPerBand, 152);
-    for (int16_t srcY = bandStart; srcY < bandEnd; ++srcY) {
-    uint16_t *dst = framebuffer + static_cast<size_t>(12 + (151 - srcY) * 3) * kScreenSize;
-    const uint16_t *src = pixels + static_cast<size_t>(srcY) * 160U;
-    uint16_t *out = dst;
-    for (int16_t srcX = 159; srcX >= 0; --srcX) {
-      const uint16_t color = src[srcX];
-      *out++ = color;
-      *out++ = color;
-      *out++ = color;
-    }
-    memcpy(dst + kScreenSize, dst, kScreenSize * sizeof(uint16_t));
-    memcpy(dst + 2 * kScreenSize, dst, kScreenSize * sizeof(uint16_t));
-    }
-    const int16_t firstDstY = static_cast<int16_t>(12 + (151 - bandEnd) * 3 + 3);
-    const int16_t outputRows = static_cast<int16_t>((bandEnd - bandStart) * 3);
-    esp_cache_msync(framebuffer + firstDstY * kScreenSize,
-                    static_cast<size_t>(outputRows) * kScreenSize * sizeof(uint16_t),
-                    ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-    if (((bandStart / kSourceRowsPerBand) & 3) == 3) yield();
-  }
-}
-
-void ngpBlitFrame(const uint16_t *pixels) {
-  if (!pixels) return;
-#if defined(AZ2_NGP_DUAL_CORE_BLIT) && defined(AZ2_DIRECT_PANEL)
-  if (ngpStartBlitPipeline()) {
-    uint16_t *copy = nullptr;
-    if (xQueueReceive(ngpBlitFreeQueue, &copy, 0) == pdTRUE) {
-      memcpy(copy, pixels, kNgpFramePixels * sizeof(uint16_t));
-      if (xQueueSend(ngpBlitReadyQueue, &copy, 0) == pdTRUE) return;
-      xQueueSend(ngpBlitFreeQueue, &copy, 0);
-      return;
-    }
-    // Le core 0 est encore en train de publier la frame precedente : on
-    // laisse l'affichage stable et on saute cette frame plutot que bloquer
-    // le coeur TLCS-900H.
-    return;
-  }
-#endif
-  ngpRenderFrameOnCore(pixels);
-}
-
-void ngpBlitWaitIdle() {
-#if defined(AZ2_NGP_DUAL_CORE_BLIT) && defined(AZ2_DIRECT_PANEL)
-  if (!ngpBlitPipelineReady) return;
-  const uint32_t start = millis();
-  while ((uxQueueMessagesWaiting(ngpBlitFreeQueue) < 2U) && (millis() - start < 100U)) {
-    vTaskDelay(1);
-  }
-#endif
-}
 
 // Rendu Game Boy (voir gb_emulator.h/.cpp) : hors namespace anonyme pour
 // avoir un lien externe (appelee depuis gb_emulator.cpp, autre unite de
@@ -9030,7 +8801,7 @@ volatile uint32_t gGbBlitFlushLastUs = 0;
 volatile bool gGbDisplayHappenedThisFrame = false;
 
 // PSRAM d'abord, RAM interne en repli : la liste doit exister quoi qu'il
-// arrive, les pages JEUX/NES/NGP l'indexent sans test.
+// arrive, les pages JEUX/NES l'indexent sans test.
 template <size_t N>
 char (*allocRomNameList(size_t rows))[N] {
   const size_t bytes = rows * N;
@@ -9044,7 +8815,6 @@ void allocRomNameLists() {
 #ifdef AZ2_NES_ENABLED
   nesRomNames = allocRomNameList<kNesRomNameLen>(kNesMaxRoms);
 #endif
-  ngpRomNames = allocRomNameList<kNgpRomNameLen>(kNgpMaxRoms);
 }
 
 void setup() {
@@ -9166,7 +8936,6 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
     if (currentScreen == Screen::Patch) goTo(patchReturnScreen);
     else if (currentScreen == Screen::Engines) goTo(enginesReturnScreen);
     else if (currentScreen == Screen::Retro) goTo(Screen::EmuPicker);
-    else if (currentScreen == Screen::NgpRetro) goTo(Screen::EmuPicker);
     else goTo(Screen::Menu);
   } else if (currentScreen == Screen::Menu) {
     if (menuCategory < 0) {
@@ -9623,8 +9392,6 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
         emuPickerActivate(1);
       } else if (y >= kEmuCardNesY && y < kEmuCardNesY + kEmuCardH) {
         emuPickerActivate(2);
-      } else if (y >= kEmuCardNeoY && y < kEmuCardNeoY + kEmuCardH) {
-        emuPickerActivate(3);
       }
     }
   } else if (currentScreen == Screen::Retro && !gbIsLoaded()) {
@@ -9664,15 +9431,6 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
       // si la carte SD vient d'etre inseree).
       gbRomCount = gbScanRoms(gbRomNames);
       drawRetroPage();
-    }
-  } else if (currentScreen == Screen::NgpRetro && !ngpIsLoaded()) {
-    if (ngpRomCount > 0 && y >= kNgpRowTop && y < kNgpRowTop + kNgpVisibleRows * kNgpRowH) {
-      const uint8_t row = static_cast<uint8_t>((y - kNgpRowTop) / kNgpRowH);
-      const uint8_t index = static_cast<uint8_t>(ngpRomScroll + row);
-      if (index < ngpRomCount && ngpLoadRom(ngpRomNames[index])) drawNgpPage();
-    } else if (ngpRomCount == 0) {
-      ngpRomCount = ngpScanRoms(ngpRomNames);
-      drawNgpPage();
     }
   }
 }
@@ -9995,23 +9753,6 @@ void loop() {
   }
 #endif
 
-  if (currentScreen == Screen::NgpRetro && ngpIsLoaded() && !screensaverActive) {
-    ngpRunFrame();
-    static uint32_t lastNgpPerfMs = 0;
-    const uint32_t ngpNowMs = millis();
-    if (ngpNowMs - lastNgpPerfMs >= 1000) {
-      const NgpRuntimeStats ngpPerf = ngpRuntimeStats();
-      Serial.print("NGP:PERF:fps_x10=");
-      Serial.print(ngpPerf.fpsX10);
-      Serial.print(":core_avg_us=");
-      Serial.print(ngpPerf.avgCoreUs);
-      Serial.print(":core_max_us=");
-      Serial.print(ngpPerf.maxCoreUs);
-      Serial.print(":frames=");
-      Serial.println(ngpPerf.totalFrames);
-      lastNgpPerfMs = ngpNowMs;
-    }
-  }
 
   if (now - lastHeartbeatMs >= 1000) {
     lastHeartbeatMs = now;
