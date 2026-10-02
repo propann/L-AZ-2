@@ -2108,34 +2108,37 @@ void drawEngMiniPatch() {
 // Zone graphique compacte : une silhouette par moteur et deux valeurs
 // directement pilotables par les potentiometres 2/3. Elle reste dans le
 // bandeau existant pour conserver la navigation tactile actuelle.
-// [2026-10-02] Le bandeau est redessine ~12 fois/s (animation) : l'effacer
-// puis le redessiner directement dans le framebuffer que le DMA de l'ecran
-// lit en continu laissait voir un etat a moitie efface ("la fenetre des
-// moteurs sautille"). On dessine maintenant hors ecran dans un petit canvas
-// (PSRAM, 432x66) puis on le copie d'un bloc : jamais d'etat intermediaire.
-Arduino_Canvas *engVizCanvas = nullptr;
+// [2026-10-02] Bandeau en deux parties :
+//  - drawEngVisualizer() : cadre + textes, redessine SEULEMENT quand
+//    l'etat change (piste, moteur, banque, valeur) ;
+//  - drawEngVisualizerIcon() : la seule partie animee (~12 Hz), une icone
+//    56x56 preparee en RAM interne puis copiee d'un bloc.
+// Redessiner tout le bandeau (432x66, en PSRAM) a chaque tick creait des
+// rafales d'ecritures PSRAM qui privaient le DMA de l'ecran : l'image sautait
+// ("la fenetre des moteurs sautille"), meme cause que le X3 GB.
+constexpr int16_t kEngIconSize = 56;
+Arduino_Canvas *engIconCanvas = nullptr;
 
-void drawEngVisualizer() {
+void drawEngVisualizerIcon() {
   const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
   const uint16_t accent = patchAccent(t);
-  const int16_t w = static_cast<int16_t>(kScreenSize - 2 * kMargin);
-  const int16_t h = kEngMiniH;
-  if (engVizCanvas == nullptr) {
-    engVizCanvas = new Arduino_Canvas(w, h, gfx, kMargin, kEngMiniY);
-    if (!engVizCanvas->begin(GFX_SKIP_OUTPUT_BEGIN)) {
-      delete engVizCanvas;
-      engVizCanvas = nullptr;
+  const int16_t ox = static_cast<int16_t>(kMargin + 4);
+  const int16_t oy = static_cast<int16_t>(kEngMiniY + kEngMiniH / 2 + 3 - kEngIconSize / 2);
+  if (engIconCanvas == nullptr) {
+    // 6 Ko : sous le seuil des allocations internes de l'ESP32 (RAM rapide).
+    engIconCanvas = new Arduino_Canvas(kEngIconSize, kEngIconSize, gfx, ox, oy);
+    if (!engIconCanvas->begin(GFX_SKIP_OUTPUT_BEGIN)) {
+      delete engIconCanvas;
+      engIconCanvas = nullptr;
     }
   }
-  // Repli sans canvas (memoire insuffisante) : ancien dessin direct.
-  Arduino_GFX *g = engVizCanvas != nullptr ? static_cast<Arduino_GFX *>(engVizCanvas) : gfx;
-  const int16_t x = engVizCanvas != nullptr ? 0 : kMargin;
-  const int16_t y = engVizCanvas != nullptr ? 0 : kEngMiniY;
+  Arduino_GFX *g = engIconCanvas != nullptr ? static_cast<Arduino_GFX *>(engIconCanvas) : gfx;
+  const int16_t bx = engIconCanvas != nullptr ? 0 : ox;
+  const int16_t by = engIconCanvas != nullptr ? 0 : oy;
   const uint8_t phase = static_cast<uint8_t>(engineAnimFrame & 0x3f);
-  g->fillRect(x, y, w, h, RGB565_BLACK);
-  g->drawRect(x, y, w, h, accent);
-  const int16_t cx = static_cast<int16_t>(x + 32);
-  const int16_t cy = static_cast<int16_t>(y + h / 2 + 3);
+  const int16_t cx = static_cast<int16_t>(bx + kEngIconSize / 2);
+  const int16_t cy = static_cast<int16_t>(by + kEngIconSize / 2);
+  g->fillRect(bx, by, kEngIconSize, kEngIconSize, RGB565_BLACK);
   g->drawCircle(cx, cy, 20, kFaint);
   g->drawCircle(cx, cy, static_cast<int16_t>(10 + phase / 8), accent);
   if (trackEngine[t] == az2::kEngineDexed) {
@@ -2154,13 +2157,25 @@ void drawEngVisualizer() {
       g->drawPixel(static_cast<int16_t>(cx + i), static_cast<int16_t>(cy + ((i * 7 + phase * 3) % 18)), accent);
     }
   }
-  g->setTextSize(1);
-  g->setTextColor(kDim);
-  g->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 4));
-  g->print(engineParamBank == 0 ? "FILTRE  POT2/POT3" : "PATCH  POT2/POT3");
-  g->setTextColor(RGB565_WHITE);
-  g->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 16));
-  g->print(az2::engineName(trackEngine[t]));
+  if (engIconCanvas != nullptr) engIconCanvas->flush();
+}
+
+void drawEngVisualizer() {
+  const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
+  const uint16_t accent = patchAccent(t);
+  const int16_t x = kMargin;
+  const int16_t y = kEngMiniY;
+  const int16_t w = static_cast<int16_t>(kScreenSize - 2 * kMargin);
+  const int16_t h = kEngMiniH;
+  gfx->fillRect(x, y, w, h, RGB565_BLACK);
+  gfx->drawRect(x, y, w, h, accent);
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 4));
+  gfx->print(engineParamBank == 0 ? "FILTRE  POT2/POT3" : "PATCH  POT2/POT3");
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 16));
+  gfx->print(az2::engineName(trackEngine[t]));
   char buf[36];
   if (engineParamBank == 0) {
     snprintf(buf, sizeof(buf), "CUTOFF %3u  RESO %3u", trackCutoff[t], trackReso[t]);
@@ -2169,13 +2184,13 @@ void drawEngVisualizer() {
   } else {
     snprintf(buf, sizeof(buf), "ATTACK %3u  DECAY %3u", trackAttack[t], trackDecay[t]);
   }
-  g->setTextColor(accent);
-  g->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 30));
-  g->print(buf);
-  g->setTextColor(kDim);
-  g->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 47));
-  g->print("B / ENC1 : changer de banque");
-  if (engVizCanvas != nullptr) engVizCanvas->flush();
+  gfx->setTextColor(accent);
+  gfx->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 30));
+  gfx->print(buf);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 47));
+  gfx->print("B / ENC1 : changer de banque");
+  drawEngVisualizerIcon();
 }
 
 bool hitTestEngMini(int16_t x, int16_t y) {
@@ -9695,7 +9710,7 @@ void loop() {
       (nowForIdle - engineAnimLastMs) >= 80U) {
     engineAnimLastMs = nowForIdle;
     ++engineAnimFrame;
-    drawEngVisualizer();
+    drawEngVisualizerIcon();  // seule l icone est animee, voir drawEngVisualizer()
   }
 
   // Emulateur Game Boy : une frame dure exactement 70224 cycles a
