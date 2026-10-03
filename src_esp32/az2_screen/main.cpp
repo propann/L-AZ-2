@@ -2359,6 +2359,44 @@ constexpr const char *kFxSyncLabel[] = {"4 MES", "2 MES", "1 MES", "1/2", "1/4",
                                         "1/8", "1/4T", "1/16", "1/8T", "1/32"};
 constexpr uint8_t kFxSyncLabelCount = sizeof(kFxSyncLabel) / sizeof(kFxSyncLabel[0]);
 
+// Presets d'effets (2026-10-03) : les 14 reglages EFFETS d'un coup, dans
+// l'ordre TFX. SYNC = valeur au centre de la case de division (voir
+// kFxSyncBeats cote Teensy) : 30 = 1 MES, 42 = 1/2, 53 = 1/4, 65 = 1/4.,
+// 76 = 1/8, 99 = 1/16. Noms <= 6 caracteres (colonne valeur).
+struct FxPreset {
+  const char *name;
+  uint8_t v[kFxRowCount];
+};
+//                  DRV CRU LFR LFD DLY FB  MIX FIL TRM RNG FLG REV SYL SYD
+constexpr FxPreset kFxPresets[] = {
+    {"PROPRE", {0,   0,  40, 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0}},
+    {"DUB",    {0,   0,  40, 0,  0,  95, 85, 0,  0,  0,  0,  40, 0,  65}},
+    {"LOFI",   {30,  85, 40, 0,  0,  0,  0,  0,  0,  0,  0,  20, 0,  0}},
+    {"WAH",    {10,  0,  40, 110, 0, 0,  0,  64, 0,  0,  0,  15, 76, 0}},
+    {"ESPACE", {0,   0,  30, 0,  0,  70, 60, 0,  0,  0,  30, 110, 0, 76}},
+    {"ROBOT",  {40,  40, 40, 0,  0,  0,  0,  0,  0,  70, 0,  10, 0,  0}},
+    {"TREMOL", {0,   0,  40, 0,  0,  0,  0,  0,  100, 0, 0,  30, 76, 0}},
+    {"JET",    {0,   0,  30, 0,  0,  0,  0,  0,  0,  0,  110, 20, 0, 0}},
+    {"SATURE", {110, 0,  40, 0,  0,  0,  0,  0,  0,  0,  0,  10, 0,  0}},
+    {"CHIP",   {0,   100, 40, 0, 0,  40, 50, 0,  0,  0,  0,  0,  0,  99}},
+    {"PING",   {0,   0,  40, 0,  0,  60, 70, 0,  0,  0,  0,  10, 0,  99}},
+    {"CATHED", {0,   0,  40, 0,  0,  50, 40, 0,  0,  0,  0,  127, 0, 42}},
+};
+constexpr uint8_t kFxPresetCount = sizeof(kFxPresets) / sizeof(kFxPresets[0]);
+uint8_t trackFxPreset[kSeqTrackCount] = {};  // dernier preset charge (affichage)
+
+// Charge un preset : les 14 reglages EFFETS de la piste, envoyes au Teensy.
+void applyFxPreset(uint8_t track, uint8_t preset) {
+  if (preset >= kFxPresetCount) return;
+  trackFxPreset[track] = preset;
+  char msg[24];
+  for (uint8_t fx = 0; fx < kFxRowCount; ++fx) {
+    trackFxVal[track][fx] = kFxPresets[preset].v[fx];
+    snprintf(msg, sizeof(msg), "TFX:%d:%d:%d", track, fx, trackFxVal[track][fx]);
+    sendToTeensy(msg);
+  }
+}
+
 // Texte affiche pour une valeur d'effet (5 caracteres max, colonne valeur).
 void fxRowValueText(uint8_t fx, uint8_t value, char *out, size_t size) {
   if (fx == 7) {
@@ -2504,18 +2542,27 @@ uint8_t patchEngineExtraCount(uint8_t track) {
     default: return 0;
   }
 }
-// Total des lignes extra = lignes du moteur + section EFFETS commune.
+// Total des lignes extra = lignes du moteur + section EFFETS commune
+// (1 ligne PRESET FX + kFxRowCount reglages).
 uint8_t patchExtraCount(uint8_t track) {
-  return static_cast<uint8_t>(patchEngineExtraCount(track) + kFxRowCount);
+  return static_cast<uint8_t>(patchEngineExtraCount(track) + 1 + kFxRowCount);
 }
 bool patchExtraIsFx(uint8_t track, uint8_t extraIdx) {
   return extraIdx >= patchEngineExtraCount(track);
 }
-// Valeur d'une ligne extra, moteur ou EFFETS.
+// Ligne extra -> index d'effet TFX (0-13), ou -1 pour la ligne PRESET FX.
+int8_t patchFxIndex(uint8_t track, uint8_t extraIdx) {
+  return static_cast<int8_t>(extraIdx - patchEngineExtraCount(track)) - 1;
+}
+// Ligne extra de l'effet fx (inverse de patchFxIndex()).
+uint8_t patchExtraOfFx(uint8_t track, uint8_t fx) {
+  return static_cast<uint8_t>(patchEngineExtraCount(track) + 1 + fx);
+}
+// Valeur d'une ligne extra, moteur, PRESET FX ou EFFETS.
 uint8_t &patchExtraValRef(uint8_t track, uint8_t extraIdx) {
-  const uint8_t engineCount = patchEngineExtraCount(track);
-  if (extraIdx >= engineCount) return trackFxVal[track][extraIdx - engineCount];
-  return patchExtraVal[track][extraIdx];
+  if (!patchExtraIsFx(track, extraIdx)) return patchExtraVal[track][extraIdx];
+  const int8_t fx = patchFxIndex(track, extraIdx);
+  return fx < 0 ? trackFxPreset[track] : trackFxVal[track][fx];
 }
 uint8_t patchVolRow(uint8_t track) { return static_cast<uint8_t>(6 + patchExtraCount(track)); }
 uint8_t patchSlotRow(uint8_t track) { return static_cast<uint8_t>(patchVolRow(track) + 1); }
@@ -2532,7 +2579,7 @@ uint8_t patchTotalRows(uint8_t track) { return static_cast<uint8_t>(patchSlotRow
 // ligne visuelle) : centralise ici pour que les deux sens restent
 // coherents, plutot que deux implementations paralleles qui pourraient
 // diverger.
-constexpr uint8_t kPatchMaxKeptRows = 40;  // 6 fixes + 17 extra (DEXED) + 14 EFFETS + volume, marge incluse
+constexpr uint8_t kPatchMaxKeptRows = 40;  // 6 fixes + 17 extra (DEXED) + PRESET + 14 EFFETS + volume
 uint8_t patchKeptRows(uint8_t track, uint8_t (&out)[kPatchMaxKeptRows]) {
   const uint8_t volRow = patchVolRow(track);
   uint8_t count = 0;
@@ -2675,7 +2722,10 @@ constexpr const char *kEPianoExtraLabel[12] = {
 constexpr const char *kBraidsExtraLabel[2] = {"COLOR", "TIMBRE"};
 
 const char *patchExtraLabel(uint8_t track, uint8_t extraIdx) {
-  if (patchExtraIsFx(track, extraIdx)) return kFxRowLabel[extraIdx - patchEngineExtraCount(track)];
+  if (patchExtraIsFx(track, extraIdx)) {
+    const int8_t fx = patchFxIndex(track, extraIdx);
+    return fx < 0 ? "PRESET FX" : kFxRowLabel[fx];
+  }
   switch (trackEngine[track]) {
     case az2::kEngineDexed: return kDexedExtraLabel[extraIdx];
     case az2::kEngineEPiano: return kEPianoExtraLabel[extraIdx];
@@ -2691,7 +2741,9 @@ const char *patchExtraLabel(uint8_t track, uint8_t extraIdx) {
 }
 
 uint8_t patchExtraMax(uint8_t track, uint8_t extraIdx) {
-  if (patchExtraIsFx(track, extraIdx)) return 127;
+  if (patchExtraIsFx(track, extraIdx)) {
+    return patchFxIndex(track, extraIdx) < 0 ? static_cast<uint8_t>(kFxPresetCount - 1) : 127;
+  }
   // EPIANO/BRAIDS : toutes leurs lignes extra sont sur l'echelle
   // 0-127 (voir EXP:/BXP: cote Teensy) -- seul DEXED a une plage
   // reelle differente par parametre (voir kDexedExtraMax, reprise des
@@ -2750,10 +2802,18 @@ void drawSamplerTrackPanel(uint8_t track) {
   }
 }
 
+void drawPatchExtraRow(uint8_t logicalRow);  // definie avec le dessin de la page PATCH
+
 void sendPatchExtra(uint8_t track, uint8_t extraIdx) {
   char msg[48];
   if (patchExtraIsFx(track, extraIdx)) {
-    const uint8_t fx = static_cast<uint8_t>(extraIdx - patchEngineExtraCount(track));
+    const int8_t fx = patchFxIndex(track, extraIdx);
+    if (fx < 0) {
+      // PRESET FX : charge les 14 reglages, puis redessine toute la section.
+      applyFxPreset(track, trackFxPreset[track]);
+      for (uint8_t f = 0; f < kFxRowCount; ++f) drawPatchExtraRow(static_cast<uint8_t>(6 + patchExtraOfFx(track, f)));
+      return;
+    }
     snprintf(msg, sizeof(msg), "TFX:%d:%d:%d", track, fx, trackFxVal[track][fx]);
     sendToTeensy(msg);
     return;
@@ -3261,8 +3321,12 @@ void drawPatchExtraRow(uint8_t logicalRow) {
   char buf[8];
   int16_t valueX = static_cast<int16_t>(x + w - 34);
   if (patchExtraIsFx(track, extraIdx)) {
-    fxRowValueText(static_cast<uint8_t>(extraIdx - patchEngineExtraCount(track)),
-                   patchExtraValRef(track, extraIdx), buf, sizeof(buf));
+    const int8_t fx = patchFxIndex(track, extraIdx);
+    if (fx < 0) {
+      snprintf(buf, sizeof(buf), "%s", kFxPresets[trackFxPreset[track] % kFxPresetCount].name);
+    } else {
+      fxRowValueText(static_cast<uint8_t>(fx), patchExtraValRef(track, extraIdx), buf, sizeof(buf));
+    }
     valueX = static_cast<int16_t>(x + w - 4 - 12 * static_cast<int16_t>(strlen(buf)));
   } else {
     snprintf(buf, sizeof(buf), "%3d", patchExtraValRef(track, extraIdx));
@@ -6371,18 +6435,28 @@ bool fxQuickAllowed() {
   return true;
 }
 
+// fxQuickIndex : 0 = PRESET, 1..kFxRowCount = effet (fxQuickIndex - 1).
+constexpr uint8_t kFxQuickCount = 1 + kFxRowCount;
+
 void drawFxQuickToast() {
   const uint8_t t = fxContextTrack();
-  const uint8_t v = trackFxVal[t][fxQuickIndex];
+  const bool preset = fxQuickIndex == 0;
+  const uint8_t fx = preset ? 0 : static_cast<uint8_t>(fxQuickIndex - 1);
+  const uint8_t v = preset ? static_cast<uint8_t>((trackFxPreset[t] * 127) / (kFxPresetCount - 1))
+                           : trackFxVal[t][fx];
   const uint16_t accent = patchAccent(t);
   gfx->fillRect(0, kFxQuickToastY, kScreenSize, kFxQuickToastH, RGB565_BLACK);
   const int16_t barW = static_cast<int16_t>((static_cast<int32_t>(v) * (kScreenSize - 2 * kMargin)) / 127);
   gfx->fillRect(kMargin, static_cast<int16_t>(kFxQuickToastY + kFxQuickToastH - 4), barW, 3, accent);
   gfx->drawRect(0, kFxQuickToastY, kScreenSize, kFxQuickToastH, accent);
   char value[8];
-  fxRowValueText(fxQuickIndex, v, value, sizeof(value));
+  if (preset) {
+    snprintf(value, sizeof(value), "%s", kFxPresets[trackFxPreset[t] % kFxPresetCount].name);
+  } else {
+    fxRowValueText(fx, v, value, sizeof(value));
+  }
   char text[40];
-  snprintf(text, sizeof(text), "P%u  %s  %s", t + 1, kFxRowLabel[fxQuickIndex], value);
+  snprintf(text, sizeof(text), "P%u  %s  %s", t + 1, preset ? "PRESET" : kFxRowLabel[fx], value);
   gfx->setTextSize(2);
   gfx->setTextColor(accent);
   gfx->setCursor(kMargin, static_cast<int16_t>(kFxQuickToastY + 4));
@@ -6395,15 +6469,18 @@ void drawFxQuickToast() {
 
 void fxQuickSetValue(int delta) {
   const uint8_t t = fxContextTrack();
-  uint8_t &val = trackFxVal[t][fxQuickIndex];
+  if (fxQuickIndex == 0) {
+    // PRESET : un cran = preset suivant/precedent, charge aussitot.
+    const int next = (trackFxPreset[t] + (delta > 0 ? 1 : kFxPresetCount - 1)) % kFxPresetCount;
+    applyFxPreset(t, static_cast<uint8_t>(next));
+    return;
+  }
+  const uint8_t fxIdx = static_cast<uint8_t>(fxQuickIndex - 1);
+  uint8_t &val = trackFxVal[t][fxIdx];
   val = static_cast<uint8_t>(constrain(static_cast<int>(val) + delta, 0, 127));
   char msg[24];
-  snprintf(msg, sizeof(msg), "TFX:%d:%d:%d", t, fxQuickIndex, val);
+  snprintf(msg, sizeof(msg), "TFX:%d:%d:%d", t, fxIdx, val);
   sendToTeensy(msg);
-  // Page PATCH ouverte sur la meme piste : la ligne EFFETS suit.
-  if (currentScreen == Screen::Patch && t == static_cast<uint8_t>(patchTrack)) {
-    drawPatchExtraRow(static_cast<uint8_t>(6 + patchEngineExtraCount(t) + fxQuickIndex));
-  }
 }
 
 void handleTeensyLine(const String &line) {
@@ -7730,7 +7807,7 @@ void handleTeensyLine(const String &line) {
           // Bouton de l'encodeur 3 = mode EFFETS (voir fxQuickActive).
           if (pressed) {
             if (fxQuickActive) {
-              fxQuickIndex = static_cast<uint8_t>((fxQuickIndex + 1) % kFxRowCount);
+              fxQuickIndex = static_cast<uint8_t>((fxQuickIndex + 1) % kFxQuickCount);
             }
             fxQuickActive = true;
             fxQuickLastMs = millis();
