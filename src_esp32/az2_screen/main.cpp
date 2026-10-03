@@ -1668,12 +1668,57 @@ void drawTrkSidePanel() {
   drawTrkSideBtn(5, RGB565(60, 200, 90), seqSideFocus && seqSideIndex == 5, "SAUVER");
 }
 
+// En-tete du tracker (2026-10-03) : deux vrais boutons. C sert a PLAY/STOP
+// sur cette page, il n'y avait donc aucun retour au menu a la croix.
+//  - MENU    : A (ou toucher) revient au menu, la lecture continue ;
+//  - PATTERN : A maintenu + GAUCHE/DROITE change de pattern (toucher la
+//              moitie gauche/droite fait pareil).
+// Focus en-tete (seqVerticalFocus == 2) : GAUCHE/DROITE sans A passe d'un
+// bouton a l'autre, BAS redescend vers la ligne PISTE.
+constexpr int16_t kTrkHdrY = 8;
+constexpr int16_t kTrkHdrH = 44;
+constexpr int16_t kTrkMenuBtnX = 8;
+constexpr int16_t kTrkMenuBtnW = 96;
+constexpr int16_t kTrkPatBtnX = kTrkMenuBtnX + kTrkMenuBtnW + 8;
+constexpr int16_t kTrkPatBtnW = 236;
+uint8_t seqHeaderBtn = 1;  // 0 = MENU, 1 = PATTERN
+
+void drawTrkHeader() {
+  const uint16_t accent = kPalette[0];
+  const bool focus = seqVerticalFocus == 2;
+  gfx->fillRect(0, 0, static_cast<int16_t>(kTrkPatBtnX + kTrkPatBtnW + 4), 58, RGB565_BLACK);
+  // MENU
+  const bool menuSel = focus && seqHeaderBtn == 0;
+  gfx->fillRect(kTrkMenuBtnX, kTrkHdrY, kTrkMenuBtnW, kTrkHdrH, menuSel ? accent : RGB565_BLACK);
+  gfx->drawRect(kTrkMenuBtnX, kTrkHdrY, kTrkMenuBtnW, kTrkHdrH, menuSel ? RGB565_WHITE : kFaint);
+  gfx->setTextSize(2);
+  gfx->setTextColor(menuSel ? RGB565_BLACK : RGB565_WHITE);
+  gfx->setCursor(static_cast<int16_t>(kTrkMenuBtnX + 12), static_cast<int16_t>(kTrkHdrY + 14));
+  gfx->print("< MENU");
+  // PATTERN
+  const bool patSel = focus && seqHeaderBtn == 1;
+  gfx->fillRect(kTrkPatBtnX, kTrkHdrY, kTrkPatBtnW, kTrkHdrH, RGB565_BLACK);
+  gfx->drawRect(kTrkPatBtnX, kTrkHdrY, kTrkPatBtnW, kTrkHdrH, patSel ? RGB565_WHITE : accent);
+  if (patSel) {
+    gfx->drawRect(static_cast<int16_t>(kTrkPatBtnX + 1), static_cast<int16_t>(kTrkHdrY + 1),
+                  static_cast<int16_t>(kTrkPatBtnW - 2), static_cast<int16_t>(kTrkHdrH - 2), RGB565_WHITE);
+  }
+  char buf[24];
+  snprintf(buf, sizeof(buf), "< PATTERN %u >", currentPattern + 1);
+  gfx->setTextColor(accent);
+  gfx->setCursor(static_cast<int16_t>(kTrkPatBtnX + 14), static_cast<int16_t>(kTrkHdrY + 6));
+  gfx->print(buf);
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  snprintf(buf, sizeof(buf), "mesure %u/%u   A+<> change", seqVisibleMeasure + 1, patternMeasures[currentPattern]);
+  gfx->setCursor(static_cast<int16_t>(kTrkPatBtnX + 14), static_cast<int16_t>(kTrkHdrY + 30));
+  gfx->print(buf);
+}
+
 void drawSeqDetailPage() {
-  char title[32];
-  snprintf(title, sizeof(title), "PATTERN %u  M%u/%u", currentPattern + 1, seqVisibleMeasure + 1,
-           patternMeasures[currentPattern]);
-  drawSubHeader(title, kPalette[0]);
-  if (seqVerticalFocus == 2) gfx->drawRect(88, 2, 238, 43, kPalette[0]);
+  gfx->fillScreen(RGB565_BLACK);
+  gfx->drawFastHLine(kMargin, 60, kScreenSize - 2 * kMargin, kFaint);
+  drawTrkHeader();
   drawTrkTrackRow();
   drawDetailHeader();
   const uint8_t first = static_cast<uint8_t>(seqVisibleMeasure * kSeqStepsPerMeasure);
@@ -1688,7 +1733,10 @@ void drawSeqDetailPage() {
 // voir hitBack()) -- toucher cycle le pattern EDITE (voir currentPattern,
 // PATTERN: dans AZ2_Protocol.h).
 bool hitTestPatternHeader(int16_t x, int16_t y) {
-  return inBox(x, y, 90, 0, 200, 50);
+  return inBox(x, y, kTrkPatBtnX, 0, kTrkPatBtnW, 56);
+}
+bool hitTestTrkMenuBtn(int16_t x, int16_t y) {
+  return inBox(x, y, 0, 0, static_cast<int16_t>(kTrkMenuBtnX + kTrkMenuBtnW), 56);
 }
 
 void drawSequencerPage();  // definie plus bas -- seul appelant de switchToPattern()
@@ -7048,7 +7096,13 @@ void handleTeensyLine(const String &line) {
             }
           } else if (seqVerticalFocus == 2) {
             if (index == 2 || index == 3) {
-              switchToPattern(static_cast<uint8_t>(currentPattern + (index == 3 ? 1 : kPatternCount - 1)));
+              if (btnState[0] && seqHeaderBtn == 1) {
+                // A maintenu sur PATTERN : pattern precedent/suivant.
+                switchToPattern(static_cast<uint8_t>(currentPattern + (index == 3 ? 1 : kPatternCount - 1)));
+              } else if (!btnState[0]) {
+                seqHeaderBtn = index == 3 ? 1 : 0;
+                drawTrkHeader();
+              }
             } else if (index == 1) {
               seqVerticalFocus = 1;
               drawSeqDetailPage();
@@ -7615,6 +7669,9 @@ void handleTeensyLine(const String &line) {
         // la page. Meme commande que le toucher. Partagee avec SEQ. PAS
         // (2026-09-26), meme transport.
         sendToTeensy(seqPlaying ? az2::kStop : az2::kPlay);
+      } else if (pressed && letter == 'A' && currentScreen == Screen::Sequencer && seqVerticalFocus == 2 &&
+                 seqHeaderBtn == 0) {
+        goTo(Screen::Menu);  // bouton MENU de l'en-tete du tracker
       } else if (pressed && letter == 'A' && currentScreen == Screen::StepSeq) {
         stepSeqAEdited = false;  // la bascule se decide au relachement
       } else if (!pressed && letter == 'A' && currentScreen == Screen::StepSeq && !stepSeqAEdited) {
@@ -9465,11 +9522,12 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
   Serial.print(":y=");
   Serial.println(y);
 
-  if (currentScreen == Screen::Sequencer && hitTestPatternHeader(x, y)) {
-    // Titre de l'en-tete ("SEQUENCEUR - PAT N" / "PN PISTE X - DETAIL")
-    // -- toucher cycle le pattern EDITE (voir currentPattern, demande
-    // 2026-09-16 "il faut un tracker complet").
-    switchToPattern(static_cast<uint8_t>(currentPattern + 1));
+  if (currentScreen == Screen::Sequencer && hitTestTrkMenuBtn(x, y)) {
+    goTo(Screen::Menu);
+  } else if (currentScreen == Screen::Sequencer && hitTestPatternHeader(x, y)) {
+    // Bouton PATTERN : moitie gauche = precedent, moitie droite = suivant.
+    const bool next = x >= kTrkPatBtnX + kTrkPatBtnW / 2;
+    switchToPattern(static_cast<uint8_t>(currentPattern + (next ? 1 : kPatternCount - 1)));
   } else if (currentScreen == Screen::Sampler && hitBack(x, y)) {
     samplerGoUp();
   } else if (currentScreen != Screen::Menu && currentScreen != Screen::Audio && hitBack(x, y)) {
