@@ -4500,6 +4500,29 @@ void drawMixerPage() {
   drawMixerMasterRow();
 }
 
+// Met a jour le fader d'une piste sans effacer la colonne : seule la bande
+// entre l'ancienne et la nouvelle hauteur, et le chiffre du volume.
+void drawMixerFaderLevel(uint8_t t) {
+  const int16_t x = static_cast<int16_t>(kMargin + t * kMixerColW + (kMixerColW - kMixerBarW) / 2);
+  const int16_t fillH = static_cast<int16_t>((static_cast<int32_t>(trackVolume[t]) * kMixerBarH) / 127);
+  const uint16_t barColor = trackMuted[t] ? kFaint : kPalette[t % kPaletteCount];
+  const int16_t inner = static_cast<int16_t>(kMixerFaderW - 2);
+  // Interieur du cadre : vide au-dessus du niveau, plein en dessous.
+  gfx->fillRect(static_cast<int16_t>(x + 1), static_cast<int16_t>(kMixerBarTop + 1), inner,
+                static_cast<int16_t>(kMixerBarH - 1 - fillH < 0 ? 0 : kMixerBarH - 1 - fillH), RGB565_BLACK);
+  if (fillH > 0) {
+    gfx->fillRect(x, static_cast<int16_t>(kMixerBarBottom - fillH), kMixerFaderW, fillH, barColor);
+  }
+  gfx->fillRect(x, static_cast<int16_t>(kMixerBarBottom + 4), kMixerBarW, 10, RGB565_BLACK);
+  gfx->setTextSize(1);
+  gfx->setTextColor(RGB565_WHITE);
+  char volBuf[5];
+  snprintf(volBuf, sizeof(volBuf), "%d", trackVolume[t]);
+  gfx->setCursor(static_cast<int16_t>(x + kMixerBarW / 2 - (trackVolume[t] >= 100 ? 9 : 6)),
+                 static_cast<int16_t>(kMixerBarBottom + 6));
+  gfx->print(volBuf);
+}
+
 bool hitTestMixerTrack(int16_t x, int16_t y, uint8_t &track) {
   if (y < kMixerBarTop - 16 || y > kMixerBarBottom + 30) {
     return false;
@@ -7914,9 +7937,14 @@ void handleTeensyLine(const String &line) {
         } else if (currentScreen == Screen::Mixer) {
           if (slot == 0) {
             const int track = (static_cast<int>(value) * kSeqTrackCount) / 128;
+            const int8_t prev = selectedMixerTrack;
             selectedMixerTrack = static_cast<int8_t>(constrain(track, 0, kSeqTrackCount - 1));
-            if (!screensaverActive) {
-              drawMixerPage();
+            // Seules les 2 colonnes concernees + MUTE/SOLO (avant : toute la
+            // page a chaque cran, l'ecran flashait).
+            if (!screensaverActive && prev != selectedMixerTrack) {
+              if (prev >= 0) drawMixerTrack(static_cast<uint8_t>(prev));
+              drawMixerTrack(static_cast<uint8_t>(selectedMixerTrack));
+              drawMixerActionBtns();
             }
           } else {
             const uint8_t t = static_cast<uint8_t>(selectedMixerTrack);
@@ -7925,7 +7953,7 @@ void handleTeensyLine(const String &line) {
             snprintf(msg, sizeof(msg), "VOL:%d:%d", t, value);
             sendToTeensy(msg);
             if (!screensaverActive) {
-              drawMixerTrack(t);
+              drawMixerFaderLevel(t);  // fader seulement, pas toute la colonne
             }
           }
         } else if (currentScreen == Screen::Patch && slot == 1) {
@@ -10204,12 +10232,28 @@ void loop() {
   // ce qu'il y avait sous la bande, plus simple/robuste.
   if (fxQuickActive && (nowForIdle - fxQuickLastMs) >= kFxQuickTimeoutMs) {
     fxQuickActive = false;
-    if (!screensaverActive) drawScreen(currentScreen);  // efface le bandeau
+    if (!screensaverActive) {
+      // Efface le bandeau du bas sans redessiner toute la page quand c'est
+      // possible (un redessin complet fait flasher l'ecran).
+      gfx->fillRect(0, kFxQuickToastY, kScreenSize, kFxQuickToastH, RGB565_BLACK);
+      if (currentScreen == Screen::Mixer) {
+        drawMixerMasterRow();
+      } else if (currentScreen != Screen::Sequencer && currentScreen != Screen::Menu) {
+        drawScreen(currentScreen);
+      } else if (currentScreen == Screen::Sequencer) {
+        drawTrkControls();
+      }
+    }
   }
   if (!gbGameActive && potToastActive && (nowForIdle - potToastLastMs) >= kPotToastTimeoutMs) {
     potToastActive = false;
     if (!screensaverActive) {
-      drawScreen(currentScreen);
+      // [2026-10-03] Efface SEULEMENT la bande du temoin (y 0-10) : le
+      // redessin complet de la page faisait flasher tout l'ecran a chaque
+      // fin de mouvement d'encodeur. Seul l'en-tete du tracker deborde dans
+      // cette bande.
+      gfx->fillRect(0, kPotToastY, kScreenSize, kPotToastH, RGB565_BLACK);
+      if (currentScreen == Screen::Sequencer) drawTrkHeader();
     }
   }
 
