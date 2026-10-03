@@ -7,6 +7,13 @@
 // DECAY, RELEASE, HARDNESS, TREBLE, TREMOLO, LFO RATE, VEL SENSE, STEREO,
 // TUNE, DETUNE, OVERDRIVE, VOLUME), PAS de vrais patches d'usine vintage --
 // a ecouter/trier sur materiel reel, pas pre-valides a l'oreille.
+//
+// [2026-10-02] Les 5 patches d'origine etaient recopies dans l'ordre de
+// mdaEPiano (index 8 = polyphonie, 9 = accordage, 10 = desaccordage
+// aleatoire, 11 = overdrive) alors que loadEPianoPatch() lit 8 = TUNE,
+// 9 = DETUNE, 10 = OVERDRIVE, 11 = VOLUME : volume 0 (Default, Mellow,
+// Autopan, Tremolo muets) et accordage au maximum. Valeurs decalees d'un
+// cran ici, volume 0,5 comme les 100 variations (mesure banc moteurs).
 #pragma once
 #include <stdint.h>
 
@@ -16,11 +23,11 @@ struct EPianoPatch {
 };
 
 constexpr EPianoPatch kEPianoFullBank[] = {
-    {"Default", {0.500f, 0.500f, 0.500f, 0.500f, 0.500f, 0.650f, 0.250f, 0.500f, 1.000f, 0.500f, 0.146f, 0.000f}},
-    {"Bright", {0.500f, 0.500f, 1.000f, 0.800f, 0.500f, 0.650f, 0.250f, 0.500f, 1.000f, 0.500f, 0.146f, 0.500f}},
-    {"Mellow", {0.500f, 0.500f, 0.000f, 0.000f, 0.500f, 0.650f, 0.250f, 0.500f, 1.000f, 0.500f, 0.246f, 0.000f}},
-    {"Autopan", {0.500f, 0.500f, 0.500f, 0.500f, 0.250f, 0.650f, 0.250f, 0.500f, 1.000f, 0.500f, 0.246f, 0.000f}},
-    {"Tremolo", {0.500f, 0.500f, 0.500f, 0.500f, 0.750f, 0.650f, 0.250f, 0.500f, 1.000f, 0.500f, 0.246f, 0.000f}},
+    {"Default", {0.500f, 0.500f, 0.500f, 0.500f, 0.500f, 0.650f, 0.250f, 0.500f, 0.500f, 0.146f, 0.000f, 0.500f}},
+    {"Bright", {0.500f, 0.500f, 1.000f, 0.800f, 0.500f, 0.650f, 0.250f, 0.500f, 0.500f, 0.146f, 0.500f, 0.500f}},
+    {"Mellow", {0.500f, 0.500f, 0.000f, 0.000f, 0.500f, 0.650f, 0.250f, 0.500f, 0.500f, 0.246f, 0.000f, 0.500f}},
+    {"Autopan", {0.500f, 0.500f, 0.500f, 0.500f, 0.250f, 0.650f, 0.250f, 0.500f, 0.500f, 0.246f, 0.000f, 0.500f}},
+    {"Tremolo", {0.500f, 0.500f, 0.500f, 0.500f, 0.750f, 0.650f, 0.250f, 0.500f, 0.500f, 0.246f, 0.000f, 0.500f}},
     {"GRAND 01", {0.524f, 0.450f, 0.480f, 0.374f, 0.013f, 0.300f, 0.520f, 0.363f, 0.492f, 0.000f, 0.001f, 0.490f}},
     {"GRAND 02", {0.518f, 0.461f, 0.481f, 0.436f, 0.010f, 0.300f, 0.497f, 0.330f, 0.506f, 0.000f, 0.015f, 0.529f}},
     {"GRAND 03", {0.509f, 0.487f, 0.583f, 0.409f, 0.002f, 0.300f, 0.499f, 0.378f, 0.502f, 0.080f, 0.013f, 0.531f}},

@@ -1,11 +1,11 @@
-# AZ-2 — état actuel vérifié au 2 octobre 2026
+# AZ-2 — état actuel vérifié au 3 octobre 2026
 
 Ce document est la source de vérité de l’état courant. Les audits datés dans
 `docs/` sont historiques et peuvent décrire des états antérieurs.
 
 ## Production active
 
-- Branche de travail : `nes-emulation`.
+- Branche de travail : `son-vivant` (son et effets), issue de `main` après fusion de `nes-emulation` (PR #4).
 - Teensy 4.1 : maître audio, séquenceur, moteurs locaux, SD et DAC I²S.
   Firmware : `master_teensy_rack_lab`.
 - ESP32-S3 écran : interface tactile, page ÉMULATEURS (3 cartes : GAME BOY,
@@ -106,6 +106,38 @@ compatible (piste : NgpCraft, MIT).
 - À la prochaine occurrence : relever `RACK:STATUS` et `GB:AUDIO_RX` avant
   de redémarrer, puis redémarrer les cartes une par une.
 - Détail complet : `docs/AZ2_BIP_PARASITE_2026-09-28.md`.
+
+## Son : moteurs, niveaux et effets — validé au banc et à l'écoute
+
+Mesures automatiques par le port USB du Teensy (`tools/engine_bench.py`,
+données dans `tools/bench_data/`) : note 60, crête de la sortie finale.
+
+- **Moteurs** : les 9 moteurs jouent ; 523 patches Teensy balayés.
+  EPIANO Default/Mellow/Autopan/Tremolo étaient muets (paramètres décalés
+  d'un cran à la copie des presets mdaEPiano) — corrigés.
+- **Niveaux** : compensation par moteur (`kEngineLevelTrim`) puis par patch
+  (`az2_patch_level_trim.h`, généré par `tools/gen_patch_trim.py`), cible
+  ~0,15. Avant : jusqu'à ×25 d'écart entre moteurs, ×50 entre patches.
+  Restent très bas, par nature : effets DX7 (TAKE OFF, EXPLOSION…), BRAIDS
+  Bowed/Blown, basses et drones KARPLUS sur do médian. SPECTRAL ~12 dB sous
+  les autres (niveau à régler dans le firmware du rack).
+- **Chaîne d'effets par piste** (commande `TFX:<piste>:<0-13>:<0-127>`) :
+  filtre LP/BP/HP + LFO, drive (niveau constant mesuré), crush, tremolo,
+  ring mod, flanger, delay avec feedback, envoi reverb post-volume, LFO et
+  delay synchronisables au tempo. 12 presets (PROPRE, DUB, LOFI, WAH…).
+- **Effets de pas** : ARP, CUT, RET, CRUSH, DELAY + 7 verrous de paramètre
+  (DRIVE, WAH, REVRB, RING, TREM, FLANG, DMIX) appliqués hors ISR, retirés au
+  pas suivant, à STOP et sur PANIC.
+- **Bus général** : reverb (avec entrée pour les envois par piste), delay
+  350 ms, chorus modulé ; réglables dans la ligne MASTER du MIXER.
+- **Interface** : section EFFETS dans PATCH, bouton MOT>, mode EFFETS au clic
+  de l'encodeur 3, ligne MASTER du MIXER ; tout est sauvegardé dans le
+  projet (lignes `TFX:` et `MASTERFX:`).
+- **Charge** : CPU 8–12 %, mémoire audio ≤ 310/700 blocs, RAM1 libre ~55 Ko.
+- Pièges documentés dans le code : un `AudioSynthWaveform` à amplitude 0
+  n'émet rien (coupait la piste) ; `AudioEffectFlange` n'utilise que la
+  moitié du tampon fourni (pics) ; un `AudioEffectWaveshaper` sans courbe
+  coupe le son.
 
 ## Audio et sampleur
 

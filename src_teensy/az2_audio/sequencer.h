@@ -22,6 +22,16 @@ namespace az2 {
       kStepFxRetrig = 3,
       kStepFxCrush = 4,
       kStepFxDelay = 5,
+      // Verrous de parametre par pas (2026-10-02, facon Elektron) : la
+      // valeur 0-127 remplace le reglage EFFETS de la piste pendant ce pas,
+      // puis la piste revient a son reglage au prochain declenchement.
+      kStepFxDrive = 6,
+      kStepFxLfo = 7,      // LFO DEPTH (wah)
+      kStepFxReverb = 8,   // envoi reverb
+      kStepFxRing = 9,
+      kStepFxTremolo = 10,
+      kStepFxFlanger = 11,
+      kStepFxDlyMix = 12,
     };
 }
 

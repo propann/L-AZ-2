@@ -38,6 +38,7 @@ Compila los dos binarios desde el **mismo commit de Git**. No actualices una sol
 ## Emulación, partidas y música
 
 - **GB/GBC:** un único núcleo, Walnut-CGB, validado en la máquina a 59,7 fps en X2 y X3 (Zelda `.gb` y Zelda DX `.gbc`). La tarjeta GAME BOY muestra los `.gb` y la tarjeta GAME BOY COLOR los `.gbc`. Pantalla de doble núcleo: 30 Hz en pantalla en X2, 20 Hz en X3, juego y sonido a 59,7 Hz. Falta validar una compatibilidad más amplia y sesiones largas.
+- **Sonido y efectos:** niveles de los 9 motores y 523 patches equilibrados por medición automática; cadena de 14 efectos por pista (drive, crush, filtro LP/BP/HP + LFO, trémolo, ring mod, flanger, delay sincronizado, envío de reverb), 12 presets, bloqueos de parámetro por paso, modo EFECTOS con el clic del encoder 3, bus general reverb/delay/chorus. Ver el [manual (francés), §7 bis](../AZ2_MANUEL_UTILISATEUR.md#7-bis-les-effets).
 - **NES:** Anemoia-ESP32, 49–50 fps (~82 %) con frameskip.
 - **Neo Geo Pocket:** retirada el 2 de octubre de 2026 (el núcleo RACE es solo GPLv2, incompatible con la GPLv3 de AZ-2).
 - **SRAM del cartucho:** guardado periódico y manual en `.sav/.bak`. Un error de escritura impide descargar el cartucho para no perder silenciosamente los cambios en RAM.

@@ -3,3 +3,4 @@
 libdeps/
 *.bin
 *.hex
+__pycache__/

@@ -6,14 +6,14 @@
 
 **🌐 Documentation : [Français](docs/i18n/README.fr.md) · [English](docs/i18n/README.en.md) · [Español](docs/i18n/README.es.md)**
 
-**Une groovebox DIY à plusieurs firmwares : tracker 8 pistes, neuf moteurs audio, et une console de jeu intégrée — Game Boy et Game Boy Color à pleine vitesse (59,7 fps en X2 et X3), NES en cours d'optimisation.**
+**Une groovebox DIY à plusieurs firmwares : tracker 8 pistes, neuf moteurs audio équilibrés, une chaîne de 14 effets par piste, et une console de jeu intégrée — Game Boy et Game Boy Color à pleine vitesse (59,7 fps en X2 et X3), NES en cours d'optimisation.**
 
 [![CI](https://github.com/propann/L-AZ-2/actions/workflows/ci.yml/badge.svg)](https://github.com/propann/L-AZ-2/actions/workflows/ci.yml)
 ![Statut](https://img.shields.io/badge/status-prototype%20alpha-f59e0b)
 ![Hardware](https://img.shields.io/badge/hardware-Teensy%204.1%20%2B%20ESP32--S3-16a085)
 ![Licence](https://img.shields.io/badge/licence-GPL--3.0-64748b)
 
-[Découvrir la machine](#la-machine) · [Manuel d'utilisation](docs/AZ2_MANUEL_UTILISATEUR.md) · [Démarrer](#démarrer) · [Architecture](#deux-firmwares-un-seul-instrument) · [Émulation](#émulation) · [Feuille de route](#feuille-de-route) · [Documentation](#documentation)
+[Découvrir la machine](#la-machine) · [Manuel d'utilisation](docs/AZ2_MANUEL_UTILISATEUR.md) · [Démarrer](#démarrer) · [Architecture](#deux-firmwares-un-seul-instrument) · [Son & effets](#son--effets) · [Émulation](#émulation) · [Feuille de route](#feuille-de-route) · [Documentation](#documentation)
 
 </div>
 
@@ -23,8 +23,8 @@
 
 | 🎛️ Créer | 🎮 Jouer | 🎚️ Transformer |
 | :-- | :-- | :-- |
-| Tracker 8 pistes, patterns, song, swing, effets par pas, mute/solo | Game Boy + Game Boy Color (Walnut-CGB) validés à 59,7 fps en X2 et X3 ; NES à 49–50 fps | Mixage via Teensy et DAC I²S, capture GB WAV et lecture sampleur one-shot |
-| Dexed · ePiano · Braids · Karplus · Analog · Sampler · Drum · Granular · Spectral | Rack audio externe fonctionnel : GRANULAR S3 + SPECTRAL WROOM ; réglages fins encore en qualification | Neuf moteurs audio au choix par piste |
+| Tracker 8 pistes, patterns, song, swing, effets et verrous de paramètre par pas, mute/solo | Game Boy + Game Boy Color (Walnut-CGB) validés à 59,7 fps en X2 et X3 ; NES à 49–50 fps | 14 effets par piste (drive, crush, filtre LP/BP/HP + LFO, tremolo, ring, flanger, delay synchronisé, envoi reverb), 12 presets, bus reverb/delay/chorus |
+| Dexed · ePiano · Braids · Karplus · Analog · Sampler · Drum · Granular · Spectral — niveaux équilibrés par moteur et par patch | Rack audio externe fonctionnel : GRANULAR S3 + SPECTRAL WROOM ; réglages fins encore en qualification | Mode EFFETS au clic de l'encodeur 3 depuis presque toutes les pages, capture GB → WAV → sampleur |
 
 **Intention produit :** composer au tracker, jouer à la Game Boy et faire dialoguer le son chiptune avec les synthétiseurs de la machine. La capture WAV est présente et le dernier enregistrement Game Boy peut désormais être chargé en PSRAM comme patch dynamique **SAMPLER / GB Capture** ; la gestion d'une vraie bibliothèque multi-captures reste à développer.
 
@@ -74,6 +74,25 @@ Le matériel Teensy et l'écran ESP32 disposent de configurations de compilation
 
 **Avant le premier flash :** lire le [guide d'installation et de sécurité](docs/AZ2_DEMARRAGE.md). Préserver vos fichiers `.sav`, projets et patches SD ; identifier chaque carte avant tout téléversement.
 
+## Son & effets
+
+Chaque piste a sa **propre chaîne d'effets**, indépendante du moteur :
+
+```text
+moteur → filtre LP/BP/HP (+ LFO) → drive → crush → tremolo / ring mod → flanger
+       → delay + feedback (synchronisable) → volume → envoi reverb → bus général (reverb, delay, chorus)
+```
+
+| Fonction | État |
+| :-- | :-- |
+| Niveaux des 9 moteurs et des 523 patches Teensy | **Équilibrés** par mesure automatique ([`tools/engine_bench.py`](tools/engine_bench.py)) : l'écart allait jusqu'à ×25 entre moteurs |
+| Section EFFETS (page PATCH) + 12 presets | Validée au banc et à l'écoute ; sauvegardée dans le projet |
+| Effets de pas et verrous de paramètre (DRIVE, WAH, REVRB, RING, TREM, FLANG, DMIX) | Validés au banc |
+| Mode EFFETS à l'encodeur 3, ligne MASTER du MIXER | Livrés |
+| Charge Teensy | CPU 8–12 %, mémoire audio ≤ 310/700 blocs |
+
+Guide joueur : [Manuel, §7 bis « Les effets »](docs/AZ2_MANUEL_UTILISATEUR.md#7-bis-les-effets). Détail technique et mesures : [état actuel](docs/AZ2_ETAT_ACTUEL.md). Historique : [CHANGELOG](CHANGELOG.md).
+
 ## Émulation
 
 La page **ÉMULATEURS** propose trois cartes. Chaque carte ne liste que ses propres ROM, rangées dans `/games` sur la SD de l'écran (sous-dossiers acceptés).
@@ -109,7 +128,8 @@ Les cases d'implémentation et les tests d'acceptation figurent dans la [roadmap
 
 | Commencer par… | Pour… |
 | :-- | :-- |
-| [État actuel vérifié](docs/AZ2_ETAT_ACTUEL.md) | Source de vérité : matériel actif, neuf moteurs, rack, mesures GB/GBC/NES |
+| [État actuel vérifié](docs/AZ2_ETAT_ACTUEL.md) | Source de vérité : matériel actif, moteurs et effets, rack, mesures GB/GBC/NES |
+| [CHANGELOG](CHANGELOG.md) | Ce qui a changé, version par version, avec les mesures |
 | [Reproduire AZ-2](docs/AZ2_REPRODUCTION.md) | Liste des pièces, câblage, cartes SD, compilation et contrôle final |
 | [Guide en français](docs/i18n/README.fr.md) · [English guide](docs/i18n/README.en.md) · [Guía en español](docs/i18n/README.es.md) | Découvrir le projet, compiler les firmwares, comprendre les fonctions livrées et leurs limites |
 | [Manuel d'utilisation](docs/AZ2_MANUEL_UTILISATEUR.md) | Jouer avec la machine : pages, contrôles, sauvegarde, premier beat |

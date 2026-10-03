@@ -8,8 +8,8 @@ Ce guide explique comment **jouer avec la machine**, pas comment la construire o
 
 L'AZ-2 est une groovebox distribuée sur quatre cartes programmables :
 
-- **Teensy 4.1** (le master audio) : tracker, neuf moteurs locaux, mixage, MIDI et sortie PCM5102A.
-- **ESP32-S3 écran** : interface tactile 480×480 et prototypes GB/GBC non validés.
+- **Teensy 4.1** (le master audio) : tracker, moteurs locaux, chaîne d'effets par piste, mixage et sortie PCM5102A.
+- **ESP32-S3 écran** : interface tactile 480×480 et console de jeu (Game Boy, Game Boy Color, NES).
 - **ESP32-S3 N16R8** : moteur GRANULAR et agrégation du rack audio.
 - **ESP-WROOM-32D** : moteur SPECTRAL.
 
@@ -31,7 +31,7 @@ Ces règles reviennent sur presque toutes les pages :
 - **A maintenu + HAUT/BAS (ou GAUCHE/DROITE selon la page) = régler une valeur.** Le réglage sélectionné (en surbrillance) change tant que A reste enfoncé.
 - **Sans A, HAUT/BAS/GAUCHE/DROITE = se déplacer** entre les réglages, pistes ou pas, sans rien modifier.
 - **La ligne "PISTE" en haut d'une page** (quand elle existe) se distingue par un contour blanc quand elle a le focus — GAUCHE/DROITE y change alors de piste. On y accède en remontant (HAUT) depuis la toute première ligne de la page.
-- **2 des 3 encodeurs sont contextuels** (voir §4) : ce qu'ils règlent change selon la page affichée, indiqué par 2 pastilles de couleur (orange et cyan) en haut à droite de l'écran avec un petit libellé.
+- **Les encodeurs 2 et 3 sont contextuels** (voir §4) : ce qu'ils règlent change selon la page affichée, indiqué par 2 pastilles de couleur (orange et cyan) en haut à droite de l'écran avec un petit libellé. **Le clic de l'encodeur 3 ouvre le mode EFFETS** depuis presque toutes les pages.
 
 ## 3. Le menu principal
 
@@ -40,7 +40,7 @@ Ces règles reviennent sur presque toutes les pages :
 | Catégorie | Contient |
 | :-- | :-- |
 | **Musique** | Séquenceur, Moteurs, Patch, Mixer, Song, Projet, Audio |
-| **Jeux** | Game Boy / GBC |
+| **Jeux** | Game Boy, Game Boy Color, NES |
 | **Configuration** | Écran de veille, réglages généraux |
 | **Doc** | Journal de liaison série, À propos |
 
@@ -50,18 +50,29 @@ Naviguez à la croix jusqu'à une catégorie, **A** pour l'ouvrir, puis à nouve
 
 3 encodeurs rotatifs, chacun avec un bouton poussoir intégré (clic) :
 
-- **Encodeur 0 (VOLUME)** : rôle **fixe**, toujours le volume général de sortie, quelle que soit la page affichée. Câblé directement — il répond même si l'écran est figé.
-- **Encodeur 1** et **Encodeur 2** : **contextuels**, leur rôle change selon la page. Repérables par leur couleur affichée à l'écran (pastille + libellé, coin supérieur droit) :
-  - 🟠 **Orange = encodeur 1**
-  - 🔵 **Cyan = encodeur 2**
+- **Encodeur 1 (VOLUME)** : rôle **fixe**, toujours le volume général de sortie, quelle que soit la page affichée. Câblé directement — il répond même si l'écran est figé.
+- **Encodeurs 2 et 3** : **contextuels**, leur rôle change selon la page. Repérables par leur couleur affichée à l'écran (pastille + libellé, coin supérieur droit) :
+  - 🟠 **Orange = encodeur 2**
+  - 🔵 **Cyan = encodeur 3**
   - Un libellé gris "--" veut dire que cet encodeur n'a rien à faire sur la page actuelle.
 
-Pages où les encodeurs sont déjà câblés :
+Exemples :
 
-- **MIXER** : encodeur 1 = choisir la piste, encodeur 2 = régler son volume.
-- **PATCH** : encodeur 1 = valeur de gauche de la ligne actuellement sélectionnée, encodeur 2 = valeur de droite — accès direct aux 2 réglages d'une même ligne sans avoir à les sélectionner un par un.
+- **MIXER** : encodeur 2 = choisir la piste, encodeur 3 = régler son volume.
+- **PATCH** : encodeur 2 = coupure/résonance du filtre, encodeur 3 = point de l'ADSR ; le clic de l'encodeur 3 passe au point suivant (A → D → S → R).
+- **SEQ. PAS** : encodeur 2 = piste, encodeur 3 = note du pas au curseur.
+- **Encodeur 2** garde aussi ses fonctions du pad virtuel et de l'arpégiateur.
 
-D'autres pages seront câblées progressivement — l'objectif est qu'ils servent à quelque chose sur chaque écran musical.
+### Mode EFFETS (clic de l'encodeur 3)
+
+Depuis le tracker, SEQ. PAS, MOTEURS, MIXER et la plupart des pages :
+
+1. **Clic sur l'encodeur 3** : un bandeau s'ouvre en bas, par exemple `P3  PRESET  DUB`, pour la piste sélectionnée sur la page.
+2. **Tourner l'encodeur 3** : change la valeur en direct (sur PRESET, charge le preset suivant).
+3. **Re-clic** : passe à l'effet suivant (PRESET → DRIVE → CRUSH → … → SYNC DLY).
+4. **4 secondes sans y toucher** : le bandeau disparaît, l'encodeur 3 reprend son rôle normal.
+
+Le mode n'existe pas en jeu (le clic y fait START), sur la page AUDIO, ni sur la page PATCH (les effets y ont leurs propres lignes).
 
 ## 5. Le tracker (page SÉQUENCEUR)
 
@@ -86,7 +97,7 @@ Le cœur de la composition : un tracker 8 pistes, 16 pas par pattern, inspiré d
 - A maintenu + HAUT/BAS : édite la valeur de la colonne sélectionnée.
   - **NOTE** : poser une note allume automatiquement le pas.
   - **INST** : choisit un patch différent du patch par défaut de la piste, juste pour ce pas.
-  - **FX/VAL** : effet et sa valeur pour ce pas (voir la liste des effets ci-dessous).
+  - **FX/VAL** : effet et sa valeur pour ce pas (voir §7 bis, « Effets de pas »).
   - **PROB** : probabilité de déclenchement du pas (permet des variations aléatoires).
   - **COND** : condition de déclenchement (ex. uniquement 1 fois sur 2, ou en "fill").
 - Toucher directement une ligne fait la même chose qu'y naviguer à la croix.
@@ -94,6 +105,12 @@ Le cœur de la composition : un tracker 8 pistes, 16 pas par pattern, inspiré d
 ### Transport
 
 Barre du bas : PLAY/STOP, BPM (+/- 5 par tap gauche/droite de la case), division rythmique. Les flèches peuvent entrer dans les boutons latéraux : depuis la dernière colonne, DROITE ouvre le focus du panneau, HAUT/BAS choisit MOTEUR/PATCH/EFFET/CLAVIER/METRO/SAUVER, puis A confirme. Bouton **D** déclenche un "fill" temporaire pendant qu'il est maintenu (variation de motif). C reste le retour.
+
+### SEQ. PAS (vue pas à pas, style OP-1)
+
+- GAUCHE/DROITE : déplace le curseur de pas ; HAUT/BAS : change de piste.
+- **A tapé** : allume/éteint le pas. **A maintenu + HAUT/BAS** : monte/descend la note du pas dans la gamme (et l'allume).
+- Encodeur 2 : piste ; encodeur 3 : note ; **C** : PLAY/STOP.
 
 ## 6. Page MOTEURS
 
@@ -113,10 +130,55 @@ Le réglage fin du son de la piste affichée : filtre, enveloppe, effets propres
 - Cadre de presets à côté de l'onde : **A** entre en édition, HAUT/BAS choisit le preset, puis **A** ressort ; hors édition, BAS/DROITE descend dans les réglages.
 - Grille de réglages, **2 par ligne** pour gagner de la place — GAUCHE/DROITE choisit le réglage, HAUT/BAS monte/descend d'une ligne en gardant la colonne.
 - **A maintenu + HAUT/BAS *ou* A maintenu + GAUCHE/DROITE** éditent tous les deux la valeur sélectionnée (au choix, selon ce qui est le plus confortable à tenir).
-- Réglages disponibles selon le moteur : coupure/résonance du filtre, ADSR (attaque/chute/maintien/relâchement) — remplacé par ALGO/FEEDBACK pour Dexed — puis des réglages spécifiques au moteur (voir §9), **CRUSH** (bitcrusher) et **DELAY** (écho court, un seul répétition) propres à la piste, VOLUME, puis la ligne **SLOT** (sauvegarde/chargement de patch, voir §10).
+- Réglages disponibles selon le moteur : coupure/résonance du filtre, ADSR (attaque/chute/maintien/relâchement) — remplacé par ALGO/FEEDBACK pour Dexed — puis des réglages spécifiques au moteur (voir §9), la **section EFFETS** de la piste (voir §7 bis), VOLUME, puis la ligne **SLOT** (sauvegarde/chargement de patch, voir §10).
+- Bouton **MOT>** au bout de la ligne PISTE : un toucher passe la piste au moteur suivant sans quitter la page ; la section EFFETS de la piste est conservée.
 - **Bouton B** joue/coupe une note de test directement sur la piste affichée — pratique pour entendre l'effet de chaque réglage en le modifiant.
-- L'**oscilloscope** en haut de la page trace la forme d'onde réellement jouée (après filtre, bitcrusher et delay).
+- L'**oscilloscope** en haut de la page trace la forme d'onde réellement jouée (après filtre et effets).
 - **Encodeurs contextuels** : voir §4.
+
+## 7 bis. Les effets
+
+Chaque piste a sa **propre chaîne d'effets**, indépendante des autres pistes et du moteur choisi :
+
+`moteur → filtre (+ LFO) → drive → crush → tremolo / ring mod → flanger → delay avec feedback → volume → envoi reverb`
+
+### Section EFFETS (page PATCH)
+
+Lignes à nom coloré, sous les réglages du moteur :
+
+| Ligne | Effet |
+| :-- | :-- |
+| PRESET FX | charge d'un coup les 14 réglages ci-dessous (voir les presets plus bas) |
+| DRIVE | saturation douce, le volume reste le même |
+| CRUSH | lo-fi, de 16 bits (propre) à 2 bits |
+| LFO RATE / LFO DEPTH | LFO sur le filtre (wah) : vitesse 0,05–20 Hz, profondeur jusqu'à 4 octaves |
+| DELAY / FEEDBACK / DLY MIX | écho par piste jusqu'à 500 ms, répétitions, niveau |
+| FILTRE | type de filtre : LP (passe-bas), BP (passe-bande), HP (passe-haut) |
+| TREMOLO | volume qui pulse au rythme du LFO |
+| RING MOD | modulation en anneau (métallique, cloche, robot) |
+| FLANGER | effet « avion » |
+| REVERB | envoi de la piste vers la reverb générale |
+| SYNC LFO / SYNC DLY | LFO et écho calés sur le tempo (4 MES … 1/32, triolets et pointés) |
+
+En **BP** ou **HP**, baissez le CUTOFF : filtre grand ouvert, le son disparaît.
+
+### Presets d'effets
+
+PROPRE, DUB, LOFI, WAH, ESPACE, ROBOT, TREMOL, JET, SATURE, CHIP, PING, CATHED. Un preset est un point de départ : retouchez ensuite chaque effet librement. Chargement par la ligne PRESET FX (page PATCH) ou par le mode EFFETS de l'encodeur 3 (§4).
+
+### Effets de pas (colonne FX du tracker)
+
+| Effet | Pendant le pas |
+| :-- | :-- |
+| ARP, CUT, RET | arpège, coupure, re-déclenchement |
+| CRUSH, DELAY | preset de bitcrusher / d'écho, qui reste actif ensuite |
+| DRIVE, WAH, REVRB, RING, TREM, FLANG, DMIX | **verrou de paramètre** : la valeur (0–127, par pas de 8) remplace le réglage EFFETS de la piste le temps du pas, puis la piste revient à son réglage |
+
+### Bus général (ligne MASTER du MIXER)
+
+REV (reverb), DLY (delay de 350 ms) et CHO (chorus) s'appliquent à tout le mix. Un toucher sur une case avance de 20 (0 → 100 → 0).
+
+Tous ces réglages sont **sauvegardés avec le projet**.
 
 ## 8. Page MIXER
 
@@ -125,14 +187,15 @@ Vue d'ensemble du volume de toutes les pistes à la fois.
 - 8 barres verticales, une par piste (numérotées 1 à 8), hauteur = volume.
 - GAUCHE/DROITE (ou toucher une barre) choisit la piste ; HAUT/BAS règle directement son volume (pas besoin de maintenir A — c'est un fader, le geste le plus fréquent).
 - Boutons **MUTE** et **SOLO** (tactiles, ou boutons physiques B/D) pour la piste sélectionnée — indicateur M/S affiché sous sa barre.
-- Encodeur 1 = choisir la piste, encodeur 2 = son volume (mêmes actions qu'à la croix, en plus rapide).
+- Encodeur 2 = choisir la piste, encodeur 3 = son volume (mêmes actions qu'à la croix, en plus rapide).
+- Ligne **MASTER** tout en bas : reverb, delay et chorus du bus général (voir §7 bis).
 
 ## 9. Les 9 moteurs audio
 
 | Moteur | Type | Patchs disponibles |
 | :-- | :-- | :-- |
 | **DEXED** | Synthèse FM (compatible DX7) | 255 (banques ROM Yamaha officielles) |
-| **EPIANO** | Piano électrique (mda ePiano) | 5 presets réels |
+| **EPIANO** | Piano électrique (mda ePiano) | 105 (5 d'origine + 100 variations) |
 | **BRAIDS** | Oscillateur macro (Mutable Instruments) | 43 formes d'onde |
 | **KARPLUS** | Corde pincée (Karplus-Strong) | 100 presets (nylon, acier, harpe, basse, pluck, drone, FX…) |
 | **ANALOG** | Oscillateur + ADSR classique | 11 formes d'onde |
@@ -141,7 +204,7 @@ Vue d'ensemble du volume de toutes les pistes à la fois.
 | **GRANULAR** | Granulaire externe sur ESP32-S3 avec PSRAM | 8 presets |
 | **SPECTRAL** | Synthèse additive/spectrale externe sur WROOM-32D | 8 presets |
 
-Chaque piste peut sélectionner l'un des neuf moteurs. GRANULAR et SPECTRAL sont chacun une ressource physique unique du rack externe : une seule piste à la fois en possède le contrôle.
+Chaque piste peut sélectionner l'un des neuf moteurs. Les niveaux sont **équilibrés** entre moteurs et entre patches (mesure automatique de tous les patches, `tools/engine_bench.py`) : changer de moteur ou de patch ne fait plus bondir le volume. GRANULAR et SPECTRAL sont chacun une ressource physique unique du rack externe : une seule piste à la fois en possède le contrôle.
 
 ## 10. Sauvegarder / charger
 
@@ -171,14 +234,20 @@ Deux façons d'y arriver, avec un comportement différent :
 
 **Kit de batterie** : indépendamment de tout ça, chaque pad peut avoir son **propre échantillon dédié** assigné directement (jusqu'à 2 secondes chacun, les 16 pads sonnent en même temps si besoin) — un pad avec un échantillon assigné sonne toujours ce son-là en priorité, quel que soit le mode. Un premier kit de 8 sons (grosse caisse, caisse claire, charley fermé/ouvert, clap, rim, cowbell, ride) est déjà prêt sur les pads 1 à 8 dès que la bibliothèque de samples est présente sur la carte SD du Teensy. Ces assignations se sauvegardent avec le reste du morceau (page PROJET).
 
-## 13. Jeux (Game Boy / Game Boy Color)
+## 13. Jeux (Game Boy / Game Boy Color / NES)
 
-La page JEUX et les cœurs GB/GBC sont **expérimentaux et non fonctionnels de bout en bout à ce jour**. Les éléments ci-dessous décrivent le comportement visé ou des briques présentes dans le code, pas une console validée.
+Menu **Jeux** → page ÉMULATEURS, trois cartes. Chaque carte ne liste que ses ROM, rangées dans `/games` sur la SD de l'écran (sous-dossiers acceptés).
 
-- Liste de ROM naviguable à la croix, **A** pour lancer.
-- En jeu : A/B = boutons Game Boy A/B, START/SELECT sur 2 des encodeurs, **C** quitte proprement (sauvegarde la RAM cartouche avant de fermer).
-- Sauvegarde automatique périodique de la RAM cartouche en plus de la sauvegarde à la fermeture (perte maximale ~30 secondes en cas de coupure).
-- Le son du jeu passe par le même bus d'effets maître (reverb/delay/volume) que la musique.
+| Carte | ROM | Cadence mesurée |
+| :-- | :-- | :-- |
+| GAME BOY | `.gb` | 59,7 fps en X2 et X3 |
+| GAME BOY COLOR | `.gbc` | 59,7 fps en X2 et X3 |
+| NES | `.nes` | 49–50 fps (en cours d'optimisation) |
+
+- Liste de ROM à la croix, **A** pour lancer ; X2 / X3 choisit la taille de l'image.
+- En jeu : A/B = boutons A/B, SELECT/START sur les clics des encodeurs 2 et 3, **C** quitte proprement (sauvegarde la RAM cartouche avant de fermer).
+- Sauvegarde automatique toutes les 30 s, seulement si la partie a changé (pas d'à-coup).
+- Le son du jeu passe par le bus général (volume, reverb, delay) ; la capture GB → WAV → SAMPLER est disponible.
 
 ## 14. Pages annexes
 
@@ -193,7 +262,7 @@ La page JEUX et les cœurs GB/GBC sont **expérimentaux et non fonctionnels de b
 2. **Menu → Musique → Séquenceur.** Sur la piste 1, posez quelques notes sur les pas 1, 5, 9, 13 (croix, A maintenu + HAUT/BAS sur la colonne NOTE).
 3. Appuyez **PLAY** en bas du tracker. Ajustez le tempo (BPM) si besoin.
 4. Passez à la piste 2 (GAUCHE/DROITE sur la ligne PISTE), changez de moteur si besoin, posez d'autres notes.
-5. Ouvrez **PATCH** depuis le panneau latéral pour affiner le son (filtre, ADSR, delay/bitcrusher) — bouton **B** pour entendre chaque réglage.
+5. Ouvrez **PATCH** depuis le panneau latéral pour affiner le son (filtre, ADSR, section EFFETS) — bouton **B** pour entendre chaque réglage. Ou, séquence en route, **cliquez l'encodeur 3** et tournez : les presets d'effets défilent sur la piste.
 6. Une fois satisfait, **SAUVER** depuis le tracker (ou page PROJET) pour ne rien perdre.
 
 ## Voir aussi

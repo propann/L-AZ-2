@@ -1186,7 +1186,10 @@ bool songMode = false;
 // la grille ET la vue detail, demande le 2026-09-15 ("on met de la
 // couleur, des effets"). kDim pour "aucun effet" (index 0). Doit rester
 // alignee avec StepFx cote Teensy (None/Arp/Cut/Retrig).
-const uint16_t kStepFxColors[] = {kDim, kPalette[1], kPalette[2], kPalette[3], kPalette[4], kPalette[0]};
+const uint16_t kStepFxColors[] = {kDim, kPalette[1], kPalette[2], kPalette[3], kPalette[4], kPalette[0],
+                                  RGB565(255, 120, 40), RGB565(120, 220, 255), RGB565(170, 140, 255),
+                                  RGB565(255, 230, 90), RGB565(255, 110, 180), RGB565(90, 255, 170),
+                                  RGB565(200, 200, 200)};
 uint8_t seqCurrentStep = 0;
 bool seqPlaying = false;
 bool seqRecording = false;
@@ -1201,6 +1204,9 @@ bool metronomeOn = false;  // 2026-09-19, voir METRO: cote Teensy
 // il faut toujours une piste/un pas valides des le boot.
 int8_t selectedSeqTrack = 0;
 int8_t selectedSeqStep = 0;
+// SEQ. PAS : A a servi a editer la note (A + HAUT/BAS) -> pas de bascule
+// du pas au relachement de A.
+bool stepSeqAEdited = false;
 
 // Vue tracker (colonnes NOTE/INST/FX/VAL/PROB/COND d'UNE piste, comme l'ecran
 // phrase de LSDJ/M8 -- voir AZ2_TRACKER_ETUDE.md) -- devenue la SEULE
@@ -1268,8 +1274,15 @@ const char *const kNoteNames[12] = {"C-", "C#", "D-", "D#", "E-", "F-", "F#", "G
 // jusque-la sans aucun acces UI, rejoignent ARP/CUT/RET dans la meme
 // colonne FX -- VAL devient un numero de patch pour ces deux-la (voir
 // kCrushPresets[]/kDelayPresets[] cote Teensy), pas une valeur brute.
-const char *const kStepFxNames[] = {"---", "ARP", "CUT", "RET", "CRUSH", "DELAY"};
+// 6-12 (2026-10-02) : verrous de parametre par pas, valeur 0-127 qui
+// remplace le reglage EFFETS de la piste le temps du pas (voir
+// serviceStepLocks() cote Teensy). Ordre = enum StepFx de sequencer.h.
+const char *const kStepFxNames[] = {"---", "ARP", "CUT", "RET", "CRUSH", "DELAY",
+                                    "DRIVE", "WAH", "REVRB", "RING", "TREM", "FLANG", "DMIX"};
+constexpr uint8_t kFirstStepLockFx = 6;
 constexpr uint8_t kStepFxCount = sizeof(kStepFxNames) / sizeof(kStepFxNames[0]);
+static_assert(sizeof(kStepFxColors) / sizeof(kStepFxColors[0]) == kStepFxCount,
+              "une couleur par effet de pas");
 
 void formatNoteName(uint8_t note, char *out, size_t outSize) {
   const int octave = static_cast<int>(note) / 12 - 1;  // note 60 = C4, convention M8/LSDJ
@@ -2108,6 +2121,58 @@ void drawEngMiniPatch() {
 // Zone graphique compacte : une silhouette par moteur et deux valeurs
 // directement pilotables par les potentiometres 2/3. Elle reste dans le
 // bandeau existant pour conserver la navigation tactile actuelle.
+// [2026-10-02] Bandeau en deux parties :
+//  - drawEngVisualizer() : cadre + textes, redessine SEULEMENT quand
+//    l'etat change (piste, moteur, banque, valeur) ;
+//  - drawEngVisualizerIcon() : la seule partie animee (~12 Hz), une icone
+//    56x56 preparee en RAM interne puis copiee d'un bloc.
+// Redessiner tout le bandeau (432x66, en PSRAM) a chaque tick creait des
+// rafales d'ecritures PSRAM qui privaient le DMA de l'ecran : l'image sautait
+// ("la fenetre des moteurs sautille"), meme cause que le X3 GB.
+constexpr int16_t kEngIconSize = 56;
+Arduino_Canvas *engIconCanvas = nullptr;
+
+void drawEngVisualizerIcon() {
+  const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
+  const uint16_t accent = patchAccent(t);
+  const int16_t ox = static_cast<int16_t>(kMargin + 4);
+  const int16_t oy = static_cast<int16_t>(kEngMiniY + kEngMiniH / 2 + 3 - kEngIconSize / 2);
+  if (engIconCanvas == nullptr) {
+    // 6 Ko : sous le seuil des allocations internes de l'ESP32 (RAM rapide).
+    engIconCanvas = new Arduino_Canvas(kEngIconSize, kEngIconSize, gfx, ox, oy);
+    if (!engIconCanvas->begin(GFX_SKIP_OUTPUT_BEGIN)) {
+      delete engIconCanvas;
+      engIconCanvas = nullptr;
+    }
+  }
+  Arduino_GFX *g = engIconCanvas != nullptr ? static_cast<Arduino_GFX *>(engIconCanvas) : gfx;
+  const int16_t bx = engIconCanvas != nullptr ? 0 : ox;
+  const int16_t by = engIconCanvas != nullptr ? 0 : oy;
+  const uint8_t phase = static_cast<uint8_t>(engineAnimFrame & 0x3f);
+  const int16_t cx = static_cast<int16_t>(bx + kEngIconSize / 2);
+  const int16_t cy = static_cast<int16_t>(by + kEngIconSize / 2);
+  g->fillRect(bx, by, kEngIconSize, kEngIconSize, RGB565_BLACK);
+  g->drawCircle(cx, cy, 20, kFaint);
+  g->drawCircle(cx, cy, static_cast<int16_t>(10 + phase / 8), accent);
+  if (trackEngine[t] == az2::kEngineDexed) {
+    for (uint8_t i = 0; i < 4; ++i) {
+      g->drawLine(cx - 18 + i * 12, cy - 15, cx - 9 + i * 12, cy + 15, accent);
+    }
+  } else if (trackEngine[t] == az2::kEngineDrum) {
+    g->fillCircle(cx, cy, static_cast<int16_t>(5 + phase / 16), accent);
+    g->drawCircle(cx, cy, 15, accent);
+  } else if (trackEngine[t] == az2::kEngineSampler) {
+    g->drawLine(cx - 18, cy + 10, cx - 6, cy - 12, accent);
+    g->drawLine(cx - 6, cy - 12, cx + 8, cy + 5, accent);
+    g->drawLine(cx + 8, cy + 5, cx + 18, cy - 15, accent);
+  } else {
+    for (int16_t i = -18; i < 18; i += 3) {
+      g->drawPixel(static_cast<int16_t>(cx + i), static_cast<int16_t>(cy + ((i * 7 + phase * 3) % 18)), accent);
+    }
+  }
+  if (engIconCanvas != nullptr) engIconCanvas->flush();
+}
+
 void drawEngVisualizer() {
   const uint8_t t = static_cast<uint8_t>(selectedEngineTrack);
   const uint16_t accent = patchAccent(t);
@@ -2115,29 +2180,8 @@ void drawEngVisualizer() {
   const int16_t y = kEngMiniY;
   const int16_t w = static_cast<int16_t>(kScreenSize - 2 * kMargin);
   const int16_t h = kEngMiniH;
-  const uint8_t phase = static_cast<uint8_t>(engineAnimFrame & 0x3f);
   gfx->fillRect(x, y, w, h, RGB565_BLACK);
   gfx->drawRect(x, y, w, h, accent);
-  const int16_t cx = static_cast<int16_t>(x + 32);
-  const int16_t cy = static_cast<int16_t>(y + h / 2 + 3);
-  gfx->drawCircle(cx, cy, 20, kFaint);
-  gfx->drawCircle(cx, cy, static_cast<int16_t>(10 + phase / 8), accent);
-  if (trackEngine[t] == az2::kEngineDexed) {
-    for (uint8_t i = 0; i < 4; ++i) {
-      gfx->drawLine(cx - 18 + i * 12, cy - 15, cx - 9 + i * 12, cy + 15, accent);
-    }
-  } else if (trackEngine[t] == az2::kEngineDrum) {
-    gfx->fillCircle(cx, cy, static_cast<int16_t>(5 + phase / 16), accent);
-    gfx->drawCircle(cx, cy, 15, accent);
-  } else if (trackEngine[t] == az2::kEngineSampler) {
-    gfx->drawLine(cx - 18, cy + 10, cx - 6, cy - 12, accent);
-    gfx->drawLine(cx - 6, cy - 12, cx + 8, cy + 5, accent);
-    gfx->drawLine(cx + 8, cy + 5, cx + 18, cy - 15, accent);
-  } else {
-    for (int16_t i = -18; i < 18; i += 3) {
-      gfx->drawPixel(static_cast<int16_t>(cx + i), static_cast<int16_t>(cy + ((i * 7 + phase * 3) % 18)), accent);
-    }
-  }
   gfx->setTextSize(1);
   gfx->setTextColor(kDim);
   gfx->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 4));
@@ -2159,6 +2203,7 @@ void drawEngVisualizer() {
   gfx->setTextColor(kDim);
   gfx->setCursor(static_cast<int16_t>(x + 66), static_cast<int16_t>(y + 47));
   gfx->print("B / ENC1 : changer de banque");
+  drawEngVisualizerIcon();
 }
 
 bool hitTestEngMini(int16_t x, int16_t y) {
@@ -2293,6 +2338,78 @@ uint8_t trackAlgo[kSeqTrackCount] = {};
 uint8_t trackFeedback[kSeqTrackCount] = {};
 uint8_t rackParamVal[kSeqTrackCount][az2::kRackGranularParamCount] = {};
 uint8_t patchExtraVal[kSeqTrackCount][17] = {};
+// Section EFFETS de la page PATCH (2026-10-02) : 7 lignes communes a tous
+// les moteurs, apres les lignes propres au moteur -- miroir de
+// trackFxVal[] cote Teensy, envoyees par TFX:<piste>:<param>:<valeur>.
+// Independantes du moteur : survivent a un changement de moteur.
+// Ordre = index TFX cote Teensy (voir handleTrackFxCommand()).
+constexpr uint8_t kFxRowCount = 14;
+constexpr const char *kFxRowLabel[kFxRowCount] = {
+    "DRIVE", "CRUSH", "LFO RATE", "LFO DEPTH", "DELAY", "FEEDBACK", "DLY MIX",
+    "FILTRE", "TREMOLO", "RING MOD", "FLANGER", "REVERB", "SYNC LFO", "SYNC DLY",
+};
+#define AZ2_FX_DEFAULTS {0, 0, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+uint8_t trackFxVal[kSeqTrackCount][kFxRowCount] = {
+    AZ2_FX_DEFAULTS, AZ2_FX_DEFAULTS, AZ2_FX_DEFAULTS, AZ2_FX_DEFAULTS,
+    AZ2_FX_DEFAULTS, AZ2_FX_DEFAULTS, AZ2_FX_DEFAULTS, AZ2_FX_DEFAULTS,
+};
+// Divisions de tempo de SYNC LFO / SYNC DLY -- meme table que kFxSyncBeats
+// cote Teensy (1-127 decoupe en 11 cases, 0 = libre).
+constexpr const char *kFxSyncLabel[] = {"4 MES", "2 MES", "1 MES", "1/2", "1/4", "1/4.",
+                                        "1/8", "1/4T", "1/16", "1/8T", "1/32"};
+constexpr uint8_t kFxSyncLabelCount = sizeof(kFxSyncLabel) / sizeof(kFxSyncLabel[0]);
+
+// Presets d'effets (2026-10-03) : les 14 reglages EFFETS d'un coup, dans
+// l'ordre TFX. SYNC = valeur au centre de la case de division (voir
+// kFxSyncBeats cote Teensy) : 30 = 1 MES, 42 = 1/2, 53 = 1/4, 65 = 1/4.,
+// 76 = 1/8, 99 = 1/16. Noms <= 6 caracteres (colonne valeur).
+struct FxPreset {
+  const char *name;
+  uint8_t v[kFxRowCount];
+};
+//                  DRV CRU LFR LFD DLY FB  MIX FIL TRM RNG FLG REV SYL SYD
+constexpr FxPreset kFxPresets[] = {
+    {"PROPRE", {0,   0,  40, 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0}},
+    {"DUB",    {0,   0,  40, 0,  0,  95, 85, 0,  0,  0,  0,  40, 0,  65}},
+    {"LOFI",   {30,  85, 40, 0,  0,  0,  0,  0,  0,  0,  0,  20, 0,  0}},
+    {"WAH",    {10,  0,  40, 110, 0, 0,  0,  64, 0,  0,  0,  15, 76, 0}},
+    {"ESPACE", {0,   0,  30, 0,  0,  70, 60, 0,  0,  0,  30, 110, 0, 76}},
+    {"ROBOT",  {40,  40, 40, 0,  0,  0,  0,  0,  0,  70, 0,  10, 0,  0}},
+    {"TREMOL", {0,   0,  40, 0,  0,  0,  0,  0,  100, 0, 0,  30, 76, 0}},
+    {"JET",    {0,   0,  30, 0,  0,  0,  0,  0,  0,  0,  110, 20, 0, 0}},
+    {"SATURE", {110, 0,  40, 0,  0,  0,  0,  0,  0,  0,  0,  10, 0,  0}},
+    {"CHIP",   {0,   100, 40, 0, 0,  40, 50, 0,  0,  0,  0,  0,  0,  99}},
+    {"PING",   {0,   0,  40, 0,  0,  60, 70, 0,  0,  0,  0,  10, 0,  99}},
+    {"CATHED", {0,   0,  40, 0,  0,  50, 40, 0,  0,  0,  0,  127, 0, 42}},
+};
+constexpr uint8_t kFxPresetCount = sizeof(kFxPresets) / sizeof(kFxPresets[0]);
+uint8_t trackFxPreset[kSeqTrackCount] = {};  // dernier preset charge (affichage)
+
+// Charge un preset : les 14 reglages EFFETS de la piste, envoyes au Teensy.
+void applyFxPreset(uint8_t track, uint8_t preset) {
+  if (preset >= kFxPresetCount) return;
+  trackFxPreset[track] = preset;
+  char msg[24];
+  for (uint8_t fx = 0; fx < kFxRowCount; ++fx) {
+    trackFxVal[track][fx] = kFxPresets[preset].v[fx];
+    snprintf(msg, sizeof(msg), "TFX:%d:%d:%d", track, fx, trackFxVal[track][fx]);
+    sendToTeensy(msg);
+  }
+}
+
+// Texte affiche pour une valeur d'effet (5 caracteres max, colonne valeur).
+void fxRowValueText(uint8_t fx, uint8_t value, char *out, size_t size) {
+  if (fx == 7) {
+    snprintf(out, size, "%s", value < 43 ? " LP" : (value < 86 ? " BP" : " HP"));
+  } else if ((fx == 12 || fx == 13) && value > 0) {
+    const uint8_t idx = static_cast<uint8_t>((static_cast<uint16_t>(value - 1) * kFxSyncLabelCount) / 127);
+    snprintf(out, size, "%s", kFxSyncLabel[idx < kFxSyncLabelCount ? idx : kFxSyncLabelCount - 1]);
+  } else if ((fx == 9 || fx == 12 || fx == 13 || fx == 10 || fx == 8) && value == 0) {
+    snprintf(out, size, "OFF");
+  } else {
+    snprintf(out, size, "%3d", value);
+  }
+}
 
 // Miroir cote ecran de rackOwnerTrack[] (source de verite cote Teensy,
 // voir son commentaire dans src_teensy/az2_audio/main.cpp) -- tenu a jour
@@ -2409,7 +2526,9 @@ uint8_t &patchParamRef(uint8_t track, uint8_t row) {
 // voir patchVolRow()/patchSlotRow() -- au lieu d'etre fixes a 6/7).
 // KARPLUS/ANALOG n'ont rien de plus a exposer (0 ligne extra, page
 // inchangee -- meme mise en page qu'avant ce chantier).
-uint8_t patchExtraCount(uint8_t track) {
+// Lignes propres au moteur seulement (voir patchExtraCount() pour le total
+// avec la section EFFETS).
+uint8_t patchEngineExtraCount(uint8_t track) {
   switch (trackEngine[track]) {
     case az2::kEngineDexed: return 17;   // parametres globaux DX7 (hors algo/feedback deja lignes 2-3, hors nom)
     case az2::kEngineEPiano: return 12;  // les 12 parametres continus mdaEPiano
@@ -2422,6 +2541,28 @@ uint8_t patchExtraCount(uint8_t track) {
     case az2::kEngineSpectral: return az2::kRackSpectralParamCount - 6;
     default: return 0;
   }
+}
+// Total des lignes extra = lignes du moteur + section EFFETS commune
+// (1 ligne PRESET FX + kFxRowCount reglages).
+uint8_t patchExtraCount(uint8_t track) {
+  return static_cast<uint8_t>(patchEngineExtraCount(track) + 1 + kFxRowCount);
+}
+bool patchExtraIsFx(uint8_t track, uint8_t extraIdx) {
+  return extraIdx >= patchEngineExtraCount(track);
+}
+// Ligne extra -> index d'effet TFX (0-13), ou -1 pour la ligne PRESET FX.
+int8_t patchFxIndex(uint8_t track, uint8_t extraIdx) {
+  return static_cast<int8_t>(extraIdx - patchEngineExtraCount(track)) - 1;
+}
+// Ligne extra de l'effet fx (inverse de patchFxIndex()).
+uint8_t patchExtraOfFx(uint8_t track, uint8_t fx) {
+  return static_cast<uint8_t>(patchEngineExtraCount(track) + 1 + fx);
+}
+// Valeur d'une ligne extra, moteur, PRESET FX ou EFFETS.
+uint8_t &patchExtraValRef(uint8_t track, uint8_t extraIdx) {
+  if (!patchExtraIsFx(track, extraIdx)) return patchExtraVal[track][extraIdx];
+  const int8_t fx = patchFxIndex(track, extraIdx);
+  return fx < 0 ? trackFxPreset[track] : trackFxVal[track][fx];
 }
 uint8_t patchVolRow(uint8_t track) { return static_cast<uint8_t>(6 + patchExtraCount(track)); }
 uint8_t patchSlotRow(uint8_t track) { return static_cast<uint8_t>(patchVolRow(track) + 1); }
@@ -2438,7 +2579,7 @@ uint8_t patchTotalRows(uint8_t track) { return static_cast<uint8_t>(patchSlotRow
 // ligne visuelle) : centralise ici pour que les deux sens restent
 // coherents, plutot que deux implementations paralleles qui pourraient
 // diverger.
-constexpr uint8_t kPatchMaxKeptRows = 24;  // 6 fixes + 17 extra (DEXED, le pire cas) + volume, marge incluse
+constexpr uint8_t kPatchMaxKeptRows = 40;  // 6 fixes + 17 extra (DEXED) + PRESET + 14 EFFETS + volume
 uint8_t patchKeptRows(uint8_t track, uint8_t (&out)[kPatchMaxKeptRows]) {
   const uint8_t volRow = patchVolRow(track);
   uint8_t count = 0;
@@ -2581,6 +2722,10 @@ constexpr const char *kEPianoExtraLabel[12] = {
 constexpr const char *kBraidsExtraLabel[2] = {"COLOR", "TIMBRE"};
 
 const char *patchExtraLabel(uint8_t track, uint8_t extraIdx) {
+  if (patchExtraIsFx(track, extraIdx)) {
+    const int8_t fx = patchFxIndex(track, extraIdx);
+    return fx < 0 ? "PRESET FX" : kFxRowLabel[fx];
+  }
   switch (trackEngine[track]) {
     case az2::kEngineDexed: return kDexedExtraLabel[extraIdx];
     case az2::kEngineEPiano: return kEPianoExtraLabel[extraIdx];
@@ -2596,6 +2741,9 @@ const char *patchExtraLabel(uint8_t track, uint8_t extraIdx) {
 }
 
 uint8_t patchExtraMax(uint8_t track, uint8_t extraIdx) {
+  if (patchExtraIsFx(track, extraIdx)) {
+    return patchFxIndex(track, extraIdx) < 0 ? static_cast<uint8_t>(kFxPresetCount - 1) : 127;
+  }
   // EPIANO/BRAIDS : toutes leurs lignes extra sont sur l'echelle
   // 0-127 (voir EXP:/BXP: cote Teensy) -- seul DEXED a une plage
   // reelle differente par parametre (voir kDexedExtraMax, reprise des
@@ -2654,8 +2802,22 @@ void drawSamplerTrackPanel(uint8_t track) {
   }
 }
 
+void drawPatchExtraRow(uint8_t logicalRow);  // definie avec le dessin de la page PATCH
+
 void sendPatchExtra(uint8_t track, uint8_t extraIdx) {
   char msg[48];
+  if (patchExtraIsFx(track, extraIdx)) {
+    const int8_t fx = patchFxIndex(track, extraIdx);
+    if (fx < 0) {
+      // PRESET FX : charge les 14 reglages, puis redessine toute la section.
+      applyFxPreset(track, trackFxPreset[track]);
+      for (uint8_t f = 0; f < kFxRowCount; ++f) drawPatchExtraRow(static_cast<uint8_t>(6 + patchExtraOfFx(track, f)));
+      return;
+    }
+    snprintf(msg, sizeof(msg), "TFX:%d:%d:%d", track, fx, trackFxVal[track][fx]);
+    sendToTeensy(msg);
+    return;
+  }
   switch (trackEngine[track]) {
     case az2::kEngineDexed:
       snprintf(msg, sizeof(msg), "DXR:%d:%d:%d", track, kDexedExtraRaw[extraIdx], patchExtraVal[track][extraIdx]);
@@ -2722,7 +2884,7 @@ void sendPatchExtra(uint8_t track, uint8_t extraIdx) {
 // pas grave : color/timbre partent a 0 a l'affectation du moteur, une
 // valeur de depart raisonnable pour 2 reglages de couleur sonore).
 void queryPatchExtra(uint8_t track) {
-  const uint8_t count = patchExtraCount(track);
+  const uint8_t count = patchEngineExtraCount(track);
   char msg[16];
   for (uint8_t i = 0; i < count; ++i) {
     if (trackEngine[track] == az2::kEngineDexed) {
@@ -2742,6 +2904,8 @@ bool scopeRendered = false;
 bool patchUiNeedsRedraw = false;
 
 constexpr int16_t kPatchTrackRowY = 66;
+constexpr int16_t kPatchEngineBtnW = 56;
+constexpr int16_t kPatchEngineBtnX = kScreenSize - kMargin - kPatchEngineBtnW;
 constexpr int16_t kPatchScopeTop = 96;
 constexpr int16_t kPatchScopeH = 90;
 constexpr int16_t kPatchScopeW = 232;
@@ -2782,6 +2946,16 @@ void drawPatchTrackRow() {
   const int16_t textW = static_cast<int16_t>(strlen(buf) * 12);
   gfx->setCursor(static_cast<int16_t>(kScreenSize / 2 - textW / 2), kPatchTrackRowY);
   gfx->print(buf);
+  // Bouton rapide MOTEUR (2026-10-02, "changer vite fait de moteur") : passe
+  // au moteur suivant sans repasser par la page MOTEURS.
+  gfx->fillRect(kPatchEngineBtnX, kPatchTrackRowY, kPatchEngineBtnW, 22, patchAccent(t));
+  gfx->setTextColor(RGB565_BLACK);
+  gfx->setCursor(static_cast<int16_t>(kPatchEngineBtnX + 4), static_cast<int16_t>(kPatchTrackRowY + 3));
+  gfx->print("MOT>");
+}
+
+bool hitTestPatchEngineBtn(int16_t x, int16_t y) {
+  return inBox(x, y, kPatchEngineBtnX, kPatchTrackRowY, kPatchEngineBtnW, 22);
 }
 
 void keepPatchListVisible() {
@@ -3125,7 +3299,9 @@ void drawPatchExtraRow(uint8_t logicalRow) {
   gfx->drawRect(x, y, w, rowH, rowSelected ? accent : kFaint);
 
   gfx->setTextSize(1);
-  gfx->setTextColor(kDim);
+  // Section EFFETS : libelle en couleur d'accent pour la distinguer des
+  // reglages propres au moteur.
+  gfx->setTextColor(patchExtraIsFx(track, extraIdx) ? accent : kDim);
   gfx->setCursor(static_cast<int16_t>(x + 4), static_cast<int16_t>(y + 3));
   gfx->print(patchExtraLabel(track, extraIdx));
 
@@ -3142,10 +3318,21 @@ void drawPatchExtraRow(uint8_t logicalRow) {
     return;
   }
 
-  char buf[6];
-  snprintf(buf, sizeof(buf), "%3d", patchExtraVal[track][extraIdx]);
+  char buf[8];
+  int16_t valueX = static_cast<int16_t>(x + w - 34);
+  if (patchExtraIsFx(track, extraIdx)) {
+    const int8_t fx = patchFxIndex(track, extraIdx);
+    if (fx < 0) {
+      snprintf(buf, sizeof(buf), "%s", kFxPresets[trackFxPreset[track] % kFxPresetCount].name);
+    } else {
+      fxRowValueText(static_cast<uint8_t>(fx), patchExtraValRef(track, extraIdx), buf, sizeof(buf));
+    }
+    valueX = static_cast<int16_t>(x + w - 4 - 12 * static_cast<int16_t>(strlen(buf)));
+  } else {
+    snprintf(buf, sizeof(buf), "%3d", patchExtraValRef(track, extraIdx));
+  }
   gfx->setTextColor(RGB565_WHITE);
-  gfx->setCursor(static_cast<int16_t>(x + w - 34), static_cast<int16_t>(y + 3));
+  gfx->setCursor(valueX, static_cast<int16_t>(y + 3));
   gfx->print(buf);
 }
 
@@ -3968,7 +4155,7 @@ void patchApplyDelta(uint8_t t, int delta) {
     }
   } else if (selectedPatchRow >= 6) {
     const uint8_t extraIdx = static_cast<uint8_t>(selectedPatchRow - 6);
-    uint8_t &val = patchExtraVal[t][extraIdx];
+    uint8_t &val = patchExtraValRef(t, extraIdx);
     val = static_cast<uint8_t>(
         constrain(static_cast<int>(val) + delta, 0, static_cast<int>(patchExtraMax(t, extraIdx))));
     drawPatchExtraRow(static_cast<uint8_t>(selectedPatchRow));
@@ -4080,6 +4267,53 @@ void drawMixerActionBtns() {
   gfx->print("SOLO");
 }
 
+// Ligne MASTER de la page MIXER (2026-10-03) : reverb, delay et chorus du
+// bus general (FX:reverb/delay/chorus:<0-100>), jusque-la sans aucune
+// commande a l'ecran. Un toucher avance la case de 20 (0 -> 100 -> 0).
+constexpr int16_t kMixerMasterY = kMixerBtnY + kMixerBtnH + 4;
+constexpr int16_t kMixerMasterH = kScreenSize - kMixerMasterY - 4;
+constexpr int16_t kMixerMasterLabelW = 84;
+constexpr int16_t kMixerMasterCellW = (kScreenSize - 2 * kMargin - kMixerMasterLabelW) / 3;
+constexpr const char *kMasterFxName[3] = {"REV", "DLY", "CHO"};
+constexpr const char *kMasterFxCmd[3] = {"reverb", "delay", "chorus"};
+uint8_t masterFxVal[3] = {};  // 0-100, miroir de reverbWet/delayWet/chorusWet
+
+void drawMixerMasterRow() {
+  gfx->fillRect(kMargin, kMixerMasterY, kScreenSize - 2 * kMargin, kMixerMasterH, RGB565_BLACK);
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(kMargin, static_cast<int16_t>(kMixerMasterY + kMixerMasterH / 2 - 4));
+  gfx->print("MASTER");
+  for (uint8_t i = 0; i < 3; ++i) {
+    const int16_t x = static_cast<int16_t>(kMargin + kMixerMasterLabelW + i * kMixerMasterCellW);
+    const uint16_t color = kPalette[(i + 2) % kPaletteCount];
+    const int16_t fillW = static_cast<int16_t>(((kMixerMasterCellW - 6) * masterFxVal[i]) / 100);
+    gfx->drawRect(x, kMixerMasterY, kMixerMasterCellW - 4, kMixerMasterH, color);
+    if (fillW > 0) gfx->fillRect(x + 1, kMixerMasterY + kMixerMasterH - 5, fillW, 4, color);
+    char buf[12];
+    snprintf(buf, sizeof(buf), "%s %3u", kMasterFxName[i], masterFxVal[i]);
+    gfx->setTextSize(2);
+    gfx->setTextColor(color);
+    gfx->setCursor(static_cast<int16_t>(x + 6), static_cast<int16_t>(kMixerMasterY + 4));
+    gfx->print(buf);
+  }
+}
+
+// Case MASTER touchee (0-2), -1 sinon.
+int8_t hitTestMixerMaster(int16_t x, int16_t y) {
+  if (y < kMixerMasterY || y >= kMixerMasterY + kMixerMasterH) return -1;
+  const int16_t rel = static_cast<int16_t>(x - kMargin - kMixerMasterLabelW);
+  if (rel < 0) return -1;
+  const int cell = rel / kMixerMasterCellW;
+  return cell < 3 ? static_cast<int8_t>(cell) : -1;
+}
+
+void sendMasterFx(uint8_t i) {
+  char msg[24];
+  snprintf(msg, sizeof(msg), "FX:%s:%u", kMasterFxCmd[i], masterFxVal[i]);
+  sendToTeensy(msg);
+}
+
 bool hitTestMixerMute(int16_t x, int16_t y) {
   return inBox(x, y, kMixerMuteX, kMixerBtnY, kMixerBtnW, kMixerBtnH);
 }
@@ -4113,6 +4347,7 @@ void drawMixerPage() {
     drawMixerTrack(t);
   }
   drawMixerActionBtns();
+  drawMixerMasterRow();
 }
 
 bool hitTestMixerTrack(int16_t x, int16_t y, uint8_t &track) {
@@ -5378,6 +5613,16 @@ void saveProject(uint8_t slot) {
                trackReso[t], trackAttack[t], trackDecay[t], trackSustain[t], trackRelease[t], trackAlgo[t],
                trackFeedback[t], trackVolume[t], trackMuted[t] ? 1 : 0);
     }
+    // Bus general (2026-10-03) : reverb, delay, chorus 0-100.
+    f.printf("MASTERFX:%u,%u,%u\n", masterFxVal[0], masterFxVal[1], masterFxVal[2]);
+    // Section EFFETS par piste (2026-10-02) -- ligne ignoree par les
+    // anciens firmwares (validateur et chargeur ne lisent que les cles
+    // connues).
+    for (uint8_t t = 0; t < kSeqTrackCount; ++t) {
+      f.printf("TFX:%d", t);
+      for (uint8_t fx = 0; fx < kFxRowCount; ++fx) f.printf(",%d", trackFxVal[t][fx]);
+      f.printf("\n");
+    }
     // Kit de batterie / echantillons assignes aux pads (2026-09-19, "il
     // faut pouvoir aussi les sauvegarder dans le projet global") --
     // seulement les pads REELLEMENT assignes (padSamplePath[pad][0] !=
@@ -5559,7 +5804,7 @@ bool projectStructureValid(File &f) {
       }
       const int p = values[0], t = values[1], s = values[2];
       if (p >= kPatternCount || t >= kSeqTrackCount || s >= kSeqStepCount || seenStep[p][t][s] ||
-          values[3] > 1 || values[4] > 127 || values[6] > 3 ||
+          values[3] > 1 || values[4] > 127 || values[6] >= kStepFxCount ||
           (count == 10 && values[8] > 100)) {
         valid = false;
         continue;
@@ -5725,6 +5970,35 @@ void loadProject(uint8_t slot) {
         }
         if (idx >= 13) {
           snprintf(msg, sizeof(msg), "MUTE:%d:%d", t, vals[12]);
+          sendToTeensy(msg);
+        }
+      }
+    } else if (line.startsWith("MASTERFX:")) {
+      const String rest = afterColon(line);
+      int start = 0;
+      for (uint8_t i = 0; i < 3; ++i) {
+        int end = rest.indexOf(',', start);
+        if (end < 0) end = rest.length();
+        masterFxVal[i] = static_cast<uint8_t>(constrain(rest.substring(start, end).toInt(), 0, 100));
+        sendMasterFx(i);
+        start = end + 1;
+      }
+    } else if (line.startsWith("TFX:")) {
+      int vals[1 + kFxRowCount] = {};
+      int idx = 0, start = 0;
+      const String rest = afterColon(line);
+      for (int i = 0; i <= rest.length() && idx < 1 + kFxRowCount; ++i) {
+        if (i == rest.length() || rest.charAt(i) == ',') {
+          vals[idx++] = rest.substring(start, i).toInt();
+          start = i + 1;
+        }
+      }
+      // 7 valeurs (premiere version) ou 14 : les effets absents gardent
+      // leur valeur par defaut.
+      if (idx >= 8 && vals[0] >= 0 && vals[0] < kSeqTrackCount) {
+        for (uint8_t fx = 0; fx < idx - 1; ++fx) {
+          trackFxVal[vals[0]][fx] = static_cast<uint8_t>(constrain(vals[1 + fx], 0, 127));
+          snprintf(msg, sizeof(msg), "TFX:%d:%d:%d", vals[0], fx, trackFxVal[vals[0]][fx]);
           sendToTeensy(msg);
         }
       }
@@ -6189,6 +6463,86 @@ void gbSettingsMenuBack() {
 // ---------------------------------------------------------------------
 String teensyLine;
 
+// ---------------------------------------------------------------------
+// Mode EFFETS rapide a l'encodeur 3 (2026-10-03) -- bouton de l'encodeur 3 :
+// ouvre le mode puis passe a l'effet suivant ; rotation = valeur. Agit sur la
+// piste selectionnee de la page en cours. Pendant le mode, l'encodeur 3
+// (TURN: et POT:) est reserve ; l'encodeur 2 garde TOUJOURS ses fonctions
+// (pad virtuel, arpegiateur...). Se ferme seul apres kFxQuickTimeoutMs sans
+// geste. Pas en jeu (START), ni sur AUDIO, ni sur PATCH (le bouton y choisit
+// le point ADSR et les effets y ont deja leurs lignes).
+bool fxQuickActive = false;
+uint8_t fxQuickIndex = 0;
+uint32_t fxQuickLastMs = 0;
+constexpr uint32_t kFxQuickTimeoutMs = 4000;
+constexpr int16_t kFxQuickToastY = kScreenSize - 26;
+constexpr int16_t kFxQuickToastH = 26;
+
+uint8_t fxContextTrack() {
+  switch (currentScreen) {
+    case Screen::Patch: return static_cast<uint8_t>(patchTrack);
+    case Screen::Engines: return static_cast<uint8_t>(selectedEngineTrack);
+    default: return selectedSeqTrack >= 0 ? static_cast<uint8_t>(selectedSeqTrack) : 0;
+  }
+}
+
+bool fxQuickAllowed() {
+  if (screensaverActive || currentScreen == Screen::Audio || currentScreen == Screen::Patch) return false;
+  if (currentScreen == Screen::Retro && gbIsLoaded()) return false;
+#ifdef AZ2_NES_ENABLED
+  if (currentScreen == Screen::NesRetro && nesIsLoaded()) return false;
+#endif
+  return true;
+}
+
+// fxQuickIndex : 0 = PRESET, 1..kFxRowCount = effet (fxQuickIndex - 1).
+constexpr uint8_t kFxQuickCount = 1 + kFxRowCount;
+
+void drawFxQuickToast() {
+  const uint8_t t = fxContextTrack();
+  const bool preset = fxQuickIndex == 0;
+  const uint8_t fx = preset ? 0 : static_cast<uint8_t>(fxQuickIndex - 1);
+  const uint8_t v = preset ? static_cast<uint8_t>((trackFxPreset[t] * 127) / (kFxPresetCount - 1))
+                           : trackFxVal[t][fx];
+  const uint16_t accent = patchAccent(t);
+  gfx->fillRect(0, kFxQuickToastY, kScreenSize, kFxQuickToastH, RGB565_BLACK);
+  const int16_t barW = static_cast<int16_t>((static_cast<int32_t>(v) * (kScreenSize - 2 * kMargin)) / 127);
+  gfx->fillRect(kMargin, static_cast<int16_t>(kFxQuickToastY + kFxQuickToastH - 4), barW, 3, accent);
+  gfx->drawRect(0, kFxQuickToastY, kScreenSize, kFxQuickToastH, accent);
+  char value[8];
+  if (preset) {
+    snprintf(value, sizeof(value), "%s", kFxPresets[trackFxPreset[t] % kFxPresetCount].name);
+  } else {
+    fxRowValueText(fx, v, value, sizeof(value));
+  }
+  char text[40];
+  snprintf(text, sizeof(text), "P%u  %s  %s", t + 1, preset ? "PRESET" : kFxRowLabel[fx], value);
+  gfx->setTextSize(2);
+  gfx->setTextColor(accent);
+  gfx->setCursor(kMargin, static_cast<int16_t>(kFxQuickToastY + 4));
+  gfx->print(text);
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(static_cast<int16_t>(kScreenSize - kMargin - 132), static_cast<int16_t>(kFxQuickToastY + 9));
+  gfx->print("ENC3: clic effet, tourner");
+}
+
+void fxQuickSetValue(int delta) {
+  const uint8_t t = fxContextTrack();
+  if (fxQuickIndex == 0) {
+    // PRESET : un cran = preset suivant/precedent, charge aussitot.
+    const int next = (trackFxPreset[t] + (delta > 0 ? 1 : kFxPresetCount - 1)) % kFxPresetCount;
+    applyFxPreset(t, static_cast<uint8_t>(next));
+    return;
+  }
+  const uint8_t fxIdx = static_cast<uint8_t>(fxQuickIndex - 1);
+  uint8_t &val = trackFxVal[t][fxIdx];
+  val = static_cast<uint8_t>(constrain(static_cast<int>(val) + delta, 0, 127));
+  char msg[24];
+  snprintf(msg, sizeof(msg), "TFX:%d:%d:%d", t, fxIdx, val);
+  sendToTeensy(msg);
+}
+
 void handleTeensyLine(const String &line) {
   if (line == az2::kGbAudioV2Ready) {
     gbSetAudioV2Ready(true);
@@ -6279,6 +6633,31 @@ void handleTeensyLine(const String &line) {
 
       if (index >= 0) {
         navState[index] = pressed;
+        // [2026-10-02] SEQ. PAS : A maintenu + HAUT/BAS change la hauteur de
+        // la note au curseur (geste du tracker classique, jamais cable ici) ;
+        // HAUT/BAS seuls changent de piste.
+        if (pressed && currentScreen == Screen::StepSeq && (index == 0 || index == 1)) {
+          if (btnState[0]) {
+            const uint8_t track = static_cast<uint8_t>(selectedSeqTrack);
+            const uint8_t step = static_cast<uint8_t>(selectedSeqStep);
+            const uint8_t newNote = nextNoteInScale(seqStepNote[currentPattern][track][step],
+                                                     static_cast<int8_t>(index == 0 ? 1 : -1));
+            seqStepNote[currentPattern][track][step] = newNote;
+            char msg[20];
+            snprintf(msg, sizeof(msg), "NOTE:%d:%d:%d", track, step, newNote);
+            sendToTeensy(msg);
+            if (!seqStepOn[currentPattern][track][step]) {
+              seqStepOn[currentPattern][track][step] = true;
+              snprintf(msg, sizeof(msg), "STEP:%d:%d:1", track, step);
+              sendToTeensy(msg);
+            }
+            stepSeqAEdited = true;
+          } else {
+            selectedSeqTrack = static_cast<int8_t>(
+                (selectedSeqTrack + (index == 1 ? 1 : kSeqTrackCount - 1)) % kSeqTrackCount);
+          }
+          drawStepSeqPage();
+        }
         if (pressed && currentScreen == Screen::StepSeq && (index == 2 || index == 3)) {
           // GAUCHE/DROITE deplace le curseur de pas sur toute la longueur
           // reelle du pattern (pas seulement la fenetre de 32 affichee) --
@@ -6658,7 +7037,11 @@ void handleTeensyLine(const String &line) {
                   break;
                 }
                 case 3: {
-                  const int newVal = constrain(static_cast<int>(seqStepFxVal[currentPattern][t][s]) + dir, 0, 255);
+                  // Verrous de parametre (DRIVE..DMIX) : 0-127 par pas de 8.
+                  const bool lockFx = seqStepFx[currentPattern][t][s] >= kFirstStepLockFx;
+                  const int newVal = lockFx
+                      ? constrain(static_cast<int>(seqStepFxVal[currentPattern][t][s]) + dir * 8, 0, 127)
+                      : constrain(static_cast<int>(seqStepFxVal[currentPattern][t][s]) + dir, 0, 255);
                   snprintf(msg, sizeof(msg), "SFX:%d:%d:%d:%d", t, s, seqStepFx[currentPattern][t][s], newVal);
                   sendToTeensy(msg);
                   break;
@@ -7124,10 +7507,13 @@ void handleTeensyLine(const String &line) {
         // (2026-09-26), meme transport.
         sendToTeensy(seqPlaying ? az2::kStop : az2::kPlay);
       } else if (pressed && letter == 'A' && currentScreen == Screen::StepSeq) {
+        stepSeqAEdited = false;  // la bascule se decide au relachement
+      } else if (!pressed && letter == 'A' && currentScreen == Screen::StepSeq && !stepSeqAEdited) {
         // [2026-09-26] Bascule ON/OFF du pas au curseur -- meme message
         // que le tracker classique (STEP:piste:pas:0/1, voir
         // hitTestDetailRow()), juste declenche par A ici au lieu du
-        // double-toucher.
+        // double-toucher. [2026-10-02] Au RELACHEMENT de A, et seulement si A
+        // n'a pas servi a changer la note (A + HAUT/BAS, voir NAV:).
         const uint8_t track = static_cast<uint8_t>(selectedSeqTrack);
         const uint8_t step = static_cast<uint8_t>(selectedSeqStep);
         const bool newState = !seqStepOn[currentPattern][track][step];
@@ -7266,6 +7652,14 @@ void handleTeensyLine(const String &line) {
     if (i1 >= 0 && i2 >= 0) {
       const uint8_t index = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
       const int direction = line.substring(i2 + 1).toInt();
+      if (fxQuickActive && index == 2) {
+        if (direction != 0) {
+          fxQuickSetValue(direction > 0 ? 4 : -4);
+          fxQuickLastMs = millis();
+          drawFxQuickToast();
+        }
+        return;
+      }
       if (currentScreen == Screen::Audio && padMenuOpen && index == 1 && direction != 0) {
         padMenuIndex = static_cast<uint8_t>(
             (padMenuIndex + (direction > 0 ? 1 : kPadMenuCount - 1)) % kPadMenuCount);
@@ -7318,6 +7712,9 @@ void handleTeensyLine(const String &line) {
     if (firstColon >= 0 && secondColon >= 0) {
       const uint8_t index = static_cast<uint8_t>(line.substring(firstColon + 1, secondColon).toInt());
       const uint8_t value = static_cast<uint8_t>(line.substring(secondColon + 1).toInt());
+      if (fxQuickActive && index == 2) {
+        return;  // encodeur 3 reserve au mode EFFETS (voir fxQuickActive)
+      }
       if (index < 3) {
         potValue[index] = value;
         if (currentScreen == Screen::Controls && !screensaverActive) {
@@ -7466,6 +7863,18 @@ void handleTeensyLine(const String &line) {
         }
         encSwState[index] = pressed;
         if (pressed) encPressStartedMs[index] = millis();
+        if (index == 2 && fxQuickAllowed()) {
+          // Bouton de l'encodeur 3 = mode EFFETS (voir fxQuickActive).
+          if (pressed) {
+            if (fxQuickActive) {
+              fxQuickIndex = static_cast<uint8_t>((fxQuickIndex + 1) % kFxQuickCount);
+            }
+            fxQuickActive = true;
+            fxQuickLastMs = millis();
+            drawFxQuickToast();
+          }
+          return;
+        }
         if (currentScreen == Screen::Controls && !screensaverActive) {
           drawPotBar(index);
         }
@@ -7610,6 +8019,18 @@ void handleTeensyLine(const String &line) {
         if (currentScreen == Screen::Sequencer && track == selectedSeqTrack && !screensaverActive) {
           drawDetailRow(step);
         }
+      }
+    }
+  } else if (line.startsWith("TFX:")) {
+    const int i1 = line.indexOf(':');
+    const int i2 = line.indexOf(':', i1 + 1);
+    const int i3 = line.indexOf(':', i2 + 1);
+    if (i1 >= 0 && i2 >= 0 && i3 >= 0) {
+      const int track = line.substring(i1 + 1, i2).toInt();
+      const int fx = line.substring(i2 + 1, i3).toInt();
+      const int value = line.substring(i3 + 1).toInt();
+      if (track >= 0 && track < kSeqTrackCount && fx >= 0 && fx < kFxRowCount && value >= 0 && value <= 127) {
+        trackFxVal[track][fx] = static_cast<uint8_t>(value);
       }
     }
   } else if (line.startsWith("SFX:")) {
@@ -9217,7 +9638,13 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
     // deplace aussi le focus croix sur la ligne PISTE (patchOnTrackRow),
     // meme reflexe que hitTestEngTrackPrev/Next sur la page MOTEURS.
     const uint8_t t = static_cast<uint8_t>(patchTrack);
-    if (hitTestPatchTrackPrev(x, y) || hitTestPatchTrackNext(x, y)) {
+    if (hitTestPatchEngineBtn(x, y)) {
+      // Moteur suivant (boucle). L'echo ENGINE: du Teensy redessine la page
+      // (patches du nouveau moteur, lignes moteur ; section EFFETS conservee).
+      char msg[16];
+      snprintf(msg, sizeof(msg), "ENGINE:%d:%d", t, (trackEngine[t] + 1) % az2::kEngineCount);
+      sendToTeensy(msg);
+    } else if (hitTestPatchTrackPrev(x, y) || hitTestPatchTrackNext(x, y)) {
       patchTrack = static_cast<int8_t>((patchTrack + (hitTestPatchTrackNext(x, y) ? 1 : kSeqTrackCount - 1)) %
                                         kSeqTrackCount);
       scopeHasData = false;
@@ -9276,6 +9703,11 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
     if (hitTestMixerTrack(x, y, track)) {
       selectedMixerTrack = static_cast<int8_t>(track);
       drawMixerPage();
+    } else if (hitTestMixerMaster(x, y) >= 0) {
+      const uint8_t i = static_cast<uint8_t>(hitTestMixerMaster(x, y));
+      masterFxVal[i] = static_cast<uint8_t>(masterFxVal[i] >= 100 ? 0 : masterFxVal[i] + 20);
+      sendMasterFx(i);
+      drawMixerMasterRow();
     } else if (hitTestMixerMute(x, y)) {
       // Boutons MUTE/SOLO tactiles (2026-09-19, "il faut que les 2
       // controles soit[ent] boutons tactil[es]") -- meme action que
@@ -9593,6 +10025,10 @@ void loop() {
   // Efface le temoin de potard (voir drawPotToast()) apres son delai --
   // relance un rendu complet de la page courante plutot que de retenir
   // ce qu'il y avait sous la bande, plus simple/robuste.
+  if (fxQuickActive && (nowForIdle - fxQuickLastMs) >= kFxQuickTimeoutMs) {
+    fxQuickActive = false;
+    if (!screensaverActive) drawScreen(currentScreen);  // efface le bandeau
+  }
   if (!gbGameActive && potToastActive && (nowForIdle - potToastLastMs) >= kPotToastTimeoutMs) {
     potToastActive = false;
     if (!screensaverActive) {
@@ -9604,7 +10040,7 @@ void loop() {
       (nowForIdle - engineAnimLastMs) >= 80U) {
     engineAnimLastMs = nowForIdle;
     ++engineAnimFrame;
-    drawEngVisualizer();
+    drawEngVisualizerIcon();  // seule l icone est animee, voir drawEngVisualizer()
   }
 
   // Emulateur Game Boy : une frame dure exactement 70224 cycles a
