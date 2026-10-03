@@ -1186,7 +1186,10 @@ bool songMode = false;
 // la grille ET la vue detail, demande le 2026-09-15 ("on met de la
 // couleur, des effets"). kDim pour "aucun effet" (index 0). Doit rester
 // alignee avec StepFx cote Teensy (None/Arp/Cut/Retrig).
-const uint16_t kStepFxColors[] = {kDim, kPalette[1], kPalette[2], kPalette[3], kPalette[4], kPalette[0]};
+const uint16_t kStepFxColors[] = {kDim, kPalette[1], kPalette[2], kPalette[3], kPalette[4], kPalette[0],
+                                  RGB565(255, 120, 40), RGB565(120, 220, 255), RGB565(170, 140, 255),
+                                  RGB565(255, 230, 90), RGB565(255, 110, 180), RGB565(90, 255, 170),
+                                  RGB565(200, 200, 200)};
 uint8_t seqCurrentStep = 0;
 bool seqPlaying = false;
 bool seqRecording = false;
@@ -1271,8 +1274,15 @@ const char *const kNoteNames[12] = {"C-", "C#", "D-", "D#", "E-", "F-", "F#", "G
 // jusque-la sans aucun acces UI, rejoignent ARP/CUT/RET dans la meme
 // colonne FX -- VAL devient un numero de patch pour ces deux-la (voir
 // kCrushPresets[]/kDelayPresets[] cote Teensy), pas une valeur brute.
-const char *const kStepFxNames[] = {"---", "ARP", "CUT", "RET", "CRUSH", "DELAY"};
+// 6-12 (2026-10-02) : verrous de parametre par pas, valeur 0-127 qui
+// remplace le reglage EFFETS de la piste le temps du pas (voir
+// serviceStepLocks() cote Teensy). Ordre = enum StepFx de sequencer.h.
+const char *const kStepFxNames[] = {"---", "ARP", "CUT", "RET", "CRUSH", "DELAY",
+                                    "DRIVE", "WAH", "REVRB", "RING", "TREM", "FLANG", "DMIX"};
+constexpr uint8_t kFirstStepLockFx = 6;
 constexpr uint8_t kStepFxCount = sizeof(kStepFxNames) / sizeof(kStepFxNames[0]);
+static_assert(sizeof(kStepFxColors) / sizeof(kStepFxColors[0]) == kStepFxCount,
+              "une couleur par effet de pas");
 
 void formatNoteName(uint8_t note, char *out, size_t outSize) {
   const int octave = static_cast<int>(note) / 12 - 1;  // note 60 = C4, convention M8/LSDJ
@@ -6823,7 +6833,11 @@ void handleTeensyLine(const String &line) {
                   break;
                 }
                 case 3: {
-                  const int newVal = constrain(static_cast<int>(seqStepFxVal[currentPattern][t][s]) + dir, 0, 255);
+                  // Verrous de parametre (DRIVE..DMIX) : 0-127 par pas de 8.
+                  const bool lockFx = seqStepFx[currentPattern][t][s] >= kFirstStepLockFx;
+                  const int newVal = lockFx
+                      ? constrain(static_cast<int>(seqStepFxVal[currentPattern][t][s]) + dir * 8, 0, 127)
+                      : constrain(static_cast<int>(seqStepFxVal[currentPattern][t][s]) + dir, 0, 255);
                   snprintf(msg, sizeof(msg), "SFX:%d:%d:%d:%d", t, s, seqStepFx[currentPattern][t][s], newVal);
                   sendToTeensy(msg);
                   break;

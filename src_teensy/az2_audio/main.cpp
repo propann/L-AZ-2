@@ -769,6 +769,11 @@ float patchLevelTrim(uint8_t track) {
   return static_cast<float>(code) / 32.0f;
 }
 
+// Verrous de parametre par pas (voir serviceStepLocks()) : appeles par
+// l'ISR du sequenceur et par PANIC/STOP, definis avec la section EFFETS.
+void requestStepLock(uint8_t track, uint8_t fx, uint8_t value);
+void releaseAllStepLocks();
+
 void applyGroupGainNow(uint8_t track) {
   const float trim = kEngineLevelTrim[trackEngine[track] % az2::kEngineCount] * patchLevelTrim(track);
   float g;
@@ -1851,7 +1856,7 @@ void sendCommandError(const char *command, const char *reason) {
 // piste ; stocke/transmis mais PAS ENCORE applique en temps reel, voir
 // note dans triggerStepFx()/advanceTick() plus bas -- changer un patch
 // Dexed coute trop cher pour une ISR), FX+VAL (stepFx/stepFxVal).
-constexpr uint8_t kStepFxCount = 6;  // kStepFxNone..kStepFxDelay
+constexpr uint8_t kStepFxCount = 13;  // kStepFxNone..kStepFxDlyMix (voir sequencer.h)
 
 // Presets CRUSH/DELAY (2026-09-23, voir StepFx dans sequencer.h) : la
 // colonne VAL du tracker devient un NUMERO DE PATCH pour ces deux effets
@@ -2225,6 +2230,7 @@ void panicAllAudio() {
   liveVoice.panic();
   for (uint8_t pad = 0; pad < az2::kPadCount; ++pad)
     padSampler[pad].stopNow();
+  releaseAllStepLocks();  // repose les reglages EFFETS verrouilles par des pas
   // PANIC remet aussi le chemin audio GB a zero (anneau, interpolateur) :
   // c'etait le seul etat audio que rien ne savait vider avant un power-cycle.
   gbAudioResetStream();
@@ -2357,6 +2363,10 @@ void advanceTick() {
         } else if (tr.activeFx == kStepFxDelay) {
           applyDelayPreset(t, tr.activeFxVal);
         }
+        // Verrou de parametre : JAMAIS applique ici (ISR) -- le drive
+        // realloue sa table, le filtre se rebranche. On note la demande,
+        // serviceStepLocks() l'applique dans loop() (< 1 ms plus tard).
+        requestStepLock(t, tr.activeFx, tr.activeFxVal);
       } else {
         tr.stepPlaying = false;
         tr.activeFx = kStepFxNone;
@@ -2423,6 +2433,7 @@ void stopSequencer() {
   playing = false;
   sequencerTimer.end();
   allTrackNotesOff();
+  releaseAllStepLocks();  // la piste retrouve ses reglages EFFETS
 }
 
 // STEP:<piste 0-3>:<pas 0-15>:<0 ou 1>
@@ -3186,6 +3197,68 @@ void applyTrackFx(uint8_t track, uint8_t param) {
   }
 }
 
+// ---------------------------------------------------------------------
+// Verrous de parametre par pas (2026-10-02). Ecrits par l'ISR du sequenceur
+// (requestStepLock), appliques dans loop() (serviceStepLocks). Un verrou
+// remplace temporairement trackFxVal[t][param] ; la valeur d'origine est
+// gardee dans stepLockSaved[] et reposee au declenchement suivant sans
+// verrou, a l'arret du sequenceur et sur PANIC.
+constexpr uint8_t kNoLock = 0xFF;
+volatile uint8_t stepLockReqParam[kTrackCount];
+volatile uint8_t stepLockReqVal[kTrackCount];
+volatile bool stepLockReqDirty[kTrackCount];
+uint8_t stepLockActive[kTrackCount];
+uint8_t stepLockSaved[kTrackCount];
+
+uint8_t stepLockParamForFx(uint8_t fx) {
+  switch (fx) {
+    case az2::kStepFxDrive: return 0;
+    case az2::kStepFxLfo: return 3;
+    case az2::kStepFxReverb: return 11;
+    case az2::kStepFxRing: return 9;
+    case az2::kStepFxTremolo: return 8;
+    case az2::kStepFxFlanger: return 10;
+    case az2::kStepFxDlyMix: return 6;
+    default: return kNoLock;
+  }
+}
+
+void requestStepLock(uint8_t track, uint8_t fx, uint8_t value) {
+  stepLockReqParam[track] = stepLockParamForFx(fx);
+  stepLockReqVal[track] = value > 127 ? 127 : value;
+  stepLockReqDirty[track] = true;
+}
+
+void releaseAllStepLocks() {
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    stepLockReqParam[t] = kNoLock;
+    stepLockReqDirty[t] = true;
+  }
+}
+
+void serviceStepLocks() {
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    if (!stepLockReqDirty[t]) continue;
+    noInterrupts();
+    const uint8_t param = stepLockReqParam[t];
+    const uint8_t value = stepLockReqVal[t];
+    stepLockReqDirty[t] = false;
+    interrupts();
+    const uint8_t active = stepLockActive[t];
+    if (active != kNoLock && active != param) {
+      trackFxVal[t][active] = stepLockSaved[t];
+      applyTrackFx(t, active);
+      stepLockActive[t] = kNoLock;
+    }
+    if (param != kNoLock) {
+      if (stepLockActive[t] != param) stepLockSaved[t] = trackFxVal[t][param];
+      trackFxVal[t][param] = value;
+      applyTrackFx(t, param);
+      stepLockActive[t] = param;
+    }
+  }
+}
+
 // Changement de tempo : recalcule tout ce qui est synchronise.
 void resyncTrackFxTempo() {
   for (uint8_t t = 0; t < kTrackCount; ++t) {
@@ -3209,8 +3282,14 @@ void handleTrackFxCommand(const String &line) {
     sendCommandError("TFX", "OUT_OF_RANGE");
     return;
   }
-  trackFxVal[track][param] = static_cast<uint8_t>(value);
-  applyTrackFx(static_cast<uint8_t>(track), static_cast<uint8_t>(param));
+  if (stepLockActive[track] == param) {
+    // Parametre verrouille par le pas en cours : on change la valeur de
+    // base, reposee a la fin du verrou.
+    stepLockSaved[track] = static_cast<uint8_t>(value);
+  } else {
+    trackFxVal[track][param] = static_cast<uint8_t>(value);
+    applyTrackFx(static_cast<uint8_t>(track), static_cast<uint8_t>(param));
+  }
   relayLine(line);
 }
 
@@ -5257,6 +5336,9 @@ void setup() {
     trackModOsc[t].begin(WAVEFORM_SINE);
     trackFlange[t].begin(trackFlangeLine[t], kFlangeDelayLength, FLANGE_DELAY_PASSTHRU, 0, 0.0f);
     for (uint8_t fx = 0; fx < kTrackFxParamCount; ++fx) applyTrackFx(t, fx);
+    stepLockActive[t] = kNoLock;
+    stepLockReqParam[t] = kNoLock;
+    stepLockReqDirty[t] = false;
   }
 
   loadDexedPatch(liveVoice, 0);  // "FM-Rhodes" plutot qu'un init_voice vide
@@ -5327,6 +5409,7 @@ void setup() {
 
 void loop() {
   readSerialCommands();
+  serviceStepLocks();
 #ifdef AZ2_EXTERNAL_RACK
   serviceRackReplies();
   serviceGranularSampleTransfer();
