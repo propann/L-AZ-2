@@ -815,8 +815,17 @@ void drawAudioCell(uint8_t pad, bool pressed) {
 bool padEditsStep = false;
 bool padMenuOpen = false;
 uint8_t padMenuIndex = 0;
-constexpr uint8_t kPadMenuCount = 5;
-const char *const kPadMenuItems[kPadMenuCount] = {"JEU LIBRE", "EDITER LE PAS", "SAMPLER", "MOTEURS", "SEQUENCEUR"};
+// Menu de l'encodeur 2 sur la page AUDIO (2026-10-03) : TOUS les reglages du
+// pad 4x4 sont ici pour laisser l'ecran entier aux pads. Lignes 0-6 =
+// reglages (un clic change la valeur, le menu reste ouvert), 7-10 = pages.
+constexpr uint8_t kPadMenuCount = 11;
+// Etat de l'arpegiateur (miroir de ARP: cote Teensy).
+uint8_t padArpMode = 0;    // 0 OFF, 1 montant, 2 descendant, 3 aller-retour, 4 aleatoire
+uint8_t padArpRate = 1;    // 0 1/8, 1 1/16, 2 1/32, 3 1/8T, 4 1/16T
+uint8_t padArpOctaves = 1;
+constexpr uint8_t kPadTrackCount = 8;  // = kSeqTrackCount, verifie par static_assert plus bas
+constexpr const char *kPadArpModeName[5] = {"OFF", "MONTANT", "DESCENDANT", "ALLER-RETOUR", "ALEATOIRE"};
+constexpr const char *kPadArpRateName[5] = {"1/8", "1/16", "1/32", "1/8T", "1/16T"};
 uint32_t encPressStartedMs[3] = {};
 constexpr uint32_t kEncoderLongPressMs = 700;
 // -1 = generique (voix live Dexed fixe, comportement d'origine) ; sinon
@@ -840,6 +849,34 @@ char padSamplePath[az2::kPadCount][64] = {};
 extern int8_t selectedSeqTrack;  // definie plus bas, avec le reste de l'etat du sequenceur
 extern int8_t selectedSeqStep;
 
+extern bool metronomeOn;   // definis plus bas avec l'etat du sequenceur
+extern bool seqRecording;
+extern bool seqPlaying;
+extern uint8_t trackEngine[];
+void sendToTeensy(const String &message);
+
+// Rappel discret de l'etat du pad dans la bande libre au-dessus de la grille
+// (y 12-26) : piste, mode, arpegiateur, metronome, enregistrement.
+void drawPadStatus() {
+  gfx->fillRect(0, 11, kScreenSize, kGridTop - 12, RGB565_BLACK);
+  char line[80];
+  char target[20];
+  if (padTargetTrack >= 0) {
+    snprintf(target, sizeof(target), "PISTE %d %s", padTargetTrack + 1,
+             az2::engineName(trackEngine[padTargetTrack]));
+  } else {
+    snprintf(target, sizeof(target), "VOIX LIVE");
+  }
+  snprintf(line, sizeof(line), "%s | %s | ARP %s%s%s | ENC2: menu", target,
+           padEditsStep ? "POSE SUR PAS" : "LIBRE",
+           padArpMode ? kPadArpRateName[padArpRate] : "OFF",
+           metronomeOn ? " | METRO" : "", seqRecording ? " | REC" : "");
+  gfx->setTextSize(1);
+  gfx->setTextColor(seqRecording ? RGB565_RED : kDim);
+  gfx->setCursor(kGridLeft, 15);
+  gfx->print(line);
+}
+
 void drawAudioPage() {
   gfx->fillScreen(RGB565_BLACK);
   for (uint8_t pad = 0; pad < az2::kPadCount; ++pad) {
@@ -847,55 +884,110 @@ void drawAudioPage() {
   }
   heldAudioPad[0] = -1;
   heldAudioPad[1] = -1;
+  drawPadStatus();
+}
+
+void sendPadArp() {
+  char msg[24];
+  snprintf(msg, sizeof(msg), "ARP:%u:%u:%u", padArpMode, padArpRate, padArpOctaves);
+  sendToTeensy(msg);
+}
+
+// Libelle courant d'une ligne du menu (valeurs incluses).
+void padMenuLabel(uint8_t i, char *out, size_t size) {
+  switch (i) {
+    case 0: snprintf(out, size, "MODE : %s", padEditsStep ? "POSE SUR LE PAS" : "JEU LIBRE"); break;
+    case 1:
+      if (padTargetTrack >= 0) {
+        snprintf(out, size, "PISTE : %d  (%s)", padTargetTrack + 1, az2::engineName(trackEngine[padTargetTrack]));
+      } else {
+        snprintf(out, size, "PISTE : VOIX LIVE");
+      }
+      break;
+    case 2: snprintf(out, size, "ARP : %s", kPadArpModeName[padArpMode]); break;
+    case 3: snprintf(out, size, "ARP VITESSE : %s", kPadArpRateName[padArpRate]); break;
+    case 4: snprintf(out, size, "ARP OCTAVES : %u", padArpOctaves); break;
+    case 5: snprintf(out, size, "METRONOME : %s", metronomeOn ? "ON" : "OFF"); break;
+    case 6: snprintf(out, size, "ENREGISTREMENT : %s", seqRecording ? "ON" : "OFF"); break;
+    case 7: snprintf(out, size, "SAMPLER (kit des pads) >"); break;
+    case 8: snprintf(out, size, "MOTEURS >"); break;
+    case 9: snprintf(out, size, "SEQUENCEUR >"); break;
+    default: snprintf(out, size, "FERMER"); break;
+  }
 }
 
 void drawPadMenu() {
-  constexpr int16_t x = 54;
-  constexpr int16_t y = 62;
-  constexpr int16_t w = 372;
-  constexpr int16_t h = 350;
+  constexpr int16_t x = 40;
+  constexpr int16_t y = 40;
+  constexpr int16_t w = 400;
+  constexpr int16_t h = 400;
+  constexpr int16_t rowH = 30;
   gfx->fillRect(x, y, w, h, RGB565_BLACK);
   gfx->drawRect(x, y, w, h, kPalette[2]);
   gfx->setTextSize(2);
   gfx->setTextColor(kPalette[2]);
-  gfx->setCursor(x + 18, y + 18);
+  gfx->setCursor(x + 16, y + 12);
   gfx->print("PAD 4X4");
-  gfx->setTextSize(1);
   for (uint8_t i = 0; i < kPadMenuCount; ++i) {
-    const int16_t rowY = static_cast<int16_t>(y + 58 + i * 52);
+    const int16_t rowY = static_cast<int16_t>(y + 40 + i * rowH);
     const bool selected = i == padMenuIndex;
-    if (selected) gfx->fillRect(x + 12, rowY - 4, w - 24, 38, kPalette[1]);
-    gfx->setTextColor(selected ? RGB565_BLACK : RGB565_WHITE);
-    gfx->setCursor(x + 28, rowY + 8);
-    gfx->print(kPadMenuItems[i]);
+    if (selected) gfx->fillRect(x + 8, rowY, w - 16, rowH - 4, kPalette[1]);
+    // Reglages en blanc, pages en gris clair : on voit ce qui ferme le menu.
+    gfx->setTextColor(selected ? RGB565_BLACK : (i < 7 ? RGB565_WHITE : kDim));
+    gfx->setCursor(x + 16, static_cast<int16_t>(rowY + 6));
+    char label[40];
+    padMenuLabel(i, label, sizeof(label));
+    gfx->setTextSize(i == padMenuIndex ? 2 : 1);
+    if (i != padMenuIndex) gfx->setCursor(x + 16, static_cast<int16_t>(rowY + 9));
+    gfx->print(label);
   }
+  gfx->setTextSize(1);
   gfx->setTextColor(kDim);
-  gfx->setCursor(x + 18, y + h - 24);
-  gfx->print("TOURNER: choisir  CLIC: ouvrir  LONG: sortir");
+  gfx->setCursor(x + 16, y + h - 16);
+  gfx->print("ENC2 tourner: choisir  clic: changer  long: sortir");
 }
 
 extern int8_t selectedEngineTrack;
 void goTo(Screen s);
 void activatePadMenuItem() {
-  padMenuOpen = false;
+  char msg[16];
   switch (padMenuIndex) {
-    case 0:
-      padEditsStep = false;
-      padTargetTrack = selectedSeqTrack;
-      drawAudioPage();
-      break;
+    case 0: padEditsStep = !padEditsStep; break;
     case 1:
-      padEditsStep = true;
-      padTargetTrack = selectedSeqTrack;
-      drawAudioPage();
+      // Pistes 1-8 puis voix live, en boucle.
+      padTargetTrack = static_cast<int8_t>(padTargetTrack >= kPadTrackCount - 1 ? -1 : padTargetTrack + 1);
       break;
-    case 2: goTo(Screen::Sampler); break;
+    case 2:
+      padArpMode = static_cast<uint8_t>((padArpMode + 1) % 5);
+      sendPadArp();
+      break;
     case 3:
-      selectedEngineTrack = selectedSeqTrack;
-      goTo(Screen::Engines);
+      padArpRate = static_cast<uint8_t>((padArpRate + 1) % 5);
+      sendPadArp();
       break;
-    default: goTo(Screen::Sequencer); break;
+    case 4:
+      padArpOctaves = static_cast<uint8_t>(padArpOctaves % 3 + 1);
+      sendPadArp();
+      break;
+    case 5:
+      snprintf(msg, sizeof(msg), "METRO:%d", metronomeOn ? 0 : 1);
+      sendToTeensy(msg);
+      metronomeOn = !metronomeOn;  // l'echo METRO: confirme
+      break;
+    case 6: seqRecording = !seqRecording; break;
+    case 7: padMenuOpen = false; goTo(Screen::Sampler); return;
+    case 8:
+      padMenuOpen = false;
+      selectedEngineTrack = padTargetTrack >= 0 ? padTargetTrack : selectedSeqTrack;
+      goTo(Screen::Engines);
+      return;
+    case 9: padMenuOpen = false; goTo(Screen::Sequencer); return;
+    default:
+      padMenuOpen = false;
+      drawAudioPage();
+      return;
   }
+  drawPadMenu();  // reglage change : le menu reste ouvert
 }
 
 constexpr uint8_t kSamplerRows = 6;
@@ -1132,6 +1224,7 @@ int8_t hitTestAudioPad(int16_t x, int16_t y) {
 // 8 pistes / 16 pas : doit rester aligne avec kTrackCount/kStepCount
 // cote Teensy (src_teensy/az2_audio/main.cpp).
 constexpr uint8_t kSeqTrackCount = 8;
+static_assert(kPadTrackCount == kSeqTrackCount, "menu PISTE du pad 4x4");
 constexpr uint8_t kSeqStepsPerMeasure = 16;
 constexpr uint8_t kSeqMaxMeasures = 8;
 constexpr uint8_t kSeqStepCount = kSeqStepsPerMeasure * kSeqMaxMeasures;
@@ -8057,6 +8150,14 @@ void handleTeensyLine(const String &line) {
         }
         encSwState[index] = pressed;
         if (pressed) encPressStartedMs[index] = millis();
+        if (index == 0 && pressed && currentScreen == Screen::Audio) {
+          // Clic de l'encodeur de volume sur le pad 4x4 = ENREGISTREMENT
+          // (le volume lui-meme reste gere par le Teensy).
+          seqRecording = !seqRecording;
+          if (padMenuOpen) drawPadMenu();
+          else drawPadStatus();
+          return;
+        }
         if (index == 2 && fxQuickAllowed()) {
           // Bouton de l'encodeur 3 = mode EFFETS (voir fxQuickActive).
           if (pressed) {
@@ -8338,6 +8439,9 @@ void handleTeensyLine(const String &line) {
     metronomeOn = line.substring(6).toInt() != 0;
     if (currentScreen == Screen::Sequencer && !screensaverActive) {
       drawTrkControls();
+    } else if (currentScreen == Screen::Audio && !screensaverActive) {
+      if (padMenuOpen) drawPadMenu();
+      else drawPadStatus();
     }
   } else if (line.startsWith("DIV:")) {
     const uint8_t value = static_cast<uint8_t>(line.substring(4).toInt());
@@ -9600,7 +9704,22 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
     if (pad >= 0 && pad != heldAudioPad[0] && pad != heldAudioPad[1]) {
       heldAudioPad[slot] = pad;
       drawAudioCell(static_cast<uint8_t>(pad), true);
-      if (padEditsStep) {
+      // Enregistrement en temps reel (2026-10-03) : REC actif ET sequence en
+      // route -> la note s'ecrit sur le pas EN COURS DE LECTURE de la piste
+      // visee (quantifiee au pas), quel que soit le mode.
+      const bool liveRecord = seqRecording && seqPlaying;
+      if (liveRecord) {
+        const uint8_t t = static_cast<uint8_t>(padTargetTrack >= 0 ? padTargetTrack : selectedSeqTrack);
+        const uint8_t s = seqCurrentStep;
+        const uint8_t note = static_cast<uint8_t>(az2::kPadBaseNote + pad);
+        seqStepOn[currentPattern][t][s] = true;
+        seqStepNote[currentPattern][t][s] = note;
+        char msg[24];
+        snprintf(msg, sizeof(msg), "STEP:%d:%d:1", t, s);
+        sendToTeensy(msg);
+        snprintf(msg, sizeof(msg), "NOTE:%d:%d:%d", t, s, note);
+        sendToTeensy(msg);
+      } else if (padEditsStep) {
         // "Poser" la note sur le pas selectionne (voir padEditsStep) --
         // allume aussi le pas (STEP: ON), sinon la note posee ne
         // s'entendrait jamais en lecture.
@@ -9630,7 +9749,8 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
         }
         sendToTeensy(msg);
       }
-      if (seqRecording && padEditsStep && padTargetTrack >= 0) {
+      if (!liveRecord && seqRecording && padEditsStep && padTargetTrack >= 0) {
+        // Enregistrement pas a pas (sequence arretee) : avance d'un pas.
         const uint8_t activeSteps = static_cast<uint8_t>(patternMeasures[currentPattern] * kSeqStepsPerMeasure);
         selectedSeqStep = static_cast<int8_t>((selectedSeqStep + 1) % activeSteps);
         seqVisibleMeasure = static_cast<uint8_t>(selectedSeqStep / kSeqStepsPerMeasure);
