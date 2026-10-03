@@ -17,6 +17,8 @@
 - [DAC PCM5102A](AZ2_DAC_PCM5102A.md)
 - [Sampleur](AZ2_SAMPLEUR.md)
 - [Licences et provenance](AZ2_LICENCES.md)
+- [Journal des changements](../CHANGELOG.md) — avancement daté, avec les mesures et les commits
+- Outils son : [`tools/engine_bench.py`](../tools/engine_bench.py) (banc de mesure des moteurs par l'USB du Teensy) et [`tools/gen_patch_trim.py`](../tools/gen_patch_trim.py) (compensation de niveau par patch)
 - [Validation NES et bilan d’optimisation du 27 septembre 2026](AZ2_NES_VALIDATION_2026-09-27.md)
 - [Audit des émulateurs, vitesses et code dormant du 27 septembre 2026](AZ2_AUDIT_EMULATEURS_2026-09-27.md)
 - [Étude Neo Geo Pocket / Color du 27 septembre 2026](AZ2_NGP_ETUDE_2026-09-27.md) — **historique** : RACE retiré le 2 octobre 2026 (licence)
@@ -28,6 +30,7 @@ La référence matérielle actuelle est le couple Teensy 4.1 + écran VIEWE
 UEDX48480040E-WB-V1.3. Les commandes sont raccordées directement au Teensy.
 Les firmwares de production sont `master_teensy_rack_lab` et
 `screen_esp_walnut_gbc_core_task` (voir `default_envs` dans `platformio.ini`).
+Guide joueur à jour : [manuel d'utilisation](AZ2_MANUEL_UTILISATEUR.md) (effets : §7 bis).
 
 ## Études et historique
 
