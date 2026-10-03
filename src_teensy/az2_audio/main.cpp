@@ -377,6 +377,11 @@ AudioEffectMultiply trackMod[kTrackCount];
 AudioEffectFlange trackFlange[kTrackCount];
 constexpr int kFlangeDelayLength = 4 * AUDIO_BLOCK_SAMPLES;  // ~11,6 ms
 DMAMEM short trackFlangeLine[kTrackCount][kFlangeDelayLength];
+// VU-metres du MIXER (2026-10-03) : crete de chaque piste en sortie de sa
+// chaine d'effets (x gain de piste en logiciel) et du bus maitre. Envoyes a
+// l'ecran seulement quand il les demande (LEVELS:1), voir serviceLevels().
+AudioAnalyzePeak trackPeak[kTrackCount];
+AudioAnalyzePeak masterPeak;
 AudioMixer4 revSendA;  // pistes 0-3 -> reverb
 AudioMixer4 revSendB;  // pistes 4-7 -> reverb
 
@@ -493,6 +498,12 @@ AudioConnection patchFxToRevSend[kTrackCount] = {
     AudioConnection(trackFx[4], 0, revSendB, 0), AudioConnection(trackFx[5], 0, revSendB, 1),
     AudioConnection(trackFx[6], 0, revSendB, 2), AudioConnection(trackFx[7], 0, revSendB, 3),
 };
+AudioConnection patchFxToPeak[kTrackCount] = {
+    AudioConnection(trackFx[0], 0, trackPeak[0], 0), AudioConnection(trackFx[1], 0, trackPeak[1], 0),
+    AudioConnection(trackFx[2], 0, trackPeak[2], 0), AudioConnection(trackFx[3], 0, trackPeak[3], 0),
+    AudioConnection(trackFx[4], 0, trackPeak[4], 0), AudioConnection(trackFx[5], 0, trackPeak[5], 0),
+    AudioConnection(trackFx[6], 0, trackPeak[6], 0), AudioConnection(trackFx[7], 0, trackPeak[7], 0),
+};
 AudioConnection patchGroupA(mixTracksA, 0, mixFinal, 0);
 AudioConnection patchGroupB(mixTracksB, 0, mixFinal, 1);
 
@@ -579,6 +590,7 @@ AudioConnection patchReverbToMaster(reverbUnit, 0, mixMaster, 1);
 AudioConnection patchFinalToDelay(mixFinal, 0, delayUnit, 0);
 AudioConnection patchDelayToMaster(delayUnit, 0, mixMaster, 2);
 AudioConnection patchGbAudioToMaster(gbAudioSource, 0, mixMaster, 3);
+AudioConnection patchMasterToPeak(mixMaster, 0, masterPeak, 0);
 #ifdef AZ2_EXTERNAL_RACK
 AudioConnection patchMasterToOutputL(mixMaster, 0, mixOutputL, 0);
 AudioConnection patchMasterToOutputR(mixMaster, 0, mixOutputR, 0);
@@ -749,6 +761,10 @@ float trackEffectiveGain(uint8_t track) {
 constexpr uint8_t kTrackFxParamCount = 14;
 uint8_t trackFxVal[kTrackCount][kTrackFxParamCount] = {};
 
+// Gain applique a chaque piste (VU-metres : niveau post-volume), tenu a
+// jour par applyGroupGainNow().
+float trackMeterGain[kTrackCount] = {};
+
 // Compensation de niveau par moteur (2026-10-02). Mesure du banc
 // tools/engine_bench.py, meme note, meme volume : crete de sortie de 0,007
 // (EPIANO) a 0,18 (BRAIDS), soit jusqu'a x25 d'ecart en changeant de moteur.
@@ -799,6 +815,7 @@ void applyGroupGainNow(uint8_t track) {
     g = 0.5f * trim * trackEffectiveGain(track);
   }
   trackGroupMixer(track).gain(trackGroupChannel(track), g);
+  trackMeterGain[track] = g;
   // Envoi reverb post-volume : suit volume, mute, solo et la porte Braids.
   AudioMixer4 &send = track < 4 ? revSendA : revSendB;
   send.gain(track % 4, g * static_cast<float>(trackFxVal[track][11]) / 127.0f);
@@ -3292,6 +3309,43 @@ void resyncTrackFxTempo() {
   }
 }
 
+// LEVELS:1 / LEVELS:0 -- l'ecran demande (page MIXER ouverte) ou arrete le
+// flux des VU-metres. LEVELS:<p1>,...,<p8>,<master> sur Serial1 a ~15 Hz,
+// valeurs 0-100 = -48 dB .. 0 dB (pleine echelle), niveau equivalent sortie.
+bool levelsStreamOn = false;
+
+uint8_t levelToMeter(float peak) {
+  if (peak <= 0.0039f) return 0;  // < -48 dB
+  const float db = 20.0f * log10f(peak);
+  const float n = (db + 48.0f) / 48.0f;
+  return static_cast<uint8_t>(n >= 1.0f ? 100 : (n <= 0.0f ? 0 : n * 100.0f));
+}
+
+void buildLevelsLine(char *line, size_t size);
+
+void serviceLevels() {
+  static uint32_t lastMs = 0;
+  if (!levelsStreamOn) return;
+  const uint32_t now = millis();
+  if (now - lastMs < 66) return;
+  lastMs = now;
+  char line[64];
+  buildLevelsLine(line, sizeof(line));
+  Serial1.println(line);
+}
+
+void buildLevelsLine(char *line, size_t size) {
+  int pos = snprintf(line, size, "LEVELS:");
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    const float peak = trackPeak[t].available() ? trackPeak[t].read() : 0.0f;
+    // x 0,8 (mixFinal) x volume general : meme echelle que la sortie.
+    const float out = peak * trackMeterGain[t] * 0.8f * masterVolume;
+    pos += snprintf(line + pos, size - pos, "%u,", levelToMeter(out));
+  }
+  const float master = masterPeak.available() ? masterPeak.read() : 0.0f;
+  snprintf(line + pos, size - pos, "%u", levelToMeter(master));
+}
+
 void handleTrackFxCommand(const String &line) {
   const int idx1 = line.indexOf(':');
   const int idx2 = line.indexOf(':', idx1 + 1);
@@ -4478,6 +4532,17 @@ void handleCommand(const String &line) {
     return;
   }
 
+  if (line.startsWith("LEVELS:")) {
+    levelsStreamOn = line.substring(7).toInt() != 0;
+    return;
+  }
+  if (line == "LEVELS?") {  // diagnostic USB : une ligne de niveaux
+    char out[64];
+    buildLevelsLine(out, sizeof(out));
+    Serial.println(out);
+    return;
+  }
+
   if (line.startsWith("DELAY:")) {
     handleDelayCommand(line);
     return;
@@ -5437,6 +5502,7 @@ void setup() {
 void loop() {
   readSerialCommands();
   serviceStepLocks();
+  serviceLevels();
 #ifdef AZ2_EXTERNAL_RACK
   serviceRackReplies();
   serviceGranularSampleTransfer();

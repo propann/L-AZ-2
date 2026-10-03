@@ -4184,6 +4184,84 @@ constexpr int16_t kMixerBarBottom = 370;
 constexpr int16_t kMixerBarH = kMixerBarBottom - kMixerBarTop;
 constexpr int16_t kMixerColW = (kScreenSize - 2 * kMargin) / kSeqTrackCount;
 constexpr int16_t kMixerBarW = kMixerColW - 14;
+// VU-metre (2026-10-03) : le fader passe a 28 px, un VU de 8 px a sa droite.
+constexpr int16_t kMixerFaderW = kMixerBarW - 12;
+constexpr int16_t kMixerVuW = 8;
+constexpr int16_t kMixerVuDx = kMixerFaderW + 4;
+constexpr uint8_t kVuChannels = kSeqTrackCount + 1;  // 8 pistes + master
+// Niveau affiche (0-100 = -48..0 dB) avec retombee locale, hauteur deja
+// dessinee (redessin INCREMENTAL seulement : de grosses ecritures
+// periodiques en PSRAM font sautiller l'ecran, voir fenetre MOTEURS).
+uint8_t vuShown[kVuChannels] = {};
+int16_t vuDrawn[kVuChannels] = {};
+uint8_t vuPeak[kVuChannels] = {};
+uint32_t vuPeakMs[kVuChannels] = {};
+int16_t vuPeakDrawn[kVuChannels] = {};
+
+// Remplit [from, to) d'une jauge avec ses couleurs de zone, un rectangle par
+// zone (3 ecritures maximum au lieu d'une par ligne de pixels).
+template <typename F>
+void fillVuZones(int16_t from, int16_t to, int16_t len, F &&rect) {
+  const int16_t bounds[4] = {0, static_cast<int16_t>(len * 75 / 100), static_cast<int16_t>(len * 92 / 100), len};
+  const uint16_t colors[3] = {RGB565(60, 220, 90), RGB565(255, 210, 40), RGB565(255, 60, 50)};
+  for (uint8_t z = 0; z < 3; ++z) {
+    const int16_t a = from > bounds[z] ? from : bounds[z];
+    const int16_t b = to < bounds[z + 1] ? to : bounds[z + 1];
+    if (b > a) rect(a, b, colors[z]);
+  }
+}
+
+uint16_t vuZoneColor(int16_t pos, int16_t len) {
+  // Vert jusqu'a -12 dB (75 %), jaune jusqu'a -4 dB (92 %), rouge au-dela.
+  if (pos * 100 >= len * 92) return RGB565(255, 60, 50);
+  if (pos * 100 >= len * 75) return RGB565(255, 210, 40);
+  return RGB565(60, 220, 90);
+}
+
+// VU vertical d'une piste, redessine seulement entre l'ancienne et la
+// nouvelle hauteur.
+void drawMixerVu(uint8_t t) {
+  const int16_t x = static_cast<int16_t>(kMargin + t * kMixerColW + (kMixerColW - kMixerBarW) / 2 + kMixerVuDx);
+  const int16_t h = static_cast<int16_t>((static_cast<int32_t>(vuShown[t]) * kMixerBarH) / 100);
+  int16_t &drawn = vuDrawn[t];
+  if (h > drawn) {
+    fillVuZones(drawn, h, kMixerBarH, [&](int16_t a, int16_t b, uint16_t c) {
+      gfx->fillRect(x, static_cast<int16_t>(kMixerBarBottom - b), kMixerVuW, static_cast<int16_t>(b - a), c);
+    });
+  } else if (h < drawn) {
+    gfx->fillRect(x, static_cast<int16_t>(kMixerBarBottom - drawn), kMixerVuW, static_cast<int16_t>(drawn - h),
+                  RGB565_BLACK);
+  }
+  drawn = h;
+  // Maintien de crete : trait blanc 2 px, tenu 1 s puis suit le niveau.
+  const int16_t ph = static_cast<int16_t>((static_cast<int32_t>(vuPeak[t]) * kMixerBarH) / 100);
+  if (ph != vuPeakDrawn[t]) {
+    const int16_t oldY = static_cast<int16_t>(kMixerBarBottom - 2 - vuPeakDrawn[t]);
+    if (vuPeakDrawn[t] > 1 && oldY >= kMixerBarTop) {
+      const bool underBar = vuPeakDrawn[t] < drawn;
+      gfx->fillRect(x, oldY, kMixerVuW, 2, underBar ? vuZoneColor(vuPeakDrawn[t], kMixerBarH) : RGB565_BLACK);
+    }
+    if (ph > 1) gfx->fillRect(x, static_cast<int16_t>(kMixerBarBottom - 2 - ph), kMixerVuW, 2, RGB565_WHITE);
+    vuPeakDrawn[t] = ph;
+  }
+}
+
+// VU horizontal du master, sous le libelle MASTER (ligne du bas du MIXER).
+void drawMixerMasterVu();
+
+void applyLevels(const uint8_t (&levels)[kVuChannels]) {
+  const uint32_t now = millis();
+  for (uint8_t i = 0; i < kVuChannels; ++i) {
+    // Monte tout de suite, retombe de ~6 % par trame (~15 Hz).
+    vuShown[i] = levels[i] >= vuShown[i] ? levels[i] : static_cast<uint8_t>(vuShown[i] > 6 ? vuShown[i] - 6 : 0);
+    if (vuShown[i] >= vuPeak[i] || now - vuPeakMs[i] > 1000) {
+      vuPeak[i] = vuShown[i];
+      vuPeakMs[i] = now;
+    }
+  }
+  for (uint8_t t = 0; t < kSeqTrackCount; ++t) drawMixerVu(t);
+  drawMixerMasterVu();
+}
 
 void drawMixerTrack(uint8_t t) {
   const int16_t x = static_cast<int16_t>(kMargin + t * kMixerColW + (kMixerColW - kMixerBarW) / 2);
@@ -4199,10 +4277,15 @@ void drawMixerTrack(uint8_t t) {
   const int16_t fillH = static_cast<int16_t>((static_cast<int32_t>(trackVolume[t]) * kMixerBarH) / 127);
   const int16_t fillY = static_cast<int16_t>(kMixerBarBottom - fillH);
   const uint16_t barColor = trackMuted[t] ? kFaint : accent;
-  gfx->drawRect(x, kMixerBarTop, kMixerBarW, kMixerBarH, kFaint);
+  gfx->drawRect(x, kMixerBarTop, kMixerFaderW, kMixerBarH, kFaint);
   if (fillH > 0) {
-    gfx->fillRect(x, fillY, kMixerBarW, fillH, barColor);
+    gfx->fillRect(x, fillY, kMixerFaderW, fillH, barColor);
   }
+  // La colonne vient d'etre effacee : le VU repart de zero puis se
+  // redessine a son niveau courant.
+  vuDrawn[t] = 0;
+  vuPeakDrawn[t] = 0;
+  drawMixerVu(t);
   if (selected) {
     // Contour blanc epais (3px, meme convention que la page MOTEURS
     // depuis "on fait un truc en surbrillance plus visible").
@@ -4282,8 +4365,10 @@ void drawMixerMasterRow() {
   gfx->fillRect(kMargin, kMixerMasterY, kScreenSize - 2 * kMargin, kMixerMasterH, RGB565_BLACK);
   gfx->setTextSize(1);
   gfx->setTextColor(kDim);
-  gfx->setCursor(kMargin, static_cast<int16_t>(kMixerMasterY + kMixerMasterH / 2 - 4));
+  gfx->setCursor(kMargin, static_cast<int16_t>(kMixerMasterY + 4));
   gfx->print("MASTER");
+  vuDrawn[kSeqTrackCount] = 0;  // zone effacee : VU master redessine
+  drawMixerMasterVu();
   for (uint8_t i = 0; i < 3; ++i) {
     const int16_t x = static_cast<int16_t>(kMargin + kMixerMasterLabelW + i * kMixerMasterCellW);
     const uint16_t color = kPalette[(i + 2) % kPaletteCount];
@@ -4297,6 +4382,23 @@ void drawMixerMasterRow() {
     gfx->setCursor(static_cast<int16_t>(x + 6), static_cast<int16_t>(kMixerMasterY + 4));
     gfx->print(buf);
   }
+}
+
+void drawMixerMasterVu() {
+  constexpr uint8_t m = kSeqTrackCount;
+  const int16_t x = kMargin;
+  const int16_t y = static_cast<int16_t>(kMixerMasterY + kMixerMasterH - 7);
+  const int16_t len = kMixerMasterLabelW - 10;
+  const int16_t w = static_cast<int16_t>((static_cast<int32_t>(vuShown[m]) * len) / 100);
+  int16_t &drawn = vuDrawn[m];
+  if (w > drawn) {
+    fillVuZones(drawn, w, len, [&](int16_t a, int16_t b, uint16_t c) {
+      gfx->fillRect(static_cast<int16_t>(x + a), y, static_cast<int16_t>(b - a), 5, c);
+    });
+  } else if (w < drawn) {
+    gfx->fillRect(static_cast<int16_t>(x + w), y, static_cast<int16_t>(drawn - w), 5, RGB565_BLACK);
+  }
+  drawn = w;
 }
 
 // Case MASTER touchee (0-2), -1 sinon.
@@ -6354,6 +6456,13 @@ void goTo(Screen s) {
   }
 
   currentScreen = s;
+  // VU-metres : le Teensy n'envoie les niveaux que pendant que le MIXER est
+  // ouvert (aucun trafic ailleurs).
+  static bool levelsRequested = false;
+  if ((s == Screen::Mixer) != levelsRequested) {
+    levelsRequested = (s == Screen::Mixer);
+    sendToTeensy(levelsRequested ? "LEVELS:1" : "LEVELS:0");
+  }
   drawScreen(s);
 }
 
@@ -8021,6 +8130,16 @@ void handleTeensyLine(const String &line) {
         }
       }
     }
+  } else if (line.startsWith("LEVELS:")) {
+    uint8_t levels[kVuChannels] = {};
+    int start = 7;
+    for (uint8_t i = 0; i < kVuChannels; ++i) {
+      int end = line.indexOf(',', start);
+      if (end < 0) end = line.length();
+      levels[i] = static_cast<uint8_t>(constrain(line.substring(start, end).toInt(), 0, 100));
+      start = end + 1;
+    }
+    if (currentScreen == Screen::Mixer && !screensaverActive) applyLevels(levels);
   } else if (line.startsWith("TFX:")) {
     const int i1 = line.indexOf(':');
     const int i2 = line.indexOf(':', i1 + 1);
