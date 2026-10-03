@@ -236,9 +236,20 @@ uint8_t readTouches(TouchPoint points[2]) {
   }
   touchInvalidFrames = 0;
 
-  if (touchCount >= 1) {
-    const int16_t rawX = static_cast<int16_t>(((buf[1] & 0x0F) << 8) | buf[2]);
-    const int16_t rawY = static_cast<int16_t>(((buf[3] & 0x0F) << 8) | buf[4]);
+  // [2026-10-03] Multipoint : chaque doigt garde SON emplacement grace a
+  // l'identifiant de contact du FT6336U (4 bits hauts du registre YH, 0 ou
+  // 1). Avant, l'emplacement suivait l'ordre de lecture : lever le premier
+  // doigt faisait "devenir" le second le premier -> relachement + nouvel
+  // appui fantome sur les pads (fausses notes dans les accords).
+  int8_t usedSlot = -1;
+  for (uint8_t p = 0; p < touchCount && p < 2; ++p) {
+    const uint8_t base = static_cast<uint8_t>(1 + p * 6);  // 0x03 / 0x09
+    const int16_t rawX = static_cast<int16_t>(((buf[base] & 0x0F) << 8) | buf[base + 1]);
+    const int16_t rawY = static_cast<int16_t>(((buf[base + 2] & 0x0F) << 8) | buf[base + 3]);
+    const uint8_t id = static_cast<uint8_t>(buf[base + 2] >> 4);
+    // Identifiant hors 0-1 ou deja pris (trame incoherente) : premier libre.
+    uint8_t slot = id <= 1 ? id : p;
+    if (static_cast<int8_t>(slot) == usedSlot) slot = static_cast<uint8_t>(1 - slot);
     const int16_t x = static_cast<int16_t>(
 #ifdef AZ2_DIRECT_PANEL
         rawX
@@ -254,35 +265,10 @@ uint8_t readTouches(TouchPoint points[2]) {
 #endif
     );
     if (x >= 0 && x < kScreenSize && y >= 0 && y < kScreenSize) {
-      points[0].active = true;
-      points[0].x = x;
-      points[0].y = y;
-    } else {
-      reportTouchI2cError("BAD_COORD");
-    }
-  }
-
-  if (touchCount >= 2) {
-    const int16_t rawX = static_cast<int16_t>(((buf[7] & 0x0F) << 8) | buf[8]);
-    const int16_t rawY = static_cast<int16_t>(((buf[9] & 0x0F) << 8) | buf[10]);
-    const int16_t x = static_cast<int16_t>(
-#ifdef AZ2_DIRECT_PANEL
-        rawX
-#else
-        (kScreenSize - 1) - rawX
-#endif
-    );
-    const int16_t y = static_cast<int16_t>(
-#ifdef AZ2_DIRECT_PANEL
-        rawY
-#else
-        (kScreenSize - 1) - rawY
-#endif
-    );
-    if (x >= 0 && x < kScreenSize && y >= 0 && y < kScreenSize) {
-      points[1].active = true;
-      points[1].x = x;
-      points[1].y = y;
+      points[slot].active = true;
+      points[slot].x = x;
+      points[slot].y = y;
+      usedSlot = static_cast<int8_t>(slot);
     } else {
       reportTouchI2cError("BAD_COORD");
     }
@@ -9698,6 +9684,15 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
     }
   } else if (currentScreen == Screen::Audio) {
     if (padMenuOpen) {
+      // Menu tactile : toucher une ligne = la choisir et l'activer ;
+      // toucher hors du cadre = fermer (memes zones que drawPadMenu()).
+      if (x >= 40 && x < 440 && y >= 80 && y < 80 + kPadMenuCount * 30) {
+        padMenuIndex = static_cast<uint8_t>((y - 80) / 30);
+        activatePadMenuItem();
+      } else if (x < 40 || x >= 440 || y < 40 || y >= 440) {
+        padMenuOpen = false;
+        drawAudioPage();
+      }
       return;
     }
     const int8_t pad = hitTestAudioPad(x, y);
