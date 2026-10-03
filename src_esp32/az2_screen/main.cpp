@@ -6339,6 +6339,73 @@ void gbSettingsMenuBack() {
 // ---------------------------------------------------------------------
 String teensyLine;
 
+// ---------------------------------------------------------------------
+// Mode EFFETS rapide a l'encodeur 3 (2026-10-03) -- bouton de l'encodeur 3 :
+// ouvre le mode puis passe a l'effet suivant ; rotation = valeur. Agit sur la
+// piste selectionnee de la page en cours. Pendant le mode, l'encodeur 3
+// (TURN: et POT:) est reserve ; l'encodeur 2 garde TOUJOURS ses fonctions
+// (pad virtuel, arpegiateur...). Se ferme seul apres kFxQuickTimeoutMs sans
+// geste. Pas en jeu (START), ni sur AUDIO, ni sur PATCH (le bouton y choisit
+// le point ADSR et les effets y ont deja leurs lignes).
+bool fxQuickActive = false;
+uint8_t fxQuickIndex = 0;
+uint32_t fxQuickLastMs = 0;
+constexpr uint32_t kFxQuickTimeoutMs = 4000;
+constexpr int16_t kFxQuickToastY = kScreenSize - 26;
+constexpr int16_t kFxQuickToastH = 26;
+
+uint8_t fxContextTrack() {
+  switch (currentScreen) {
+    case Screen::Patch: return static_cast<uint8_t>(patchTrack);
+    case Screen::Engines: return static_cast<uint8_t>(selectedEngineTrack);
+    default: return selectedSeqTrack >= 0 ? static_cast<uint8_t>(selectedSeqTrack) : 0;
+  }
+}
+
+bool fxQuickAllowed() {
+  if (screensaverActive || currentScreen == Screen::Audio || currentScreen == Screen::Patch) return false;
+  if (currentScreen == Screen::Retro && gbIsLoaded()) return false;
+#ifdef AZ2_NES_ENABLED
+  if (currentScreen == Screen::NesRetro && nesIsLoaded()) return false;
+#endif
+  return true;
+}
+
+void drawFxQuickToast() {
+  const uint8_t t = fxContextTrack();
+  const uint8_t v = trackFxVal[t][fxQuickIndex];
+  const uint16_t accent = patchAccent(t);
+  gfx->fillRect(0, kFxQuickToastY, kScreenSize, kFxQuickToastH, RGB565_BLACK);
+  const int16_t barW = static_cast<int16_t>((static_cast<int32_t>(v) * (kScreenSize - 2 * kMargin)) / 127);
+  gfx->fillRect(kMargin, static_cast<int16_t>(kFxQuickToastY + kFxQuickToastH - 4), barW, 3, accent);
+  gfx->drawRect(0, kFxQuickToastY, kScreenSize, kFxQuickToastH, accent);
+  char value[8];
+  fxRowValueText(fxQuickIndex, v, value, sizeof(value));
+  char text[40];
+  snprintf(text, sizeof(text), "P%u  %s  %s", t + 1, kFxRowLabel[fxQuickIndex], value);
+  gfx->setTextSize(2);
+  gfx->setTextColor(accent);
+  gfx->setCursor(kMargin, static_cast<int16_t>(kFxQuickToastY + 4));
+  gfx->print(text);
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(static_cast<int16_t>(kScreenSize - kMargin - 132), static_cast<int16_t>(kFxQuickToastY + 9));
+  gfx->print("ENC3: clic effet, tourner");
+}
+
+void fxQuickSetValue(int delta) {
+  const uint8_t t = fxContextTrack();
+  uint8_t &val = trackFxVal[t][fxQuickIndex];
+  val = static_cast<uint8_t>(constrain(static_cast<int>(val) + delta, 0, 127));
+  char msg[24];
+  snprintf(msg, sizeof(msg), "TFX:%d:%d:%d", t, fxQuickIndex, val);
+  sendToTeensy(msg);
+  // Page PATCH ouverte sur la meme piste : la ligne EFFETS suit.
+  if (currentScreen == Screen::Patch && t == static_cast<uint8_t>(patchTrack)) {
+    drawPatchExtraRow(static_cast<uint8_t>(6 + patchEngineExtraCount(t) + fxQuickIndex));
+  }
+}
+
 void handleTeensyLine(const String &line) {
   if (line == az2::kGbAudioV2Ready) {
     gbSetAudioV2Ready(true);
@@ -7448,6 +7515,14 @@ void handleTeensyLine(const String &line) {
     if (i1 >= 0 && i2 >= 0) {
       const uint8_t index = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
       const int direction = line.substring(i2 + 1).toInt();
+      if (fxQuickActive && index == 2) {
+        if (direction != 0) {
+          fxQuickSetValue(direction > 0 ? 4 : -4);
+          fxQuickLastMs = millis();
+          drawFxQuickToast();
+        }
+        return;
+      }
       if (currentScreen == Screen::Audio && padMenuOpen && index == 1 && direction != 0) {
         padMenuIndex = static_cast<uint8_t>(
             (padMenuIndex + (direction > 0 ? 1 : kPadMenuCount - 1)) % kPadMenuCount);
@@ -7500,6 +7575,9 @@ void handleTeensyLine(const String &line) {
     if (firstColon >= 0 && secondColon >= 0) {
       const uint8_t index = static_cast<uint8_t>(line.substring(firstColon + 1, secondColon).toInt());
       const uint8_t value = static_cast<uint8_t>(line.substring(secondColon + 1).toInt());
+      if (fxQuickActive && index == 2) {
+        return;  // encodeur 3 reserve au mode EFFETS (voir fxQuickActive)
+      }
       if (index < 3) {
         potValue[index] = value;
         if (currentScreen == Screen::Controls && !screensaverActive) {
@@ -7648,6 +7726,18 @@ void handleTeensyLine(const String &line) {
         }
         encSwState[index] = pressed;
         if (pressed) encPressStartedMs[index] = millis();
+        if (index == 2 && fxQuickAllowed()) {
+          // Bouton de l'encodeur 3 = mode EFFETS (voir fxQuickActive).
+          if (pressed) {
+            if (fxQuickActive) {
+              fxQuickIndex = static_cast<uint8_t>((fxQuickIndex + 1) % kFxRowCount);
+            }
+            fxQuickActive = true;
+            fxQuickLastMs = millis();
+            drawFxQuickToast();
+          }
+          return;
+        }
         if (currentScreen == Screen::Controls && !screensaverActive) {
           drawPotBar(index);
         }
@@ -9793,6 +9883,10 @@ void loop() {
   // Efface le temoin de potard (voir drawPotToast()) apres son delai --
   // relance un rendu complet de la page courante plutot que de retenir
   // ce qu'il y avait sous la bande, plus simple/robuste.
+  if (fxQuickActive && (nowForIdle - fxQuickLastMs) >= kFxQuickTimeoutMs) {
+    fxQuickActive = false;
+    if (!screensaverActive) drawScreen(currentScreen);  // efface le bandeau
+  }
   if (!gbGameActive && potToastActive && (nowForIdle - potToastLastMs) >= kPotToastTimeoutMs) {
     potToastActive = false;
     if (!screensaverActive) {
