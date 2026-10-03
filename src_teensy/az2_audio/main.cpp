@@ -178,6 +178,19 @@ AudioEffectFreeverb reverbUnit;
 // meme rendu qu'avant puisque la reverb est lineaire), 1-2 = envois par
 // piste (revSendA/B). Le retour reverb est desormais au volume general.
 AudioMixer4 reverbIn;
+// CHORUS maitre (2026-10-03) : ligne de retard MODULEE lentement (objet
+// flanger regle en chorus : ~12 ms, profondeur ~6 ms, 0,6 Hz), mixee en
+// parallele du sec dans masterDry. AudioEffectChorus de la lib n'est pas
+// module (prises fixes, effet de peigne), d'ou ce choix. Dose par
+// FX:chorus:<0-100>.
+// PIEGE (mesure au banc) : AudioEffectFlange n'utilise que la MOITIE du
+// tampon fourni (delay_length = d_length / 2). Retard + profondeur doivent
+// rester sous cette moitie, sinon la lecture croise la tete d'ecriture et
+// sort des pics (crete x3 mesuree avec 1024/512/256).
+AudioEffectFlange masterChorus;
+constexpr int kMasterChorusLength = 2048;  // 1024 utiles = ~23 ms
+DMAMEM short masterChorusLine[kMasterChorusLength];
+AudioMixer4 masterDry;  // 0 = sec (mixFinal), 1 = chorus
 AudioEffectDelay delayUnit;
 AudioMixer4 mixMaster;
 AudioOutputI2S i2sOut;
@@ -554,7 +567,10 @@ AudioConnection patchLiveIn(mixLiveAndPads, 0, mixFinal, 2);
 // de noteOff() explicite) declenche depuis advanceTick() a chaque
 // debut de temps (currentStep % stepsPerBeat == 0), accentue (plus
 // aigu) sur le premier temps du pattern.
-AudioConnection patchFinalToMaster(mixFinal, 0, mixMaster, 0);  // signal sec
+AudioConnection patchFinalToChorus(mixFinal, 0, masterChorus, 0);
+AudioConnection patchFinalToDry(mixFinal, 0, masterDry, 0);
+AudioConnection patchChorusToDry(masterChorus, 0, masterDry, 1);
+AudioConnection patchFinalToMaster(masterDry, 0, mixMaster, 0);  // signal sec (+ chorus)
 AudioConnection patchFinalToReverb(mixFinal, 0, reverbIn, 0);
 AudioConnection patchRevSendAToReverb(revSendA, 0, reverbIn, 1);
 AudioConnection patchRevSendBToReverb(revSendB, 0, reverbIn, 2);
@@ -2849,6 +2865,7 @@ void handleSamplerModeCommand(const String &line) {
 float masterVolume = 1.0f;  // potard 1
 float reverbWet = 0.0f;     // potard 2 ou FX:reverb:
 float delayWet = 0.0f;      // potard 3 ou FX:delay:
+float chorusWet = 0.0f;     // FX:chorus: (page MIXER, ligne MASTER)
 
 // Le volume percu est logarithmique. L'ancienne courbe sqrt(normalized)
 // faisait exactement l'inverse de l'effet recherche : des la premiere partie
@@ -2867,6 +2884,10 @@ void applyMasterMix() {
   mixMaster.gain(0, masterVolume);
   // Reverb : dosage a l'ENTREE (reverbIn) pour que les envois par piste
   // s'entendent meme quand le potard de reverb globale est a 0.
+  // Chorus : la sortie du flanger contient deja la moitie du sec ; on
+  // baisse d'autant le sec direct pour garder le niveau.
+  masterDry.gain(0, 1.0f - 0.5f * chorusWet);
+  masterDry.gain(1, chorusWet);
   reverbIn.gain(0, reverbWet);
   reverbIn.gain(1, 1.0f);
   reverbIn.gain(2, 1.0f);
@@ -2906,6 +2927,8 @@ void handleFxCommand(const String &line) {
     reverbWet = wet;
   } else if (param == "delay") {
     delayWet = wet;
+  } else if (param == "chorus") {
+    chorusWet = wet;
   } else {
     sendCommandError("FX", "UNKNOWN_PARAM");
     return;
@@ -3146,8 +3169,10 @@ void applyTrackFlange(uint8_t track) {
   if (depth == 0) {
     trackFlange[track].voices(FLANGE_DELAY_PASSTHRU, 0, 0.0f);
   } else {
+    // Moitie utile = kFlangeDelayLength / 2 (voir masterChorus) : retard
+    // 128 +/- 96 au maximum, toujours sous les 256 utiles.
     trackFlange[track].voices(kFlangeDelayLength / 4,
-                              (kFlangeDelayLength / 4) * depth / 127, 0.5f * trackLfoHz(track));
+                              (kFlangeDelayLength * 3 / 16) * depth / 127, 0.5f * trackLfoHz(track));
   }
 }
 
@@ -5378,6 +5403,8 @@ void setup() {
   // que les potards n'ont pas ete lus une premiere fois (voir
   // updateLocalControls()) -- pour ne pas surprendre au premier boot
   // avec un effet impose avant meme la premiere lecture ADC.
+  // Retard 512 (~11,6 ms) +/- 300 (~6,8 ms) : 212..812 < 1024 utiles.
+  masterChorus.begin(masterChorusLine, kMasterChorusLength, 512, 300, 0.6f);
   reverbUnit.roomsize(0.6f);
   reverbUnit.damping(0.4f);
   delayUnit.delay(0, 350.0f);  // temps fixe en v1, cf feuille de route pour le rendre reglable
