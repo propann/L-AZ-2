@@ -4267,6 +4267,53 @@ void drawMixerActionBtns() {
   gfx->print("SOLO");
 }
 
+// Ligne MASTER de la page MIXER (2026-10-03) : reverb, delay et chorus du
+// bus general (FX:reverb/delay/chorus:<0-100>), jusque-la sans aucune
+// commande a l'ecran. Un toucher avance la case de 20 (0 -> 100 -> 0).
+constexpr int16_t kMixerMasterY = kMixerBtnY + kMixerBtnH + 4;
+constexpr int16_t kMixerMasterH = kScreenSize - kMixerMasterY - 4;
+constexpr int16_t kMixerMasterLabelW = 84;
+constexpr int16_t kMixerMasterCellW = (kScreenSize - 2 * kMargin - kMixerMasterLabelW) / 3;
+constexpr const char *kMasterFxName[3] = {"REV", "DLY", "CHO"};
+constexpr const char *kMasterFxCmd[3] = {"reverb", "delay", "chorus"};
+uint8_t masterFxVal[3] = {};  // 0-100, miroir de reverbWet/delayWet/chorusWet
+
+void drawMixerMasterRow() {
+  gfx->fillRect(kMargin, kMixerMasterY, kScreenSize - 2 * kMargin, kMixerMasterH, RGB565_BLACK);
+  gfx->setTextSize(1);
+  gfx->setTextColor(kDim);
+  gfx->setCursor(kMargin, static_cast<int16_t>(kMixerMasterY + kMixerMasterH / 2 - 4));
+  gfx->print("MASTER");
+  for (uint8_t i = 0; i < 3; ++i) {
+    const int16_t x = static_cast<int16_t>(kMargin + kMixerMasterLabelW + i * kMixerMasterCellW);
+    const uint16_t color = kPalette[(i + 2) % kPaletteCount];
+    const int16_t fillW = static_cast<int16_t>(((kMixerMasterCellW - 6) * masterFxVal[i]) / 100);
+    gfx->drawRect(x, kMixerMasterY, kMixerMasterCellW - 4, kMixerMasterH, color);
+    if (fillW > 0) gfx->fillRect(x + 1, kMixerMasterY + kMixerMasterH - 5, fillW, 4, color);
+    char buf[12];
+    snprintf(buf, sizeof(buf), "%s %3u", kMasterFxName[i], masterFxVal[i]);
+    gfx->setTextSize(2);
+    gfx->setTextColor(color);
+    gfx->setCursor(static_cast<int16_t>(x + 6), static_cast<int16_t>(kMixerMasterY + 4));
+    gfx->print(buf);
+  }
+}
+
+// Case MASTER touchee (0-2), -1 sinon.
+int8_t hitTestMixerMaster(int16_t x, int16_t y) {
+  if (y < kMixerMasterY || y >= kMixerMasterY + kMixerMasterH) return -1;
+  const int16_t rel = static_cast<int16_t>(x - kMargin - kMixerMasterLabelW);
+  if (rel < 0) return -1;
+  const int cell = rel / kMixerMasterCellW;
+  return cell < 3 ? static_cast<int8_t>(cell) : -1;
+}
+
+void sendMasterFx(uint8_t i) {
+  char msg[24];
+  snprintf(msg, sizeof(msg), "FX:%s:%u", kMasterFxCmd[i], masterFxVal[i]);
+  sendToTeensy(msg);
+}
+
 bool hitTestMixerMute(int16_t x, int16_t y) {
   return inBox(x, y, kMixerMuteX, kMixerBtnY, kMixerBtnW, kMixerBtnH);
 }
@@ -4300,6 +4347,7 @@ void drawMixerPage() {
     drawMixerTrack(t);
   }
   drawMixerActionBtns();
+  drawMixerMasterRow();
 }
 
 bool hitTestMixerTrack(int16_t x, int16_t y, uint8_t &track) {
@@ -5565,6 +5613,8 @@ void saveProject(uint8_t slot) {
                trackReso[t], trackAttack[t], trackDecay[t], trackSustain[t], trackRelease[t], trackAlgo[t],
                trackFeedback[t], trackVolume[t], trackMuted[t] ? 1 : 0);
     }
+    // Bus general (2026-10-03) : reverb, delay, chorus 0-100.
+    f.printf("MASTERFX:%u,%u,%u\n", masterFxVal[0], masterFxVal[1], masterFxVal[2]);
     // Section EFFETS par piste (2026-10-02) -- ligne ignoree par les
     // anciens firmwares (validateur et chargeur ne lisent que les cles
     // connues).
@@ -5922,6 +5972,16 @@ void loadProject(uint8_t slot) {
           snprintf(msg, sizeof(msg), "MUTE:%d:%d", t, vals[12]);
           sendToTeensy(msg);
         }
+      }
+    } else if (line.startsWith("MASTERFX:")) {
+      const String rest = afterColon(line);
+      int start = 0;
+      for (uint8_t i = 0; i < 3; ++i) {
+        int end = rest.indexOf(',', start);
+        if (end < 0) end = rest.length();
+        masterFxVal[i] = static_cast<uint8_t>(constrain(rest.substring(start, end).toInt(), 0, 100));
+        sendMasterFx(i);
+        start = end + 1;
       }
     } else if (line.startsWith("TFX:")) {
       int vals[1 + kFxRowCount] = {};
@@ -9643,6 +9703,11 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
     if (hitTestMixerTrack(x, y, track)) {
       selectedMixerTrack = static_cast<int8_t>(track);
       drawMixerPage();
+    } else if (hitTestMixerMaster(x, y) >= 0) {
+      const uint8_t i = static_cast<uint8_t>(hitTestMixerMaster(x, y));
+      masterFxVal[i] = static_cast<uint8_t>(masterFxVal[i] >= 100 ? 0 : masterFxVal[i] + 20);
+      sendMasterFx(i);
+      drawMixerMasterRow();
     } else if (hitTestMixerMute(x, y)) {
       // Boutons MUTE/SOLO tactiles (2026-09-19, "il faut que les 2
       // controles soit[ent] boutons tactil[es]") -- meme action que
