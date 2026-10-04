@@ -59,7 +59,7 @@ La documentation détaillée est dans [la roadmap GB/LSDJ](../AZ2_GB_ROADMAP_IMP
 
 ## Reste à faire
 
-Qualifier les sauvegardes/RTC avec coupures de courant, mesurer FPS/audio sur le prototype, tester les jeux et LSDJ avec résultats reproductibles, conserver la stéréo jusqu'au DAC sans dépasser la mémoire audio du Teensy, puis développer navigation, édition et affectation multi-captures. Ne pas annoncer ces points comme achevés parce que la CI compile.
+Liste détaillée et à jour : [AZ2_RESTE_A_FAIRE.md](../AZ2_RESTE_A_FAIRE.md). En bref : niveau du moteur SPECTRAL, endurance du rack et samples du granulaire ; page MOTEURS animée ; NES à pleine vitesse ; sauvegardes/RTC face aux coupures et matrice de ROMs/LSDJ ; CI des quatre firmwares et découpage des gros `main.cpp`. Ne pas annoncer ces points comme achevés parce que la CI compile.
 
 ## Contribution et licences
 

@@ -1,5 +1,7 @@
 # Documentation AZ-2
 
+- **[Reste à faire — liste unique et à jour](AZ2_RESTE_A_FAIRE.md)** · [État actuel vérifié](AZ2_ETAT_ACTUEL.md) · [CHANGELOG](../CHANGELOG.md)
+
 - [Feuille de route du rack audio physique](AZ2_ROADMAP_RACK_AUDIO_PHYSIQUE.md)
 - [Câblage du rack de moteurs externes](AZ2_CABLAGE_RACK_MOTEURS_EXTERNES.md)
 - [Pinout canonique Teensy / ESP32-S3 / DAC](AZ2_RACK_PINOUT.md)

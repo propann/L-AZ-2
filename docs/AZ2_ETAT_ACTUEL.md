@@ -1,11 +1,12 @@
 # AZ-2 — état actuel vérifié au 4 octobre 2026
 
 Ce document est la source de vérité de l’état courant. Les audits datés dans
-`docs/` sont historiques et peuvent décrire des états antérieurs.
+`docs/` sont historiques et peuvent décrire des états antérieurs. Ce qui
+reste à faire : [`AZ2_RESTE_A_FAIRE.md`](AZ2_RESTE_A_FAIRE.md).
 
 ## Production active
 
-- Branche de travail : `son-vivant` (son et effets), issue de `main` après fusion de `nes-emulation` (PR #4).
+- Branche : `main` (PR #4 console, #5 son vivant, #6 jeu et réglages fusionnées).
 - Teensy 4.1 : maître audio, séquenceur, moteurs locaux, SD et DAC I²S.
   Firmware : `master_teensy_rack_lab`.
 - ESP32-S3 écran : interface tactile, page ÉMULATEURS (3 cartes : GAME BOY,
