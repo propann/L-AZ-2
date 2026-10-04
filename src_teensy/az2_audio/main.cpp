@@ -812,6 +812,7 @@ float patchLevelTrim(uint8_t track) {
 void requestStepLock(uint8_t track, uint8_t fx, uint8_t value);
 void releaseAllStepLocks();
 void arpStop();  // arpegiateur des pads, voir serviceArp()
+void padMonoReset();  // pile de notes des pads mono, voir padMonoNoteOn()
 
 void applyGroupGainNow(uint8_t track) {
   const float trim = kEngineLevelTrim[trackEngine[track] % az2::kEngineCount] * patchLevelTrim(track);
@@ -2272,6 +2273,7 @@ void panicAllAudio() {
     padSampler[pad].stopNow();
   releaseAllStepLocks();  // repose les reglages EFFETS verrouilles par des pas
   arpStop();
+  padMonoReset();
   // PANIC remet aussi le chemin audio GB a zero (anneau, interpolateur) :
   // c'etait le seul etat audio que rien ne savait vider avant un power-cycle.
   gbAudioResetStream();
@@ -4192,6 +4194,51 @@ void handleArpCommand(const String &line) {
   relayLine(line);
 }
 
+// Pile de notes des pads pour les moteurs MONOPHONIQUES (2026-10-04,
+// "ca joue une note, ca oublie la premiere, il faut que ca joue tant que
+// j'appuie") : ANALOG, BRAIDS et KARPLUS n'ont qu'une voix ; un 2e pad
+// remplacait le 1er et relacher N'IMPORTE QUEL pad coupait le son. Comme un
+// synthe mono : la derniere note tenue sonne, relacher la note qui sonne
+// fait reprendre la precedente encore tenue, le son ne s'arrete qu'au
+// dernier pad relache.
+uint8_t padMonoStack[kTrackCount][az2::kPadCount];
+uint8_t padMonoCount[kTrackCount] = {};
+
+void padMonoReset() {
+  for (uint8_t t = 0; t < kTrackCount; ++t) padMonoCount[t] = 0;
+}
+
+bool engineIsMono(uint8_t engine) {
+  return engine == az2::kEngineAnalog || engine == az2::kEngineBraids || engine == az2::kEngineKarplus;
+}
+
+void padMonoNoteOn(uint8_t track, uint8_t note, uint8_t velocity) {
+  uint8_t &n = padMonoCount[track];
+  for (uint8_t i = 0; i < n; ++i) {
+    if (padMonoStack[track][i] == note) return;  // deja tenue
+  }
+  if (n < az2::kPadCount) padMonoStack[track][n++] = note;
+  trackNoteOn(track, note, velocity);
+}
+
+void padMonoNoteOff(uint8_t track, uint8_t note) {
+  uint8_t &n = padMonoCount[track];
+  int8_t idx = -1;
+  for (uint8_t i = 0; i < n; ++i) {
+    if (padMonoStack[track][i] == note) idx = static_cast<int8_t>(i);
+  }
+  if (idx < 0) return;
+  const bool wasSounding = idx == static_cast<int8_t>(n - 1);
+  for (uint8_t i = static_cast<uint8_t>(idx); i + 1 < n; ++i) padMonoStack[track][i] = padMonoStack[track][i + 1];
+  --n;
+  if (!wasSounding) return;  // une note tenue "en dessous" : rien ne change
+  if (n > 0) {
+    trackNoteOn(track, padMonoStack[track][n - 1], 100);  // reprend la precedente
+  } else {
+    trackNoteOff(track, note);
+  }
+}
+
 void handlePadCommand(const String &line) {
   const int firstColon = line.indexOf(':');
   const int secondColon = line.indexOf(':', firstColon + 1);
@@ -4282,14 +4329,16 @@ void handlePadCommand(const String &line) {
       velocity = static_cast<uint8_t>(line.substring(velIdx + 4).toInt());
     }
     if (hasTrack) {
-      trackNoteOn(track, note, velocity);
+      if (engineIsMono(trackEngine[track])) padMonoNoteOn(track, note, velocity);
+      else trackNoteOn(track, note, velocity);
     } else {
       liveVoice.keydown(note, velocity);
     }
     announceLed(pad, "ON");
   } else {
     if (hasTrack) {
-      trackNoteOff(track, note);
+      if (engineIsMono(trackEngine[track])) padMonoNoteOff(track, note);
+      else trackNoteOff(track, note);
     } else {
       liveVoice.keyup(note);
     }
