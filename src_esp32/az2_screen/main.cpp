@@ -2643,7 +2643,10 @@ const char *const kPatchLabelsDexed[6] = {"CUTOFF", "RESONANCE", "ALGO (DX7)", "
 bool patchRowActive(uint8_t track, uint8_t row) {
   if (isRackTrack(track)) return true;
   if (trackEngine[track] == az2::kEngineDexed) return !(row >= 4 && row < 6);
-  return row < 2;
+  // [2026-10-04] ADSR de retour en lignes (ATTACK/DECAY, SUSTAIN/RELEASE) :
+  // avec le modele "encodeur 2 = gauche, encodeur 3 = droite, clics = ligne
+  // precedente/suivante", on parcourt tout le patch aux encodeurs.
+  return true;
 }
 
 const char *patchRowLabel(uint8_t track, uint8_t row) {
@@ -3175,172 +3178,409 @@ int16_t hitTestPatchList(int16_t x, int16_t y) {
              : -1;
 }
 
-void drawPatchScopeAdsrOverlay();  // definie plus bas, utilisee ici
+// ---------------------------------------------------------------------
+// Vue animee de la page PATCH (2026-10-04, "une image qui bouge propre a
+// chaque moteur, qui permet de comprendre visuellement comment on interagit
+// avec le moteur"). Remplace l'oscilloscope + ADSR fin : le cadre montre ce
+// que fait le reglage sous les encodeurs :
+//  - ligne CUTOFF/RESO : courbe du filtre, harmoniques coupees au-dela ;
+//  - lignes ATTACK..RELEASE : enveloppe epaisse, point qui la parcourt ;
+//  - autres lignes : l'animation du moteur (FM DEXED, lame EPIANO, XY
+//    BRAIDS, corde KARPLUS, onde ANALOG, pads DRUM, lecture SAMPLER, grains,
+//    spectre), pilotee par les vrais reglages de la piste.
+// Le son reel (paquets SCOPE) anime l'intensite et s'affiche en filigrane.
+// Dessin dans un petit canvas en RAM INTERNE copie d'un bloc (~15 Hz) : meme
+// regle que l'icone de MOTEURS, pas de rafales d'ecritures PSRAM qui
+// feraient sautiller l'ecran.
+extern int8_t selectedPatchRow;  // defini plus bas avec l'etat PATCH
 
-// N'efface/redessine QUE l'interieur (pas le cadre, voir drawPatchPage()
-// qui le dessine une seule fois en entrant sur la page) -- appelee a
-// chaque paquet SCOPE recu (~15/s, voir kScopeSendIntervalMs cote
-// Teensy), redessiner le cadre a chaque fois donnait un effet de
-// scintillement genant ("la fenetre patch ... elle scintille un peu
-// trop").
-void drawPatchScope() {
-  const int16_t w = static_cast<int16_t>(kPatchScopeW - 2);
-  auto pointX = [w](uint8_t i) -> int16_t {
-    return static_cast<int16_t>(kMargin + (i * w) / (az2::kScopeSamplesPerPacket - 1));
-  };
-  auto pointY = [](uint8_t sample) -> int16_t {
-    return static_cast<int16_t>(kPatchScopeTop + 1 +
-                                ((255 - sample) * (kPatchScopeH - 2)) / 255);
-  };
-  // Efface uniquement l'ancienne courbe. Le fond et le cadre restent
-  // immobiles, ce qui évite le scintillement visible à chaque paquet.
-  if (scopeRendered) {
-    int16_t prevX = pointX(0);
-    int16_t prevY = pointY(scopeRenderedSamples[0]);
-    for (uint8_t i = 1; i < az2::kScopeSamplesPerPacket; ++i) {
-      const int16_t x = pointX(i);
-      const int16_t y = pointY(scopeRenderedSamples[i]);
-      gfx->drawLine(prevX, prevY, x, y, RGB565_BLACK);
-      prevX = x;
-      prevY = y;
-    }
-    scopeRendered = false;
+class PatchVizCanvas : public Arduino_Canvas {
+ public:
+  PatchVizCanvas(int16_t w, int16_t h, Arduino_G *out, int16_t x, int16_t y) : Arduino_Canvas(w, h, out, x, y) {
+    _framebuffer = static_cast<uint16_t *>(
+        heap_caps_malloc(static_cast<size_t>(w) * h * 2, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
   }
-  if (!scopeHasData) {
-    gfx->setTextSize(1);
-    gfx->setTextColor(kDim);
-    gfx->setCursor(static_cast<int16_t>(kMargin + 8), static_cast<int16_t>(kPatchScopeTop + kPatchScopeH / 2 - 4));
-    gfx->print("(silence -- B pour tester)");
-    // BUG trouve en relisant (2026-09-23) : ce retour anticipe sautait
-    // drawPatchScopeAdsrOverlay() plus bas -- en silence (l'etat par
-    // defaut en arrivant sur la page, avant tout appui B), le focus
-    // oscilloscope/ADSR (patchOnScopeRow) etait invisible : ni cadre, ni
-    // courbe, ni points, alors meme que BAS venait d'y entrer. Il faut
-    // l'overlay ici aussi.
-    drawPatchScopeAdsrOverlay();
-    return;
-  }
-  int16_t prevX = pointX(0), prevY = pointY(scopeSamples[0]);
-  const uint16_t traceColor = patchAccent(static_cast<uint8_t>(patchTrack));
-  for (uint8_t i = 0; i < az2::kScopeSamplesPerPacket; ++i) {
-    const int16_t x = pointX(i);
-    const int16_t y = pointY(scopeSamples[i]);
-    if (i > 0) {
-      gfx->drawLine(prevX, prevY, x, y, traceColor);
-    }
-    prevX = x;
-    prevY = y;
-    scopeRenderedSamples[i] = scopeSamples[i];
-  }
-  scopeRendered = true;
-  drawPatchScopeAdsrOverlay();
+  bool ready() const { return _framebuffer != nullptr; }
+};
+
+constexpr int16_t kPatchVizW = kPatchScopeW - 2;
+constexpr int16_t kPatchVizH = kPatchScopeH - 2;
+PatchVizCanvas *patchVizCanvas = nullptr;
+bool patchVizTried = false;
+uint32_t patchVizFrame = 0;
+uint32_t patchVizLastMs = 0;
+float patchVizLevel = 0.0f;  // niveau du son reel, lisse (0-1)
+
+enum class PatchVizMode : uint8_t { Engine, Filter, Envelope };
+
+PatchVizMode patchVizMode(uint8_t t) {
+  if (patchOnScopeRow) return PatchVizMode::Envelope;
+  if (patchOnTrackRow || isRackTrack(t) || selectedPatchRow >= 6) return PatchVizMode::Engine;
+  if (selectedPatchRow < 2) return PatchVizMode::Filter;
+  if (trackEngine[t] == az2::kEngineDexed) return PatchVizMode::Engine;  // ALGO/FDBK/SUS/REL : vue FM
+  return PatchVizMode::Envelope;
 }
 
-// Courbe ADSR schematique superposee a l'oscilloscope (2026-09-23) --
-// redessinee a CHAQUE rafraichissement du scope (pas une seule fois),
-// sinon le trace-erase-redraw de la forme d'onde ci-dessus l'efface
-// petit a petit. 4 segments de largeur nominale egale (attaque/chute/
-// maintien fixe/relachement), la largeur des 3 segments temporels
-// (pas le maintien, qui est un NIVEAU pas une duree) est modulee par le
-// reglage 0-127 correspondant -- schematique, pas une reproduction
-// exacte de la courbe de AudioEffectEnvelope, mais bouge visiblement a
-// chaque tour d'encodeur, ce qui est le but ("on doit pouvoir la
-// regler avec les encodeurs").
-void drawPatchScopeAdsrOverlay() {
-  // Position/visibilite memorisees de l'appel precedent, pour EFFACER
-  // avant de redessiner -- sinon tourner un encodeur (qui bouge la ligne
-  // a chaque appel) ou sortir du focus (qui fait disparaitre les points)
-  // laisse une trainee : rien d'autre n'efface ces pixels-la (l'effacement
-  // de la trace audio plus haut ne connait que scopeRenderedSamples).
-  // Meme principe que scopeRendered/scopeRenderedSamples juste au-dessus.
-  static bool prevLineValid = false;
-  static int16_t prevLineX[5] = {};
-  static int16_t prevLineY[5] = {};
-  static bool prevDotsValid = false;
-  static int16_t prevDotX[4] = {};
-  static int16_t prevDotY[4] = {};
+// Nombre de porteuses des 32 algorithmes DX7 (les autres operateurs sont
+// des modulateurs empiles au-dessus).
+constexpr uint8_t kDx7Carriers[32] = {2, 2, 2, 2, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1,
+                                      1, 1, 3, 3, 4, 4, 4, 5, 5, 3, 3, 3, 4, 4, 5, 6};
 
-  const uint8_t t = static_cast<uint8_t>(patchTrack);
-  const int16_t w = static_cast<int16_t>(kPatchScopeW - 2);
-  const int16_t top = static_cast<int16_t>(kPatchScopeTop + 1);
-  const int16_t h = static_cast<int16_t>(kPatchScopeH - 2);
-  const int16_t x0 = kMargin;
-  auto segW = [w](uint8_t val127) -> int16_t {
-    const float frac = 0.2f + 0.8f * (static_cast<float>(val127) / 127.0f);
-    return static_cast<int16_t>((static_cast<float>(w) / 4.0f) * frac);
+void patchVizLabel(Arduino_GFX *g, const char *text, uint16_t color) {
+  g->setTextSize(1);
+  g->setTextColor(color);
+  g->setCursor(4, 3);
+  g->print(text);
+}
+
+void patchVizFilter(Arduino_GFX *g, uint8_t t, uint16_t accent) {
+  const int16_t W = kPatchVizW, H = kPatchVizH;
+  const float cut = trackCutoff[t] / 127.0f, res = trackReso[t] / 127.0f;
+  const int16_t fcX = static_cast<int16_t>(10 + cut * (W - 20));
+  const int16_t base = static_cast<int16_t>(H - 6);
+  const int16_t flat = 34;
+  auto resp = [&](int16_t x) -> float {  // 0..~1.6 (pic de resonance)
+    const float d = static_cast<float>(x - fcX);
+    float v = d <= 0 ? 1.0f : expf(-d / 18.0f);
+    v += res * 0.7f * expf(-(d * d) / 60.0f);
+    return v;
   };
-  const int16_t aW = segW(trackAttack[t]);
-  const int16_t dW = segW(trackDecay[t]);
-  const int16_t rW = segW(trackRelease[t]);
-  const int16_t sW = static_cast<int16_t>(w / 4);  // maintien : largeur fixe, c'est un niveau pas une duree
-  const int16_t susY = static_cast<int16_t>(top + h - (static_cast<int32_t>(trackSustain[t]) * h) / 127);
-  const int16_t baseY = static_cast<int16_t>(top + h);
-  const int16_t peakY = top;
-  const int16_t x1 = static_cast<int16_t>(x0 + aW);
-  const int16_t x2 = static_cast<int16_t>(x1 + dW);
-  const int16_t x3 = static_cast<int16_t>(x2 + sW);
-  const int16_t x4 = static_cast<int16_t>(x3 + rW);
-
-  if (prevLineValid) {
-    gfx->drawLine(prevLineX[0], prevLineY[0], prevLineX[1], prevLineY[1], RGB565_BLACK);
-    gfx->drawLine(prevLineX[1], prevLineY[1], prevLineX[2], prevLineY[2], RGB565_BLACK);
-    gfx->drawLine(prevLineX[2], prevLineY[2], prevLineX[3], prevLineY[3], RGB565_BLACK);
-    gfx->drawLine(prevLineX[3], prevLineY[3], prevLineX[4], prevLineY[4], RGB565_BLACK);
+  // Harmoniques animees, attenuees par le filtre.
+  for (int16_t i = 0; i < 28; ++i) {
+    const int16_t x = static_cast<int16_t>(6 + i * (W - 12) / 27);
+    const float wob = 0.55f + 0.45f * sinf(patchVizFrame * 0.21f + i * 1.7f);
+    const float amp = (1.0f - i / 34.0f) * wob * (0.45f + 0.55f * patchVizLevel + 0.2f);
+    const int16_t hgt = static_cast<int16_t>(amp * resp(x) * (base - flat + 10));
+    g->fillRect(static_cast<int16_t>(x - 2), static_cast<int16_t>(base - hgt), 4, hgt, dimColor(accent, 1));
   }
-  if (prevDotsValid) {
-    for (uint8_t i = 0; i < 4; ++i) {
-      gfx->fillCircle(prevDotX[i], prevDotY[i], 4, RGB565_BLACK);  // rayon 4 : couvre le plein (4) ET le creux (3)
+  // Courbe du filtre, epaisse.
+  int16_t px = 0, py = 0;
+  for (int16_t x = 0; x < W; x += 2) {
+    const int16_t y = static_cast<int16_t>(constrain(base - resp(x) * (base - flat), 14.0f, static_cast<float>(base)));
+    if (x > 0) {
+      for (int8_t o = -1; o <= 1; ++o) g->drawLine(px, static_cast<int16_t>(py + o), x, static_cast<int16_t>(y + o), RGB565_WHITE);
     }
+    px = x;
+    py = y;
   }
+  const bool onCut = selectedPatchRow == 0 && !patchOnTrackRow;
+  for (int16_t y = 14; y < base; y += 6) g->drawFastVLine(fcX, y, 3, onCut ? kEnc1Color : kDim);
+  if (!onCut) {
+    const int16_t peakY = static_cast<int16_t>(base - resp(fcX) * (base - flat));
+    g->drawCircle(fcX, peakY, static_cast<int16_t>(5 + (patchVizFrame & 3)), kEnc2Color);
+  }
+  patchVizLabel(g, onCut ? "FILTRE : CUTOFF ferme les aigus" : "FILTRE : RESO accentue la coupure", RGB565_WHITE);
+}
 
-  // Rouge vif fixe (2026-09-24, "on ne voit pas l'ADSR ... on fait une
-  // ligne rouge avec des points petits bleus pour materialiser l'ADSR") :
-  // avant, la ligne changeait de couleur/intensite selon le focus
-  // (blanc vif si patchOnScopeRow, sinon la couleur du moteur assombrie
-  // aux 3/4 -- bien trop discret sur un petit ecran a cote d'un trace
-  // audio lumineux). Desormais TOUJOURS la meme couleur bien visible,
-  // focus ou pas -- la courbe est un repere permanent, pas juste un
-  // etat d'edition.
-  constexpr uint16_t kAdsrLineColor = RGB565(255, 40, 40);
-  constexpr uint16_t kAdsrDotColor = RGB565(70, 140, 255);
-  gfx->drawLine(x0, baseY, x1, peakY, kAdsrLineColor);
-  gfx->drawLine(x1, peakY, x2, susY, kAdsrLineColor);
-  gfx->drawLine(x2, susY, x3, susY, kAdsrLineColor);
-  gfx->drawLine(x3, susY, x4, baseY, kAdsrLineColor);
-  prevLineX[0] = x0; prevLineY[0] = baseY;
-  prevLineX[1] = x1; prevLineY[1] = peakY;
-  prevLineX[2] = x2; prevLineY[2] = susY;
-  prevLineX[3] = x3; prevLineY[3] = susY;
-  prevLineX[4] = x4; prevLineY[4] = baseY;
-  prevLineValid = true;
-
-  // "Une petite boule sur les points" : un marqueur bleu par point ADSR
-  // (fin d'attaque/chute/maintien/relachement), TOUJOURS affiche (meme
-  // raison que la ligne ci-dessus -- materialiser l'ADSR en permanence,
-  // pas seulement en focus). Le point actuellement selectionne
-  // (patchScopeAdsrPoint, voir le clic d'encodeur dans
-  // handleTeensyLine()) ressort en plus gros/blanc UNIQUEMENT quand on
-  // est en train de l'editer (patchOnScopeRow), pour montrer lequel des
-  // 4 bouge avec les encodeurs.
-  {
-    const int16_t px[4] = {x1, x2, x3, x4};
-    const int16_t py[4] = {peakY, susY, susY, baseY};
-    for (uint8_t i = 0; i < 4; ++i) {
-      if (i == patchScopeAdsrPoint) {
-        gfx->fillCircle(px[i], py[i], 4, RGB565_WHITE);
-      } else {
-        gfx->fillCircle(px[i], py[i], 3, kAdsrDotColor);
+void patchVizEnvelope(Arduino_GFX *g, uint8_t t) {
+  const int16_t W = kPatchVizW, H = kPatchVizH;
+  constexpr uint16_t kLine = RGB565(255, 60, 60);
+  const int16_t top = 16, bottom = static_cast<int16_t>(H - 5), h = static_cast<int16_t>(bottom - top);
+  auto segW = [W](uint8_t v) -> int16_t {
+    return static_cast<int16_t>((W - 12) / 4.0f * (0.15f + 0.85f * v / 127.0f));
+  };
+  const int16_t x0 = 6;
+  const int16_t x1 = static_cast<int16_t>(x0 + segW(trackAttack[t]));
+  const int16_t x2 = static_cast<int16_t>(x1 + segW(trackDecay[t]));
+  const int16_t x3 = static_cast<int16_t>(x2 + (W - 12) / 4);
+  const int16_t x4 = static_cast<int16_t>(x3 + segW(trackRelease[t]));
+  const int16_t susY = static_cast<int16_t>(bottom - (static_cast<int32_t>(trackSustain[t]) * h) / 127);
+  const int16_t xs[5] = {x0, x1, x2, x3, x4};
+  const int16_t ys[5] = {bottom, top, susY, susY, bottom};
+  auto levelAt = [&](int16_t x) -> int16_t {
+    for (uint8_t s = 0; s < 4; ++s) {
+      if (x <= xs[s + 1]) {
+        const int16_t dx = static_cast<int16_t>(xs[s + 1] - xs[s]);
+        return dx <= 0 ? ys[s + 1] : static_cast<int16_t>(ys[s] + (ys[s + 1] - ys[s]) * (x - xs[s]) / dx);
       }
-      prevDotX[i] = px[i];
-      prevDotY[i] = py[i];
     }
-    prevDotsValid = true;
+    return bottom;
+  };
+  // Remplissage sous la courbe + segment en cours d'edition en clair.
+  const int8_t editSeg = (selectedPatchRow >= 2 && selectedPatchRow < 6 && !patchOnTrackRow)
+                             ? static_cast<int8_t>(selectedPatchRow - 2)
+                             : -1;  // 0=A 1=D 2=S 3=R
+  for (int16_t x = x0; x <= x4; x += 2) {
+    uint8_t seg = 0;
+    while (seg < 3 && x > xs[seg + 1]) ++seg;
+    const bool hot = editSeg == static_cast<int8_t>(seg) || (editSeg == 2 && seg == 2);
+    const int16_t y = levelAt(x);
+    g->drawFastVLine(x, y, static_cast<int16_t>(bottom - y), hot ? RGB565(110, 30, 30) : RGB565(55, 12, 12));
   }
-  // Bordure toujours redessinee dans la couleur courante (position FIXE --
-  // un simple contour ecrase l'ancien sans besoin de l'effacer d'abord,
-  // contrairement a la ligne/aux points qui bougent).
+  for (uint8_t s = 0; s < 4; ++s) {
+    const bool hot = editSeg == static_cast<int8_t>(s);
+    const uint16_t c = hot ? RGB565_WHITE : kLine;
+    for (int8_t o = -1; o <= 1; ++o) {
+      g->drawLine(xs[s], static_cast<int16_t>(ys[s] + o), xs[s + 1], static_cast<int16_t>(ys[s + 1] + o), c);
+    }
+  }
+  static const char kNames[4] = {'A', 'D', 'S', 'R'};
+  for (uint8_t i = 0; i < 4; ++i) {
+    const bool hot = editSeg == static_cast<int8_t>(i);
+    g->fillCircle(xs[i + 1], ys[i + 1], hot ? 5 : 3, hot ? RGB565_WHITE : RGB565(70, 140, 255));
+    g->setTextColor(hot ? RGB565_WHITE : kDim);
+    g->setCursor(static_cast<int16_t>((xs[i] + xs[i + 1]) / 2 - 2), static_cast<int16_t>(bottom - 10));
+    g->print(kNames[i]);
+  }
+  // Point qui parcourt l'enveloppe (une "note" toutes les ~2,5 s).
+  const int16_t span = static_cast<int16_t>(x4 - x0 + 24);
+  const int16_t pos = static_cast<int16_t>(x0 + (patchVizFrame * 3) % span);
+  if (pos <= x4) {
+    const int16_t y = levelAt(pos);
+    g->fillCircle(pos, y, 4, RGB565(255, 230, 80));
+    g->fillRect(static_cast<int16_t>(W - 8), y, 5, static_cast<int16_t>(bottom - y), RGB565(255, 230, 80));
+  }
+  static const char *const kHelp[4] = {"ATTACK : montee du son", "DECAY : chute apres le pic",
+                                       "SUSTAIN : niveau tenu", "RELEASE : fin au relachement"};
+  patchVizLabel(g, editSeg >= 0 ? kHelp[editSeg] : "ENVELOPPE : volume dans le temps", RGB565_WHITE);
+}
+
+void patchVizEngine(Arduino_GFX *g, uint8_t t, uint16_t accent) {
+  const int16_t W = kPatchVizW, H = kPatchVizH;
+  const int16_t cy = static_cast<int16_t>(H / 2 + 6);
+  const float ph = patchVizFrame * 0.25f;
+  const float act = 0.35f + 0.65f * patchVizLevel;
+  const uint8_t *ex = patchExtraVal[t];
+  char label[44];
+  switch (trackEngine[t]) {
+    case az2::kEngineDexed: {
+      // Operateurs : porteuses en bas, modulateurs empiles au-dessus,
+      // impulsions qui descendent, boucle de feedback sur le 6.
+      const uint8_t algo = static_cast<uint8_t>(trackAlgo[t] % 32);
+      const uint8_t car = kDx7Carriers[algo];
+      const uint8_t mods = static_cast<uint8_t>(6 - car);
+      const uint8_t stack = mods == 0 ? 0 : static_cast<uint8_t>((mods + car - 1) / car);
+      int16_t ox[6], oy[6];
+      for (uint8_t i = 0; i < 6; ++i) {
+        if (i < car) {
+          ox[i] = static_cast<int16_t>(14 + i * 22);
+          oy[i] = static_cast<int16_t>(H - 18);
+        } else {
+          const uint8_t m = static_cast<uint8_t>(i - car);
+          ox[i] = static_cast<int16_t>(14 + (m % car) * 22);
+          oy[i] = static_cast<int16_t>(H - 18 - (1 + m / car) * (stack > 2 ? 18 : 22));
+        }
+      }
+      for (uint8_t i = car; i < 6; ++i) {
+        const uint8_t below = static_cast<uint8_t>(i >= 2 * car ? i - car : (i - car) % car);
+        g->drawLine(static_cast<int16_t>(ox[i] + 8), static_cast<int16_t>(oy[i] + 14), static_cast<int16_t>(ox[below] + 8),
+                    oy[below], dimColor(accent, 1));
+        const float f = fmodf(ph * 0.6f + i * 0.3f, 1.0f);
+        g->fillCircle(static_cast<int16_t>(ox[i] + 8 + (ox[below] - ox[i]) * f),
+                      static_cast<int16_t>(oy[i] + 14 + (oy[below] - oy[i] - 14) * f), 2, RGB565_WHITE);
+      }
+      for (uint8_t i = 0; i < 6; ++i) {
+        g->fillRect(ox[i], oy[i], 17, 14, i < car ? accent : dimColor(accent, 2));
+        g->drawRect(ox[i], oy[i], 17, 14, RGB565_WHITE);
+        g->setTextColor(i < car ? RGB565_BLACK : RGB565_WHITE);
+        g->setCursor(static_cast<int16_t>(ox[i] + 6), static_cast<int16_t>(oy[i] + 4));
+        g->print(static_cast<int>(6 - i));
+      }
+      const int16_t fb = static_cast<int16_t>(trackFeedback[t]);
+      const uint8_t top = 5;
+      if (fb > 0) {
+        g->drawCircle(static_cast<int16_t>(ox[top] + 20), oy[top], static_cast<int16_t>(4 + fb), kEnc2Color);
+      }
+      // Onde FM resultante : l'indice monte avec le feedback et les modulateurs.
+      const float index = 0.4f + mods * 0.45f + fb * 0.25f;
+      int16_t px = 0, py = cy;
+      for (int16_t x = 150; x < W - 4; ++x) {
+        const float a = (x - 150) * 0.16f + ph;
+        const int16_t y = static_cast<int16_t>(cy - act * 26 * sinf(a + index * act * sinf(a * 2.0f)));
+        if (x > 150) g->drawLine(px, py, x, y, RGB565_WHITE);
+        px = x;
+        py = y;
+      }
+      snprintf(label, sizeof(label), "FM ALGO %u : %u porteuse%s", algo + 1, car, car > 1 ? "s" : "");
+      patchVizLabel(g, label, RGB565_WHITE);
+      break;
+    }
+    case az2::kEngineEPiano: {
+      // Lame frappee par le marteau ; HARDNESS = marteau, TREMOLO = pulsation.
+      const float trem = 1.0f - (ex[4] / 127.0f) * 0.5f * (1.0f + sinf(patchVizFrame * (0.05f + ex[5] / 400.0f)));
+      const float amp = act * trem * 22.0f;
+      const int16_t L = static_cast<int16_t>(W - 40);
+      g->fillRect(4, static_cast<int16_t>(cy - 10), 8, 20, kDim);  // encastrement
+      int16_t px = 12, py = cy;
+      for (int16_t x = 12; x < 12 + L; x += 2) {
+        const float s = sinf(3.14159f * (x - 12) / (2.0f * L));
+        const int16_t y = static_cast<int16_t>(cy + amp * s * sinf(ph * 2.2f));
+        for (int8_t o = 0; o < 2; ++o) g->drawLine(px, static_cast<int16_t>(py + o), x, static_cast<int16_t>(y + o), RGB565_WHITE);
+        px = x;
+        py = y;
+      }
+      g->fillRect(static_cast<int16_t>(12 + L + 6), static_cast<int16_t>(cy - 8), 12, 16, accent);  // capteur
+      const int16_t hammer = static_cast<int16_t>(3 + ex[2] / 20);
+      const int16_t hx = static_cast<int16_t>(12 + L / 3);
+      const int16_t hy = static_cast<int16_t>(cy + 14 + 6 * fabsf(sinf(ph)));
+      g->fillCircle(hx, hy, hammer, RGB565(255, 200, 120));
+      snprintf(label, sizeof(label), "LAME + MARTEAU  TREMOLO %u", ex[4]);
+      patchVizLabel(g, label, RGB565_WHITE);
+      break;
+    }
+    case az2::kEngineBraids: {
+      // Pave XY COLOR/TIMBRE et onde qui se deforme.
+      const float color = ex[0] / 127.0f, timbre = ex[1] / 127.0f;
+      g->drawRect(6, 16, 64, 64, kDim);
+      const int16_t dx = static_cast<int16_t>(6 + color * 63), dy = static_cast<int16_t>(79 - timbre * 63);
+      g->drawFastHLine(6, dy, 64, dimColor(accent, 1));
+      g->drawFastVLine(dx, 16, 64, dimColor(accent, 1));
+      g->fillCircle(dx, dy, static_cast<int16_t>(4 + 2 * act), RGB565_WHITE);
+      int16_t px = 80, py = cy;
+      for (int16_t x = 80; x < W - 4; ++x) {
+        const float a = (x - 80) * 0.12f + ph;
+        float v = sinf(a) + timbre * 0.8f * sinf(a * (2.0f + color * 5.0f));
+        v = v > 1.0f - color * 0.6f ? 2.0f - color * 1.2f - v : v;  // repli de l'onde par COLOR
+        const int16_t y = static_cast<int16_t>(cy - act * 18 * v);
+        if (x > 80) for (int8_t o = 0; o < 2; ++o) g->drawLine(px, static_cast<int16_t>(py + o), x, static_cast<int16_t>(y + o), accent);
+        px = x;
+        py = y;
+      }
+      patchVizLabel(g, "COLOR / TIMBRE : forme de l'onde", RGB565_WHITE);
+      break;
+    }
+    case az2::kEngineKarplus: {
+      // Corde pincee : forme triangulaire qui vibre et s'adoucit.
+      const float bright = trackCutoff[t] / 127.0f;
+      const int16_t L = static_cast<int16_t>(W - 20);
+      g->fillRect(6, static_cast<int16_t>(cy - 12), 4, 24, kDim);
+      g->fillRect(static_cast<int16_t>(10 + L), static_cast<int16_t>(cy - 12), 4, 24, kDim);
+      int16_t px = 10, py = cy;
+      for (int16_t x = 10; x <= 10 + L; x += 2) {
+        const float u = static_cast<float>(x - 10) / L;
+        const float tri = u < 0.3f ? u / 0.3f : (1.0f - u) / 0.7f;
+        const float sine = sinf(3.14159f * u);
+        const float shape = bright * tri + (1.0f - bright) * sine;
+        const int16_t y = static_cast<int16_t>(cy - act * 24 * shape * cosf(ph * 2.6f));
+        for (int8_t o = 0; o < 2; ++o) g->drawLine(px, static_cast<int16_t>(py + o), x, static_cast<int16_t>(y + o), RGB565_WHITE);
+        px = x;
+        py = y;
+      }
+      patchVizLabel(g, "CORDE PINCEE : CUTOFF = brillance", RGB565_WHITE);
+      break;
+    }
+    case az2::kEngineDrum: {
+      static const char *const kPads[4] = {"KICK", "SNARE", "HAT", "TOM"};
+      for (uint8_t i = 0; i < 4; ++i) {
+        const int16_t x = static_cast<int16_t>(30 + i * 56);
+        const float beat = fmodf(patchVizFrame / 4.0f + i * 0.5f, 4.0f);
+        const int16_t r = static_cast<int16_t>(14 + (beat < 1.0f ? (1.0f - beat) * 8 * act : 0));
+        g->drawCircle(x, cy, r, accent);
+        g->fillCircle(x, cy, 10, dimColor(accent, i == (patchVizFrame / 4) % 4 ? 0 : 2));
+        g->setTextColor(kDim);
+        g->setCursor(static_cast<int16_t>(x - 12), static_cast<int16_t>(H - 12));
+        g->print(kPads[i]);
+      }
+      patchVizLabel(g, "BATTERIE : un son par note", RGB565_WHITE);
+      break;
+    }
+    case az2::kEngineSampler: {
+      for (int16_t x = 6; x < W - 6; x += 3) {
+        const int16_t h = static_cast<int16_t>(4 + 22 * fabsf(sinf(x * 0.13f) * cosf(x * 0.031f)));
+        g->drawFastVLine(x, static_cast<int16_t>(cy - h), static_cast<int16_t>(2 * h), dimColor(accent, 1));
+      }
+      const int16_t head = static_cast<int16_t>(6 + (patchVizFrame * 4) % (W - 12));
+      g->fillRect(head, 16, 2, static_cast<int16_t>(H - 20), RGB565_WHITE);
+      patchVizLabel(g, ex[0] ? "SAMPLE : lecture en boucle" : "SAMPLE : lecture une fois", RGB565_WHITE);
+      break;
+    }
+    case az2::kEngineGranular: {
+      g->drawRect(6, static_cast<int16_t>(H - 16), static_cast<int16_t>(W - 12), 10, kDim);
+      const uint8_t density = static_cast<uint8_t>(4 + rackParamVal[t][0] / 8);
+      for (uint8_t i = 0; i < density; ++i) {
+        const uint32_t seed = (patchVizFrame / 3 + i * 7919u) * 2654435761u;
+        const int16_t x = static_cast<int16_t>(8 + (seed >> 8) % (W - 20));
+        const float life = static_cast<float>((patchVizFrame + i * 5) % 12) / 12.0f;
+        const int16_t y = static_cast<int16_t>(H - 20 - life * (H - 40));
+        const int16_t s = static_cast<int16_t>(2 + rackParamVal[t][1] / 24);
+        g->fillRect(x, y, s, s, life < 0.5f ? RGB565_WHITE : accent);
+        g->drawFastVLine(x, static_cast<int16_t>(H - 15), 8, accent);
+      }
+      patchVizLabel(g, "GRAINS : morceaux du sample rejoues", RGB565_WHITE);
+      break;
+    }
+    case az2::kEngineSpectral: {
+      for (uint8_t i = 0; i < 26; ++i) {
+        const int16_t x = static_cast<int16_t>(6 + i * 8.5f);
+        const float v = 0.5f + 0.5f * sinf(ph * 0.7f + i * 0.45f + rackParamVal[t][0] * 0.05f);
+        const int16_t h = static_cast<int16_t>(act * v * (H - 26) * (1.0f - i / 40.0f));
+        g->fillRect(x, static_cast<int16_t>(H - 4 - h), 6, h, i % 2 ? accent : dimColor(accent, 1));
+      }
+      patchVizLabel(g, "SPECTRE : bandes de frequences", RGB565_WHITE);
+      break;
+    }
+    default: {  // ANALOG : onde en dents de scie, adoucie par le filtre
+      const uint8_t harm = static_cast<uint8_t>(1 + trackCutoff[t] / 12);
+      const float res = trackReso[t] / 127.0f;
+      int16_t px = 0, py = cy;
+      for (int16_t x = 0; x < W; ++x) {
+        const float a = x * 0.07f + ph;
+        float v = 0.0f;
+        for (uint8_t k = 1; k <= harm; ++k) v += sinf(a * k) / k * (k == harm ? 1.0f + res * 3.0f : 1.0f);
+        const int16_t y = static_cast<int16_t>(cy - act * 15 * v);
+        if (x > 0) for (int8_t o = 0; o < 2; ++o) g->drawLine(px, static_cast<int16_t>(py + o), x, static_cast<int16_t>(y + o), accent);
+        px = x;
+        py = y;
+      }
+      snprintf(label, sizeof(label), "OSCILLATEUR : %u harmonique%s", harm, harm > 1 ? "s" : "");
+      patchVizLabel(g, label, RGB565_WHITE);
+      break;
+    }
+  }
+}
+
+void drawPatchViz() {
+  const uint8_t t = static_cast<uint8_t>(patchTrack);
+  const uint16_t accent = patchAccent(t);
+  if (!patchVizTried) {
+    patchVizTried = true;
+    patchVizCanvas = new PatchVizCanvas(kPatchVizW, kPatchVizH, gfx, static_cast<int16_t>(kMargin + 1),
+                                        static_cast<int16_t>(kPatchScopeTop + 1));
+    if (!patchVizCanvas->ready()) {
+      delete patchVizCanvas;
+      patchVizCanvas = nullptr;
+      Serial.println("PATCHVIZ: pas de RAM interne, vue animee desactivee");
+    }
+  }
+  // Niveau du son reel (paquets SCOPE), lisse.
+  float level = 0.0f;
+  if (scopeHasData) {
+    uint8_t peak = 0;
+    for (uint8_t i = 0; i < az2::kScopeSamplesPerPacket; ++i) {
+      const uint8_t d = static_cast<uint8_t>(abs(static_cast<int>(scopeSamples[i]) - 128));
+      if (d > peak) peak = d;
+    }
+    level = min(1.0f, peak / 64.0f);
+  }
+  patchVizLevel = max(level, patchVizLevel * 0.82f);
+  if (patchVizCanvas == nullptr) return;
+  Arduino_GFX *g = patchVizCanvas;
+  g->fillScreen(RGB565_BLACK);
+  switch (patchVizMode(t)) {
+    case PatchVizMode::Filter: patchVizFilter(g, t, accent); break;
+    case PatchVizMode::Envelope: patchVizEnvelope(g, t); break;
+    default: patchVizEngine(g, t, accent); break;
+  }
+  // Son reel en filigrane, en bas du cadre.
+  if (scopeHasData && patchVizLevel > 0.02f) {
+    int16_t px = 0, py = 0;
+    for (uint8_t i = 0; i < az2::kScopeSamplesPerPacket; ++i) {
+      const int16_t x = static_cast<int16_t>((i * (kPatchVizW - 1)) / (az2::kScopeSamplesPerPacket - 1));
+      const int16_t y = static_cast<int16_t>(kPatchVizH - 14 + ((255 - scopeSamples[i]) * 12) / 255);
+      if (i > 0) g->drawLine(px, py, x, y, dimColor(accent, 1));
+      px = x;
+      py = y;
+    }
+  }
+  patchVizCanvas->flush();
+}
+
+// Appelee aux evenements (paquet SCOPE, changement de ligne...) : cadre +
+// vue. Le cadre est BLANC quand l'oscilloscope a le focus de la croix.
+void drawPatchScope() {
   gfx->drawRect(kMargin, kPatchScopeTop, kPatchScopeW, kPatchScopeH,
-                patchOnScopeRow ? RGB565_WHITE : patchAccent(t));
+                patchOnScopeRow ? RGB565_WHITE : patchAccent(static_cast<uint8_t>(patchTrack)));
+  drawPatchViz();
 }
 
 // Nombre de lignes VISUELLES affichees a l'ecran en meme temps --
@@ -3408,6 +3648,29 @@ int8_t selectedPatchRow = 0;
 // HAUT/BAS), deja le moyen principal utilise partout ce soir. Le
 // tactile reste utile pour SELECTIONNER une case (tap = select),
 // juste plus pour l'editer directement.
+// Cadre d'une case de la page PATCH (2026-10-04, "les cadres selectionnes
+// ne sont pas assez visibles"). Ligne ACTIVE = les 2 cases de la ligne
+// visuelle selectionnee : fond teinte du moteur, double cadre blanc et une
+// languette de la couleur de l'encodeur qui regle la case (orange =
+// encodeur 2 a gauche, cyan = encodeur 3 a droite). Renvoie true si active.
+bool drawPatchCellFrame(uint8_t track, uint8_t row, int16_t x, int16_t y, int16_t w, int16_t h,
+                        uint16_t accent) {
+  const bool active = !patchOnTrackRow &&
+                      patchVisualRow(track, row) == patchVisualRow(track, static_cast<uint8_t>(selectedPatchRow));
+  if (!active) {
+    gfx->fillRect(x, y, w, h, RGB565_BLACK);
+    gfx->drawRect(x, y, w, h, kFaint);
+    return false;
+  }
+  gfx->fillRect(x, y, w, h, dimColor(accent, 2));
+  gfx->drawRect(x, y, w, h, RGB565_WHITE);
+  gfx->drawRect(static_cast<int16_t>(x + 1), static_cast<int16_t>(y + 1), static_cast<int16_t>(w - 2),
+                static_cast<int16_t>(h - 2), RGB565_WHITE);
+  gfx->fillRect(static_cast<int16_t>(x + 3), static_cast<int16_t>(y + 3), 5, static_cast<int16_t>(h - 6),
+                patchIsRightCol(track, row) ? kEnc2Color : kEnc1Color);
+  return true;
+}
+
 void drawPatchRow(uint8_t i) {
   int16_t y, x, w;
   if (!patchRowVisible(i, y, x, w)) {
@@ -3432,11 +3695,12 @@ void drawPatchRow(uint8_t i) {
     return;
   }
 
-  gfx->drawRect(x, y, w, rowH, rowSelected ? accent : kFaint);
+  const bool active = drawPatchCellFrame(track, i, x, y, w, rowH, accent);
+  (void)rowSelected;
 
   gfx->setTextSize(1);
-  gfx->setTextColor(kDim);
-  gfx->setCursor(static_cast<int16_t>(x + 4), static_cast<int16_t>(y + 3));
+  gfx->setTextColor(active ? (patchIsRightCol(track, i) ? kEnc2Color : kEnc1Color) : kDim);
+  gfx->setCursor(static_cast<int16_t>(x + (active ? 12 : 4)), static_cast<int16_t>(y + 3));
   gfx->print(patchRowLabel(track, i));
 
   // ALGO (Dexed) affiche 1-32 (convention DX7), stocke 0-31 en interne.
@@ -3467,14 +3731,15 @@ void drawPatchExtraRow(uint8_t logicalRow) {
   const bool rowSelected = !patchOnTrackRow && (selectedPatchRow == static_cast<int8_t>(logicalRow));
   const uint16_t accent = patchAccent(track);
 
-  gfx->fillRect(x, y, w, rowH, RGB565_BLACK);
-  gfx->drawRect(x, y, w, rowH, rowSelected ? accent : kFaint);
+  const bool active = drawPatchCellFrame(track, logicalRow, x, y, w, rowH, accent);
+  (void)rowSelected;
 
   gfx->setTextSize(1);
   // Section EFFETS : libelle en couleur d'accent pour la distinguer des
   // reglages propres au moteur.
-  gfx->setTextColor(patchExtraIsFx(track, extraIdx) ? accent : kDim);
-  gfx->setCursor(static_cast<int16_t>(x + 4), static_cast<int16_t>(y + 3));
+  gfx->setTextColor(active ? (patchIsRightCol(track, logicalRow) ? kEnc2Color : kEnc1Color)
+                           : (patchExtraIsFx(track, extraIdx) ? accent : kDim));
+  gfx->setCursor(static_cast<int16_t>(x + (active ? 12 : 4)), static_cast<int16_t>(y + 3));
   gfx->print(patchExtraLabel(track, extraIdx));
 
   // Ligne SAMPLE du moteur SAMPLER (2026-09-23) : pas une valeur
@@ -3555,12 +3820,12 @@ void drawVolRow() {
   const bool rowSelected = !patchOnTrackRow && (selectedPatchRow == static_cast<int8_t>(patchVolRow(t)));
   const uint16_t accent = patchAccent(t);
 
-  gfx->fillRect(x, y, w, rowH, RGB565_BLACK);
-  gfx->drawRect(x, y, w, rowH, rowSelected ? accent : kFaint);
+  const bool active = drawPatchCellFrame(t, patchVolRow(t), x, y, w, rowH, accent);
+  (void)rowSelected;
 
   gfx->setTextSize(1);
-  gfx->setTextColor(kDim);
-  gfx->setCursor(static_cast<int16_t>(x + 4), static_cast<int16_t>(y + 3));
+  gfx->setTextColor(active ? (patchIsRightCol(t, patchVolRow(t)) ? kEnc2Color : kEnc1Color) : kDim);
+  gfx->setCursor(static_cast<int16_t>(x + (active ? 12 : 4)), static_cast<int16_t>(y + 3));
   gfx->print("VOLUME");
 
   char buf[6];
@@ -4064,6 +4329,84 @@ void redrawPatchLogicalRow(uint8_t track, uint8_t row) {
   }
 }
 
+// ---------------------------------------------------------------------
+// Encodeurs de la page PATCH (2026-10-04) : la ligne VISUELLE selectionnee
+// porte 2 reglages ; encodeur 2 (TURN:1) = celui de GAUCHE, encodeur 3
+// (TURN:2) = celui de DROITE ; clic encodeur 2 = ligne precedente, clic
+// encodeur 3 = ligne suivante. Toute la page (filtre, ADSR, moteur, EFFETS,
+// volume) se parcourt et se regle sans lacher les encodeurs.
+void updatePatchEncoderHints();          // definies plus bas
+void patchApplyDelta(uint8_t t, int delta);
+
+// Redessine les cases d'une ligne visuelle (surlignage par ligne entiere).
+void redrawPatchVisualRow(uint8_t track, int16_t visual) {
+  uint8_t kept[kPatchMaxKeptRows];
+  const uint8_t count = patchKeptRows(track, kept);
+  const int16_t slotVisual = patchVisualRow(track, patchSlotRow(track));
+  if (visual == slotVisual) {
+    drawPatchSlotRow();
+    return;
+  }
+  for (uint8_t c = 0; c < 2; ++c) {
+    const int16_t idx = static_cast<int16_t>(visual * 2 + c);
+    if (idx >= 0 && idx < count) redrawPatchLogicalRow(track, kept[idx]);
+  }
+}
+
+// Selectionne une ligne logique, fait suivre le defilement, redessine.
+void patchSelectRow(uint8_t track, int8_t row) {
+  const int16_t prevVisual = patchVisualRow(track, static_cast<uint8_t>(selectedPatchRow));
+  selectedPatchRow = row;
+  patchOnTrackRow = false;
+  const int16_t nextVisual = patchVisualRow(track, static_cast<uint8_t>(row));
+  if (nextVisual < patchScroll) {
+    patchScroll = static_cast<uint8_t>(nextVisual);
+    drawPatchWindow();
+  } else if (nextVisual >= patchScroll + kPatchVisibleRows) {
+    patchScroll = static_cast<uint8_t>(nextVisual - kPatchVisibleRows + 1);
+    drawPatchWindow();
+  } else {
+    redrawPatchVisualRow(track, prevVisual);
+    redrawPatchVisualRow(track, nextVisual);
+  }
+  drawPatchTrackRow();
+  updatePatchEncoderHints();
+}
+
+// Clic d'encodeur : ligne visuelle precedente (dir -1) ou suivante (+1).
+void patchEncoderStepRow(uint8_t track, int8_t dir) {
+  uint8_t kept[kPatchMaxKeptRows];
+  const uint8_t count = patchKeptRows(track, kept);
+  const int16_t visualCount = static_cast<int16_t>((count + 1) / 2 + 1);  // + SLOT
+  int16_t v = patchOnTrackRow ? -1 : patchVisualRow(track, static_cast<uint8_t>(selectedPatchRow));
+  v = static_cast<int16_t>(((v + dir) % visualCount + visualCount) % visualCount);
+  const int16_t slotVisual = patchVisualRow(track, patchSlotRow(track));
+  const int8_t row = v == slotVisual ? static_cast<int8_t>(patchSlotRow(track)) : static_cast<int8_t>(kept[v * 2]);
+  patchSelectRow(track, row);
+}
+
+// Rotation : reglage de gauche (side 0) ou de droite (side 1) de la ligne.
+void patchEncoderAdjust(uint8_t track, uint8_t side, int dir) {
+  if (patchOnTrackRow) patchSelectRow(track, 0);
+  uint8_t kept[kPatchMaxKeptRows];
+  const uint8_t count = patchKeptRows(track, kept);
+  const int16_t v = patchVisualRow(track, static_cast<uint8_t>(selectedPatchRow));
+  int8_t target;
+  if (selectedPatchRow == static_cast<int8_t>(patchSlotRow(track))) {
+    target = selectedPatchRow;  // SLOT : une seule case
+  } else {
+    const int16_t idx = static_cast<int16_t>(v * 2 + side);
+    if (idx >= count) return;  // pas de reglage a droite sur cette ligne
+    target = static_cast<int8_t>(kept[idx]);
+  }
+  selectedPatchRow = target;
+  // Petites plages (ALGO, FEEDBACK, choix) : cran de 1 ; sinon 2.
+  uint8_t maxValue = 127;
+  if (target < 6) maxValue = patchRowMax(track, static_cast<uint8_t>(target));
+  else if (target < static_cast<int8_t>(patchVolRow(track))) maxValue = patchExtraMax(track, static_cast<uint8_t>(target - 6));
+  patchApplyDelta(track, dir * (maxValue < 32 ? 1 : 2));
+}
+
 // Ligne LOGIQUE controlee par l'encodeur `slot` (0=encodeur1, 1=
 // encodeur2) etant donne la selection croix actuelle -- les 2
 // encodeurs "reglables" agissent sur les 2 valeurs de la ligne
@@ -4119,11 +4462,10 @@ void updatePatchEncoderHints() {
   // le gestionnaire POT:) -- CUTOFF/RESONANCE et ADSR, independamment de
   // la ligne selectionnee par la croix. Pistes rack exclues pour
   // l'encodeur 2 (garde l'ancien systeme par ligne, voir isRackTrack()).
-  static const char *const kFilterPointNames[2] = {"CUTOFF", "RESONANCE"};
-  static const char *const kAdsrPointNames[4] = {"ATTACK", "DECAY", "SUSTAIN", "RELEASE"};
+  // [2026-10-04] Encodeur 2 = reglage de GAUCHE, encodeur 3 = reglage de
+  // DROITE de la ligne active (voir patchEncoderAdjust()).
   const uint8_t t = static_cast<uint8_t>(patchTrack);
-  const char *label0 = isRackTrack(t) ? patchEncoderLabel(t, 0) : kFilterPointNames[patchScopeFilterPoint];
-  drawEncoderHints(label0, kAdsrPointNames[patchScopeAdsrPoint]);
+  drawEncoderHints(patchEncoderLabel(t, 0), patchEncoderLabel(t, 1));
 }
 
 void drawPatchPage() {
@@ -6557,6 +6899,12 @@ void goTo(Screen s) {
   // MOTEURS doit permettre PATCH -> MOTEURS -> page d'origine, sans que
   // le premier retour ecrase la destination du second.
   if (s == Screen::Engines && currentScreen != Screen::Patch) enginesReturnScreen = currentScreen;
+  if (s != Screen::Patch && patchVizCanvas != nullptr) {
+    // 40 Ko de RAM interne rendus en quittant PATCH (emulateurs, SD...).
+    delete patchVizCanvas;
+    patchVizCanvas = nullptr;
+    patchVizTried = false;
+  }
 #ifdef AZ2_NES_ENABLED
   // [2026-10-04] Quitter la page NES par n'importe quel chemin (toucher
   // retour, menu...) decharge la ROM et sauvegarde la SRAM ; seul C le
@@ -7549,9 +7897,11 @@ void handleTeensyLine(const String &line) {
               if (scrolled) {
                 drawPatchWindow();
               } else {
-                redrawPatchLogicalRow(t, static_cast<uint8_t>(prevRow));
-                redrawPatchLogicalRow(t, static_cast<uint8_t>(selectedPatchRow));
+                // Surlignage par ligne VISUELLE entiere (2 cases).
+                redrawPatchVisualRow(t, patchVisualRow(t, static_cast<uint8_t>(prevRow)));
+                redrawPatchVisualRow(t, patchVisualRow(t, static_cast<uint8_t>(selectedPatchRow)));
               }
+              updatePatchEncoderHints();
             }
           } else {
             // A maintenu (et pas le cas SLOT+GAUCHE/DROITE deja capte
@@ -7974,6 +8324,13 @@ void handleTeensyLine(const String &line) {
     if (i1 >= 0 && i2 >= 0) {
       const uint8_t index = static_cast<uint8_t>(line.substring(i1 + 1, i2).toInt());
       const int direction = line.substring(i2 + 1).toInt();
+      if (currentScreen == Screen::Patch && (index == 1 || index == 2)) {
+        if (direction != 0 && !screensaverActive) {
+          patchEncoderAdjust(static_cast<uint8_t>(patchTrack), static_cast<uint8_t>(index - 1),
+                             direction > 0 ? 1 : -1);
+        }
+        return;
+      }
       if (fxQuickActive && index == 2) {
         if (direction != 0) {
           fxQuickSetValue(direction > 0 ? 4 : -4);
@@ -8036,6 +8393,10 @@ void handleTeensyLine(const String &line) {
       const uint8_t value = static_cast<uint8_t>(line.substring(secondColon + 1).toInt());
       if (fxQuickActive && index == 2) {
         return;  // encodeur 3 reserve au mode EFFETS (voir fxQuickActive)
+      }
+      if (currentScreen == Screen::Patch && (index == 1 || index == 2)) {
+        potValue[index] = value;
+        return;  // page PATCH : encodeurs 2/3 en relatif (TURN:), voir patchEncoderAdjust()
       }
       if (index < 3) {
         potValue[index] = value;
@@ -8304,23 +8665,10 @@ void handleTeensyLine(const String &line) {
           engineParamBank = static_cast<uint8_t>(engineParamBank ^ 1U);
           drawEngVisualizer();
         }
-        if (currentScreen == Screen::Patch && index == 1 && pressed && !isRackTrack(static_cast<uint8_t>(patchTrack))) {
-          // Clic du bouton-poussoir de l'encodeur 2, DEDIE a CUTOFF/
-          // RESONANCE en permanence sur cette page (2026-09-24, voir le
-          // commentaire pres du gestionnaire POT: ci-dessus) : bascule
-          // l'un vers l'autre. Pistes rack exclues (garde l'ancien systeme
-          // par ligne, voir isRackTrack() dans le gestionnaire POT:).
-          patchScopeFilterPoint = static_cast<uint8_t>(patchScopeFilterPoint ^ 1U);
-          updatePatchEncoderHints();
-        }
-        if (currentScreen == Screen::Patch && index == 2 && pressed) {
-          // Clic du bouton-poussoir de l'encodeur 3, DEDIE a l'ADSR en
-          // permanence sur cette page (2026-09-24, voir le commentaire pres
-          // du "slot == 1" dans le gestionnaire POT: ci-dessus) : avance au
-          // point suivant ATTACK->DECAY->SUSTAIN->RELEASE->ATTACK...
-          patchScopeAdsrPoint = static_cast<uint8_t>((patchScopeAdsrPoint + 1) % 4);
-          drawPatchScope();
-          updatePatchEncoderHints();
+        if (currentScreen == Screen::Patch && (index == 1 || index == 2) && pressed) {
+          // [2026-10-04] Clic encodeur 2 = ligne precedente, clic encodeur 3 =
+          // ligne suivante (remplace CUTOFF/RESO et point ADSR figes).
+          patchEncoderStepRow(static_cast<uint8_t>(patchTrack), index == 1 ? -1 : 1);
         }
       }
     }
@@ -10310,11 +10658,16 @@ void loop() {
   // commentaire ScopeRxState/scopeNeedsRedraw plus haut : dessiner un
   // paquet a la fois DANS la boucle de lecture Serial1 bloquait la
   // lecture assez longtemps pour perdre des octets a 921600 bauds.
+  // [2026-10-04] Les paquets SCOPE ne font plus que fournir le niveau : la
+  // vue animee de PATCH est redessinee a cadence fixe (~15 Hz) ci-dessous.
   if (!gbGameActive && scopeNeedsRedraw) {
     scopeNeedsRedraw = false;
-    if (currentScreen == Screen::Patch && !screensaverActive) {
-      drawPatchScope();
-    }
+  }
+  if (!gbGameActive && currentScreen == Screen::Patch && !screensaverActive &&
+      (millis() - patchVizLastMs) >= 66U) {
+    patchVizLastMs = millis();
+    ++patchVizFrame;
+    drawPatchViz();
   }
 
   TouchPoint touches[2] = {};
