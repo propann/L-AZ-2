@@ -3064,6 +3064,38 @@ void sendPatchExtra(uint8_t track, uint8_t extraIdx) {
 // forme "?", voir handleBraidsParamCommand() cote Teensy -- write-only,
 // pas grave : color/timbre partent a 0 a l'affectation du moteur, une
 // valeur de depart raisonnable pour 2 reglages de couleur sonore).
+void queryPatchExtra(uint8_t track);
+
+// [2026-10-04] "Que les patchs aient bien leur reglage et pas en plus" : le
+// Teensy ne remet ni le filtre, ni l'enveloppe, ni COLOR/TIMBRE a zero en
+// changeant de patch -- un patch heritait des reglages du precedent, et
+// l'ecran gardait des valeurs EPIANO perimees. Quand l'utilisateur CHOISIT
+// un patch (listes PATCH/MOTEURS), on repart des reglages neutres et on
+// relit ceux du preset charge. Les chargements de projet/slot (qui portent
+// leurs propres reglages) ne passent pas par ici.
+bool patchFreshPending[kSeqTrackCount] = {};
+
+void resetPatchSound(uint8_t t) {
+  trackCutoff[t] = 127;
+  trackReso[t] = 0;
+  trackAttack[t] = 10;
+  trackDecay[t] = 25;
+  trackSustain[t] = 90;
+  trackRelease[t] = 40;
+  char msg[40];
+  snprintf(msg, sizeof(msg), "FILT:%u:%u:%u", t, trackCutoff[t], trackReso[t]);
+  sendToTeensy(msg);
+  snprintf(msg, sizeof(msg), "ENV:%u:%u:%u:%u:%u", t, trackAttack[t], trackDecay[t], trackSustain[t], trackRelease[t]);
+  sendToTeensy(msg);
+  if (trackEngine[t] == az2::kEngineBraids) {
+    patchExtraVal[t][0] = 0;
+    patchExtraVal[t][1] = 0;
+    sendPatchExtra(t, 0);
+    sendPatchExtra(t, 1);
+  }
+  queryPatchExtra(t);  // DEXED/EPIANO : valeurs du preset qui vient d'etre charge
+}
+
 void queryPatchExtra(uint8_t track) {
   const uint8_t count = patchEngineExtraCount(track);
   char msg[16];
@@ -7651,6 +7683,7 @@ void handleTeensyLine(const String &line) {
                   engPatchScroll = static_cast<uint16_t>(nextPatch - kEngListVisibleRows + 1);
                 }
                 char msg[16];
+                patchFreshPending[t] = true;  // choix utilisateur : le patch repart de ses propres reglages
                 snprintf(msg, sizeof(msg), "PATCH:%d:%d", t, nextPatch);
                 sendToTeensy(msg);
               }
@@ -7884,6 +7917,7 @@ void handleTeensyLine(const String &line) {
                 const uint16_t next = static_cast<uint16_t>(
                     (static_cast<int>(trackPatch[t]) + direction + count) % count);
                 char msg[20];
+                patchFreshPending[t] = true;  // choix utilisateur : le patch repart de ses propres reglages
                 snprintf(msg, sizeof(msg), "PATCH:%u:%u", t, next);
                 sendToTeensy(msg);
               }
@@ -9059,6 +9093,10 @@ void handleTeensyLine(const String &line) {
       if (track < kSeqTrackCount) {
         trackPatch[track] = patch;
         loadRackPresetValues(track, patch);
+        if (patchFreshPending[track]) {
+          patchFreshPending[track] = false;
+          if (!isRackTrack(track)) resetPatchSound(track);
+        }
         if (currentScreen == Screen::Engines) {
           // Fait suivre le defilement de la liste PATCH si besoin --
           // meme si ce changement vient d'ailleurs que cette page (ex:
@@ -10441,6 +10479,7 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
           engineColPatch = true;
           engOnTrackRow = false;
           char msg[16];
+          patchFreshPending[t] = true;  // choix utilisateur : le patch repart de ses propres reglages
           snprintf(msg, sizeof(msg), "PATCH:%d:%d", t, patchIdx);
           sendToTeensy(msg);
         }
@@ -10485,6 +10524,7 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
         patchOnTrackRow = false;
         patchPresetEditing = false;
         char msg[16];
+        patchFreshPending[t] = true;  // choix utilisateur : le patch repart de ses propres reglages
         snprintf(msg, sizeof(msg), "PATCH:%u:%u", t, static_cast<unsigned>(patchHit));
         sendToTeensy(msg);
         drawPatchTrackRow();
