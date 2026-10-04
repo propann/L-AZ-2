@@ -2,7 +2,13 @@
 
 Objectif: transformer AZ-2 en groovebox autonome Teensy + ESP32, avec une base propre avant d'empiler les fonctions.
 
-## Plan actif — 23 septembre 2026
+> **4 octobre 2026 :** la liste de travail à jour est
+> [AZ2_RESTE_A_FAIRE.md](AZ2_RESTE_A_FAIRE.md). Le plan du 23 septembre
+> ci-dessous est conservé comme historique (les lots 1 et 3 — commandes,
+> interface, niveaux et effets — ont été livrés depuis, voir le CHANGELOG ;
+> le MIDI a été retiré du code faute de 6N138 monté).
+
+## Plan du 23 septembre 2026 (historique)
 
 Cette section est la feuille de route de référence. Les phases plus bas sont
 conservées comme historique du projet : certaines décisions ont été dépassées

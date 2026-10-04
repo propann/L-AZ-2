@@ -116,6 +116,10 @@ Mesures et détails : [état actuel vérifié](docs/AZ2_ETAT_ACTUEL.md). La Neo 
 
 ## Feuille de route
 
+**Ce qui reste à faire, à jour : [docs/AZ2_RESTE_A_FAIRE.md](docs/AZ2_RESTE_A_FAIRE.md)** (son, interface, jeux, fiabilité, matériel).
+
+Grandes orientations :
+
 1. **Fiabilité :** sauvegardes résistantes aux coupures, erreurs visibles, chargement sûr et tests sur carte réelle.
 2. **Cadence :** mesures et certification par ROM (Tetris, Mario, LSDJ) et sans sacrifice des synthés.
 3. **Audio LSDJ :** APU précise, stéréo, pont UART V2 et contrôle des underruns.
@@ -130,6 +134,7 @@ Les cases d'implémentation et les tests d'acceptation figurent dans la [roadmap
 | :-- | :-- |
 | [État actuel vérifié](docs/AZ2_ETAT_ACTUEL.md) | Source de vérité : matériel actif, moteurs et effets, rack, mesures GB/GBC/NES |
 | [CHANGELOG](CHANGELOG.md) | Ce qui a changé, version par version, avec les mesures |
+| [Reste à faire](docs/AZ2_RESTE_A_FAIRE.md) | Liste unique et à jour de ce qui n'est pas fini |
 | [Reproduire AZ-2](docs/AZ2_REPRODUCTION.md) | Liste des pièces, câblage, cartes SD, compilation et contrôle final |
 | [Guide en français](docs/i18n/README.fr.md) · [English guide](docs/i18n/README.en.md) · [Guía en español](docs/i18n/README.es.md) | Découvrir le projet, compiler les firmwares, comprendre les fonctions livrées et leurs limites |
 | [Manuel d'utilisation](docs/AZ2_MANUEL_UTILISATEUR.md) | Jouer avec la machine : pages, contrôles, sauvegarde, premier beat |

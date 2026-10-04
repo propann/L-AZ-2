@@ -59,7 +59,7 @@ La información técnica actual está en el [estado verificado (francés)](../AZ
 
 ## Trabajo pendiente
 
-Validar guardados y RTC frente a cortes eléctricos, medir FPS/audio reales en el prototipo, comprobar juegos y LSDJ con resultados reproducibles, mantener el estéreo hasta el DAC sin agotar la memoria de audio del Teensy y desarrollar navegación, edición y asignación de varias capturas. Que la CI sea correcta no significa que estas tareas estén terminadas.
+Lista detallada y actualizada (en francés): [AZ2_RESTE_A_FAIRE.md](../AZ2_RESTE_A_FAIRE.md). En resumen: nivel del motor SPECTRAL, resistencia del rack y samples del granular; página MOTORES animada; NES a velocidad completa; guardados/RTC frente a cortes y matriz de ROMs/LSDJ; CI de los cuatro firmwares y división de los `main.cpp` grandes. Que la CI sea correcta no significa que estas tareas estén terminadas.
 
 ## Contribuciones y licencias
 

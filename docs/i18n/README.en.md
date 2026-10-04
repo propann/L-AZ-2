@@ -59,7 +59,7 @@ More detailed documentation is available in the [current verified state (French)
 
 ## Remaining work
 
-Test save files and RTC against power interruptions, measure real FPS/audio on the prototype, qualify games and LSDJ with reproducible results, preserve stereo all the way to the DAC without exhausting Teensy's audio memory, and build multi-recording browsing/editing/assignment. Passing CI does not mean these tasks are complete.
+Detailed, up-to-date list (French): [AZ2_RESTE_A_FAIRE.md](../AZ2_RESTE_A_FAIRE.md). In short: SPECTRAL engine level, rack endurance and granular samples; animated ENGINES page; full-speed NES; save/RTC power-cut tests and a ROM/LSDJ matrix; CI for all four firmwares and splitting the large `main.cpp` files. Passing CI does not mean these tasks are complete.
 
 ## Contributions and licensing
 
