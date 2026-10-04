@@ -1,4 +1,4 @@
-# AZ-2 — état actuel vérifié au 3 octobre 2026
+# AZ-2 — état actuel vérifié au 4 octobre 2026
 
 Ce document est la source de vérité de l’état courant. Les audits datés dans
 `docs/` sont historiques et peuvent décrire des états antérieurs.
@@ -138,6 +138,18 @@ données dans `tools/bench_data/`) : note 60, crête de la sortie finale.
   n'émet rien (coupait la piste) ; `AudioEffectFlange` n'utilise que la
   moitié du tampon fourni (pics) ; un `AudioEffectWaveshaper` sans courbe
   coupe le son.
+
+## Jeu et interface — validés à l'usage le 4 octobre 2026
+
+- MIXER : VU-mètres réels par piste et MASTER.
+- Tracker : en-tête MENU / PATTERN ; C court = PLAY/STOP, C maintenu = menu
+  (aussi dans SEQ. PAS).
+- Pads : menu complet (arpégiateur, métronome, enregistrement live), tactile
+  multipoint stable à 2 doigts (limite du FT6336U), pile de notes sur les
+  moteurs mono (banc : la note précédente reprend au relâchement).
+- PATCH : cadre animé par moteur (encodeur 2), grille de 3 cases par ligne
+  (encodeur 3) ; un patch choisi repart de ses propres réglages. La vue
+  animée utilise un canvas de ~53 Ko en RAM interne, libéré hors de la page.
 
 ## Audio et sampleur
 

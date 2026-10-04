@@ -377,6 +377,11 @@ AudioEffectMultiply trackMod[kTrackCount];
 AudioEffectFlange trackFlange[kTrackCount];
 constexpr int kFlangeDelayLength = 4 * AUDIO_BLOCK_SAMPLES;  // ~11,6 ms
 DMAMEM short trackFlangeLine[kTrackCount][kFlangeDelayLength];
+// VU-metres du MIXER (2026-10-03) : crete de chaque piste en sortie de sa
+// chaine d'effets (x gain de piste en logiciel) et du bus maitre. Envoyes a
+// l'ecran seulement quand il les demande (LEVELS:1), voir serviceLevels().
+AudioAnalyzePeak trackPeak[kTrackCount];
+AudioAnalyzePeak masterPeak;
 AudioMixer4 revSendA;  // pistes 0-3 -> reverb
 AudioMixer4 revSendB;  // pistes 4-7 -> reverb
 
@@ -493,6 +498,12 @@ AudioConnection patchFxToRevSend[kTrackCount] = {
     AudioConnection(trackFx[4], 0, revSendB, 0), AudioConnection(trackFx[5], 0, revSendB, 1),
     AudioConnection(trackFx[6], 0, revSendB, 2), AudioConnection(trackFx[7], 0, revSendB, 3),
 };
+AudioConnection patchFxToPeak[kTrackCount] = {
+    AudioConnection(trackFx[0], 0, trackPeak[0], 0), AudioConnection(trackFx[1], 0, trackPeak[1], 0),
+    AudioConnection(trackFx[2], 0, trackPeak[2], 0), AudioConnection(trackFx[3], 0, trackPeak[3], 0),
+    AudioConnection(trackFx[4], 0, trackPeak[4], 0), AudioConnection(trackFx[5], 0, trackPeak[5], 0),
+    AudioConnection(trackFx[6], 0, trackPeak[6], 0), AudioConnection(trackFx[7], 0, trackPeak[7], 0),
+};
 AudioConnection patchGroupA(mixTracksA, 0, mixFinal, 0);
 AudioConnection patchGroupB(mixTracksB, 0, mixFinal, 1);
 
@@ -559,6 +570,12 @@ AudioConnection patchPadsDtoAll(mixPadsD, 0, mixPadsAll, 3);
 AudioConnection patchLiveToCombined(liveVoice, 0, mixLiveAndPads, 0);
 AudioConnection patchPadsToCombined(mixPadsAll, 0, mixLiveAndPads, 1);
 AudioConnection patchLiveIn(mixLiveAndPads, 0, mixFinal, 2);
+// Metronome (2026-10-03, retabli) : clic court AudioSynthSimpleDrum sur le
+// canal 3 de mixFinal, gain 0 tant que METRO:1 n'est pas recu. Supprime le
+// 28/09 pendant la chasse au bip (il etait deja muet, sans lien avec le bip).
+AudioSynthSimpleDrum metroClick;
+AudioConnection patchMetroOut(metroClick, 0, mixFinal, 3);
+bool metronomeEnabled = false;
 
 // Metronome (2026-09-19, "il faut un bouton metronome ... pour
 // activer/desactiver") -- occupe le 4e canal de mixFinal, laisse
@@ -579,6 +596,7 @@ AudioConnection patchReverbToMaster(reverbUnit, 0, mixMaster, 1);
 AudioConnection patchFinalToDelay(mixFinal, 0, delayUnit, 0);
 AudioConnection patchDelayToMaster(delayUnit, 0, mixMaster, 2);
 AudioConnection patchGbAudioToMaster(gbAudioSource, 0, mixMaster, 3);
+AudioConnection patchMasterToPeak(mixMaster, 0, masterPeak, 0);
 #ifdef AZ2_EXTERNAL_RACK
 AudioConnection patchMasterToOutputL(mixMaster, 0, mixOutputL, 0);
 AudioConnection patchMasterToOutputR(mixMaster, 0, mixOutputR, 0);
@@ -749,6 +767,10 @@ float trackEffectiveGain(uint8_t track) {
 constexpr uint8_t kTrackFxParamCount = 14;
 uint8_t trackFxVal[kTrackCount][kTrackFxParamCount] = {};
 
+// Gain applique a chaque piste (VU-metres : niveau post-volume), tenu a
+// jour par applyGroupGainNow().
+float trackMeterGain[kTrackCount] = {};
+
 // Compensation de niveau par moteur (2026-10-02). Mesure du banc
 // tools/engine_bench.py, meme note, meme volume : crete de sortie de 0,007
 // (EPIANO) a 0,18 (BRAIDS), soit jusqu'a x25 d'ecart en changeant de moteur.
@@ -789,6 +811,8 @@ float patchLevelTrim(uint8_t track) {
 // l'ISR du sequenceur et par PANIC/STOP, definis avec la section EFFETS.
 void requestStepLock(uint8_t track, uint8_t fx, uint8_t value);
 void releaseAllStepLocks();
+void arpStop();  // arpegiateur des pads, voir serviceArp()
+void padMonoReset();  // pile de notes des pads mono, voir padMonoNoteOn()
 
 void applyGroupGainNow(uint8_t track) {
   const float trim = kEngineLevelTrim[trackEngine[track] % az2::kEngineCount] * patchLevelTrim(track);
@@ -799,6 +823,7 @@ void applyGroupGainNow(uint8_t track) {
     g = 0.5f * trim * trackEffectiveGain(track);
   }
   trackGroupMixer(track).gain(trackGroupChannel(track), g);
+  trackMeterGain[track] = g;
   // Envoi reverb post-volume : suit volume, mute, solo et la porte Braids.
   AudioMixer4 &send = track < 4 ? revSendA : revSendB;
   send.gain(track % 4, g * static_cast<float>(trackFxVal[track][11]) / 127.0f);
@@ -2247,6 +2272,8 @@ void panicAllAudio() {
   for (uint8_t pad = 0; pad < az2::kPadCount; ++pad)
     padSampler[pad].stopNow();
   releaseAllStepLocks();  // repose les reglages EFFETS verrouilles par des pas
+  arpStop();
+  padMonoReset();
   // PANIC remet aussi le chemin audio GB a zero (anneau, interpolateur) :
   // c'etait le seul etat audio que rien ne savait vider avant un power-cycle.
   gbAudioResetStream();
@@ -2325,6 +2352,11 @@ void advanceTick() {
     ticksForCurrentStep = (currentStep % 2 == 0)
                               ? static_cast<uint8_t>(kTicksPerStep - swingAmount)
                               : static_cast<uint8_t>(kTicksPerStep + swingAmount);
+    if (metronomeEnabled && currentStep % stepsPerBeat == 0) {
+      // Temps : 1800 Hz sur le premier pas du pattern, 1200 Hz sinon.
+      metroClick.frequency(currentStep == 0 ? 1800.0f : 1200.0f);
+      metroClick.noteOn();
+    }
     if (currentStep == 0) {
       ++currentBar;
       // Compteur de passages du pattern (2026-09-17, PROB:/COND:) -- avance
@@ -3292,6 +3324,43 @@ void resyncTrackFxTempo() {
   }
 }
 
+// LEVELS:1 / LEVELS:0 -- l'ecran demande (page MIXER ouverte) ou arrete le
+// flux des VU-metres. LEVELS:<p1>,...,<p8>,<master> sur Serial1 a ~15 Hz,
+// valeurs 0-100 = -48 dB .. 0 dB (pleine echelle), niveau equivalent sortie.
+bool levelsStreamOn = false;
+
+uint8_t levelToMeter(float peak) {
+  if (peak <= 0.0039f) return 0;  // < -48 dB
+  const float db = 20.0f * log10f(peak);
+  const float n = (db + 48.0f) / 48.0f;
+  return static_cast<uint8_t>(n >= 1.0f ? 100 : (n <= 0.0f ? 0 : n * 100.0f));
+}
+
+void buildLevelsLine(char *line, size_t size);
+
+void serviceLevels() {
+  static uint32_t lastMs = 0;
+  if (!levelsStreamOn) return;
+  const uint32_t now = millis();
+  if (now - lastMs < 66) return;
+  lastMs = now;
+  char line[64];
+  buildLevelsLine(line, sizeof(line));
+  Serial1.println(line);
+}
+
+void buildLevelsLine(char *line, size_t size) {
+  int pos = snprintf(line, size, "LEVELS:");
+  for (uint8_t t = 0; t < kTrackCount; ++t) {
+    const float peak = trackPeak[t].available() ? trackPeak[t].read() : 0.0f;
+    // x 0,8 (mixFinal) x volume general : meme echelle que la sortie.
+    const float out = peak * trackMeterGain[t] * 0.8f * masterVolume;
+    pos += snprintf(line + pos, size - pos, "%u,", levelToMeter(out));
+  }
+  const float master = masterPeak.available() ? masterPeak.read() : 0.0f;
+  snprintf(line + pos, size - pos, "%u", levelToMeter(master));
+}
+
 void handleTrackFxCommand(const String &line) {
   const int idx1 = line.indexOf(':');
   const int idx2 = line.indexOf(':', idx1 + 1);
@@ -4016,6 +4085,160 @@ void updateLocalControls() {
 // Voix live (jeu au clavier depuis les pads / la page AUDIO de l'ecran) --
 // separee des pistes du sequenceur.
 // ---------------------------------------------------------------------
+// ---------------------------------------------------------------------
+// Arpegiateur des pads (2026-10-03). Actif (ARP:<mode>:<vitesse>:<octaves>,
+// mode != 0) : les pads tenus ne jouent plus directement, ils forment un
+// accord egrene au tempo par serviceArp() dans loop(). Joue le moteur de la
+// piste visee (track= du PAD:) ou la voix live.
+//   mode    : 0 coupe, 1 montant, 2 descendant, 3 aller-retour, 4 aleatoire
+//   vitesse : 0 1/8, 1 1/16, 2 1/32, 3 1/8T, 4 1/16T
+//   octaves : 1 a 3
+constexpr float kArpRateBeats[] = {0.5f, 0.25f, 0.125f, 1.0f / 3.0f, 1.0f / 6.0f};
+constexpr uint8_t kArpRateCount = sizeof(kArpRateBeats) / sizeof(kArpRateBeats[0]);
+uint8_t arpMode = 0;
+uint8_t arpRate = 1;
+uint8_t arpOctaves = 1;
+int8_t arpTrack = -1;
+uint8_t arpHeld[az2::kPadCount];  // notes tenues, triees
+uint8_t arpHeldCount = 0;
+uint8_t arpPos = 0;
+bool arpRising = true;
+bool arpRunning = false;
+int16_t arpSounding = -1;
+int8_t arpSoundingTrack = -1;
+uint32_t arpNextUs = 0;
+uint32_t arpOffUs = 0;
+
+void arpNoteOff() {
+  if (arpSounding < 0) return;
+  if (arpSoundingTrack >= 0) trackNoteOff(static_cast<uint8_t>(arpSoundingTrack), static_cast<uint8_t>(arpSounding));
+  else liveVoice.keyup(static_cast<uint8_t>(arpSounding));
+  arpSounding = -1;
+}
+
+void arpStop() {
+  arpNoteOff();
+  arpHeldCount = 0;
+  arpRunning = false;
+}
+
+void arpAddNote(uint8_t note) {
+  if (arpHeldCount >= az2::kPadCount) return;
+  uint8_t i = arpHeldCount;
+  while (i > 0 && arpHeld[i - 1] > note) {
+    arpHeld[i] = arpHeld[i - 1];
+    --i;
+  }
+  arpHeld[i] = note;
+  ++arpHeldCount;
+}
+
+void arpRemoveNote(uint8_t note) {
+  for (uint8_t i = 0; i < arpHeldCount; ++i) {
+    if (arpHeld[i] != note) continue;
+    for (uint8_t j = i; j + 1 < arpHeldCount; ++j) arpHeld[j] = arpHeld[j + 1];
+    --arpHeldCount;
+    return;
+  }
+}
+
+void serviceArp() {
+  if (!arpRunning) return;
+  const uint32_t now = micros();
+  if (arpSounding >= 0 && static_cast<int32_t>(now - arpOffUs) >= 0) arpNoteOff();
+  if (static_cast<int32_t>(now - arpNextUs) < 0) return;
+  const uint8_t len = static_cast<uint8_t>(arpHeldCount * arpOctaves);
+  if (len == 0) {
+    arpRunning = false;
+    return;
+  }
+  const uint32_t stepUs = static_cast<uint32_t>(60000000.0f / bpm * kArpRateBeats[arpRate % kArpRateCount]);
+  arpNextUs += stepUs;
+  if (static_cast<int32_t>(now - arpNextUs) > 0) arpNextUs = now + stepUs;  // retard : on se recale
+  switch (arpMode) {
+    case 2: arpPos = static_cast<uint8_t>((arpPos + len - 1) % len); break;
+    case 3:
+      if (len > 1) {
+        if (arpRising && arpPos + 1 >= len) arpRising = false;
+        else if (!arpRising && arpPos == 0) arpRising = true;
+        arpPos = static_cast<uint8_t>(arpRising ? arpPos + 1 : arpPos - 1);
+      } else {
+        arpPos = 0;
+      }
+      break;
+    case 4: arpPos = static_cast<uint8_t>(random(len)); break;
+    default: arpPos = static_cast<uint8_t>((arpPos + 1) % len); break;
+  }
+  if (arpPos >= len) arpPos = 0;
+  const uint8_t note = static_cast<uint8_t>(arpHeld[arpPos % arpHeldCount] + 12 * (arpPos / arpHeldCount));
+  arpNoteOff();
+  if (arpTrack >= 0) trackNoteOn(static_cast<uint8_t>(arpTrack), note, 100);
+  else liveVoice.keydown(note, 100);
+  arpSounding = note;
+  arpSoundingTrack = arpTrack;
+  arpOffUs = now + (stepUs * 6) / 10;  // gate 60 %
+}
+
+void handleArpCommand(const String &line) {
+  const int i1 = line.indexOf(':');
+  const int i2 = line.indexOf(':', i1 + 1);
+  const int i3 = line.indexOf(':', i2 + 1);
+  if (i1 < 0 || i2 < 0 || i3 < 0) {
+    sendCommandError("ARP", "MALFORMED");
+    return;
+  }
+  arpMode = static_cast<uint8_t>(constrain(line.substring(i1 + 1, i2).toInt(), 0, 4));
+  arpRate = static_cast<uint8_t>(constrain(line.substring(i2 + 1, i3).toInt(), 0, kArpRateCount - 1));
+  arpOctaves = static_cast<uint8_t>(constrain(line.substring(i3 + 1).toInt(), 1, 3));
+  if (arpMode == 0) arpStop();
+  relayLine(line);
+}
+
+// Pile de notes des pads pour les moteurs MONOPHONIQUES (2026-10-04,
+// "ca joue une note, ca oublie la premiere, il faut que ca joue tant que
+// j'appuie") : ANALOG, BRAIDS et KARPLUS n'ont qu'une voix ; un 2e pad
+// remplacait le 1er et relacher N'IMPORTE QUEL pad coupait le son. Comme un
+// synthe mono : la derniere note tenue sonne, relacher la note qui sonne
+// fait reprendre la precedente encore tenue, le son ne s'arrete qu'au
+// dernier pad relache.
+uint8_t padMonoStack[kTrackCount][az2::kPadCount];
+uint8_t padMonoCount[kTrackCount] = {};
+
+void padMonoReset() {
+  for (uint8_t t = 0; t < kTrackCount; ++t) padMonoCount[t] = 0;
+}
+
+bool engineIsMono(uint8_t engine) {
+  return engine == az2::kEngineAnalog || engine == az2::kEngineBraids || engine == az2::kEngineKarplus;
+}
+
+void padMonoNoteOn(uint8_t track, uint8_t note, uint8_t velocity) {
+  uint8_t &n = padMonoCount[track];
+  for (uint8_t i = 0; i < n; ++i) {
+    if (padMonoStack[track][i] == note) return;  // deja tenue
+  }
+  if (n < az2::kPadCount) padMonoStack[track][n++] = note;
+  trackNoteOn(track, note, velocity);
+}
+
+void padMonoNoteOff(uint8_t track, uint8_t note) {
+  uint8_t &n = padMonoCount[track];
+  int8_t idx = -1;
+  for (uint8_t i = 0; i < n; ++i) {
+    if (padMonoStack[track][i] == note) idx = static_cast<int8_t>(i);
+  }
+  if (idx < 0) return;
+  const bool wasSounding = idx == static_cast<int8_t>(n - 1);
+  for (uint8_t i = static_cast<uint8_t>(idx); i + 1 < n; ++i) padMonoStack[track][i] = padMonoStack[track][i + 1];
+  --n;
+  if (!wasSounding) return;  // une note tenue "en dessous" : rien ne change
+  if (n > 0) {
+    trackNoteOn(track, padMonoStack[track][n - 1], 100);  // reprend la precedente
+  } else {
+    trackNoteOff(track, note);
+  }
+}
+
 void handlePadCommand(const String &line) {
   const int firstColon = line.indexOf(':');
   const int secondColon = line.indexOf(':', firstColon + 1);
@@ -4080,6 +4303,25 @@ void handlePadCommand(const String &line) {
   // voix live Dexed fixe. Absent (page AUDIO ouverte depuis le menu
   // general, sans piste de reference) -> comportement inchange
   // (liveVoice).
+  if (arpMode != 0) {
+    // Arpegiateur : la note rejoint (ou quitte) l'accord tenu.
+    if (pressed) {
+      arpTrack = hasTrack ? static_cast<int8_t>(track) : -1;
+      arpAddNote(note);
+      if (!arpRunning) {
+        arpRunning = true;
+        arpRising = true;
+        arpPos = arpMode == 2 ? 0 : static_cast<uint8_t>(arpHeldCount * arpOctaves - 1);
+        arpNextUs = micros();  // premiere note tout de suite
+      }
+    } else {
+      arpRemoveNote(note);
+      if (arpHeldCount == 0) arpStop();
+    }
+    announceLed(pad, pressed ? "ON" : "OFF");
+    return;
+  }
+
   if (pressed) {
     uint8_t velocity = 100;
     const int velIdx = line.indexOf("vel=");
@@ -4087,14 +4329,16 @@ void handlePadCommand(const String &line) {
       velocity = static_cast<uint8_t>(line.substring(velIdx + 4).toInt());
     }
     if (hasTrack) {
-      trackNoteOn(track, note, velocity);
+      if (engineIsMono(trackEngine[track])) padMonoNoteOn(track, note, velocity);
+      else trackNoteOn(track, note, velocity);
     } else {
       liveVoice.keydown(note, velocity);
     }
     announceLed(pad, "ON");
   } else {
     if (hasTrack) {
-      trackNoteOff(track, note);
+      if (engineIsMono(trackEngine[track])) padMonoNoteOff(track, note);
+      else trackNoteOff(track, note);
     } else {
       liveVoice.keyup(note);
     }
@@ -4373,7 +4617,14 @@ void handleCommand(const String &line) {
   }
 
   if (line.startsWith("METRO:")) {
-    relayLine("METRO:0");
+    metronomeEnabled = line.substring(6).toInt() != 0;
+    mixFinal.gain(3, metronomeEnabled ? 0.35f : 0.0f);
+    relayLine(metronomeEnabled ? "METRO:1" : "METRO:0");
+    return;
+  }
+
+  if (line.startsWith("ARP:")) {
+    handleArpCommand(line);
     return;
   }
 
@@ -4475,6 +4726,17 @@ void handleCommand(const String &line) {
 
   if (line.startsWith("TFX:")) {
     handleTrackFxCommand(line);
+    return;
+  }
+
+  if (line.startsWith("LEVELS:")) {
+    levelsStreamOn = line.substring(7).toInt() != 0;
+    return;
+  }
+  if (line == "LEVELS?") {  // diagnostic USB : une ligne de niveaux
+    char out[64];
+    buildLevelsLine(out, sizeof(out));
+    Serial.println(out);
     return;
   }
 
@@ -5382,6 +5644,10 @@ void setup() {
   mixFinal.gain(0, 0.8f);  // groupe pistes 0-3 (deja attenuees par groupMixer, voir setTrackEngine())
   mixFinal.gain(1, 0.8f);  // groupe pistes 4-7
   mixFinal.gain(2, 0.5f);  // voix live + bus pads (mixLiveAndPads, voir plus haut)
+  mixFinal.gain(3, 0.0f);  // metronome, ouvert par METRO:1
+  metroClick.length(25);
+  metroClick.secondMix(0.0f);
+  metroClick.pitchMod(0.5f);
 
   // Marge de tete du bus pads (2026-09-19, audit de code -- aucun gain
   // n'etait regle sur ces 6 nouveaux mixeurs, tous restaient au defaut
@@ -5437,6 +5703,8 @@ void setup() {
 void loop() {
   readSerialCommands();
   serviceStepLocks();
+  serviceArp();
+  serviceLevels();
 #ifdef AZ2_EXTERNAL_RACK
   serviceRackReplies();
   serviceGranularSampleTransfer();

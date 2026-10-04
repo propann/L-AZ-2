@@ -5,6 +5,32 @@ banc (`tools/engine_bench.py`, `GB:PERF`) ou confirmé à l'écoute / à l'œil 
 la machine ; « compile » seul n'est jamais présenté comme une validation.
 Source de vérité de l'état courant : [`docs/AZ2_ETAT_ACTUEL.md`](docs/AZ2_ETAT_ACTUEL.md).
 
+## Jouer et régler — 3 et 4 octobre 2026 (branche `mixer-vu`)
+
+### MIXER et tracker
+- VU-mètres réels par piste et bus MASTER (crêtes envoyées à ~15 Hz par le Teensy). — `6d6f8ef`
+- En-tête du tracker à deux boutons : MENU et PATTERN (A + GAUCHE/DROITE). — `f765cfc`
+- Les encodeurs ne font plus flasher l'écran. — `8c25d9c`
+
+### Pads, arpégiateur, métronome, enregistrement
+- Arpégiateur (mode, vitesse, octaves), métronome rétabli, menu PAD complet,
+  enregistrement live au clic de l'encodeur 1. — `d5ed7e1`
+- Tactile multipoint stable (identifiant de doigt, lecture 100 Hz, filtre
+  20/30 ms, 3 doigts sans blocage). — `681a123`, `67ba1a0`
+- Moteurs monophoniques : pile de notes, le son tient tant qu'un pad est
+  appuyé (validé au banc). — `2c97fb3`
+
+### Navigation
+- Audit : SEQ. PAS sort au menu (C maintenu), NES sauvegardée par toute
+  sortie, menu PAD → menu principal. — `3d33712`
+
+### Page PATCH
+- Cadre animé propre à chaque moteur, piloté par l'encodeur 2 ; grille de 3
+  cases par ligne pilotée par l'encodeur 3 ; sélection bien visible. —
+  `33a65a3`, `f9b3d17`
+- Un patch choisi repart de ses propres réglages (plus d'héritage du filtre,
+  de l'enveloppe ou de COLOR/TIMBRE du patch précédent). — `ed1fdb0`
+
 ## Son vivant — 2 et 3 octobre 2026 (branche `son-vivant`)
 
 ### Moteurs et niveaux
