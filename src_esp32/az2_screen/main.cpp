@@ -180,7 +180,14 @@ struct TouchPoint {
 
 uint8_t touchInvalidFrames = 0;
 void touchFrameInvalid() {
-  if (++touchInvalidFrames < 3) return;
+  // [2026-10-04] Reinitialisation seulement sur une vraie panne : 8 trames
+  // invalides d'affilee, et au plus une fois par seconde. Avant (3 trames),
+  // le bus etait relance en boucle des qu'on posait 3 doigts (304
+  // reinitialisations en 3 min de jeu), ce qui aveuglait le tactile.
+  static uint32_t lastRecoverMs = 0;
+  if (++touchInvalidFrames < 8) return;
+  if (millis() - lastRecoverMs < 1000) return;
+  lastRecoverMs = millis();
   touchInvalidFrames = 0;
   Wire.end();
   delayMicroseconds(200);
@@ -194,6 +201,38 @@ void touchFrameInvalid() {
 // 0x03, point 2 a partir de 0x09 (meme mise en page, 6 octets d'ecart).
 // Une seule transaction I2C pour les deux, plus rapide qu'un point a la
 // fois. Coordonnees deja converties dans le repere ecran (rotation 180).
+// Diagnostic multipoint (2026-10-03) : identite et mode de la puce
+// tactile au demarrage. FT6336U attendu : CHIPID (0xA3) = 0x64, G_MODE
+// (0xA4), VENDID (0xA8), FIRMID (0xA6). Une puce mono-point rapporte un
+// seul point a mi-chemin entre deux doigts.
+uint8_t touchReadReg(uint8_t reg) {
+  Wire.beginTransmission(kTouchI2cAddr);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return 0xEE;
+  if (Wire.requestFrom(kTouchI2cAddr, static_cast<uint8_t>(1)) != 1) return 0xEF;
+  return Wire.read();
+}
+
+void reportTouchChipInfo() {
+  char line[96];
+  snprintf(line, sizeof(line), "TOUCH:CHIP:chipid=0x%02X:vendid=0x%02X:firmid=0x%02X:gmode=0x%02X:ctrl=0x%02X",
+           touchReadReg(0xA3), touchReadReg(0xA8), touchReadReg(0xA6), touchReadReg(0xA4),
+           touchReadReg(0x86));
+  Serial.println(line);
+}
+
+// Trace chaque changement du nombre de points et leurs coordonnees.
+void traceTouchCount(uint8_t count, const uint8_t *buf) {
+  static uint8_t lastCount = 0xFF;
+  if (count == lastCount) return;
+  lastCount = count;
+  char line[96];
+  snprintf(line, sizeof(line), "TOUCH:N=%u:p1=%u,%u:id1=%u:p2=%u,%u:id2=%u", count,
+           ((buf[1] & 0x0F) << 8) | buf[2], ((buf[3] & 0x0F) << 8) | buf[4], buf[3] >> 4,
+           ((buf[7] & 0x0F) << 8) | buf[8], ((buf[9] & 0x0F) << 8) | buf[10], buf[9] >> 4);
+  Serial.println(line);
+}
+
 uint8_t readTouches(TouchPoint points[2]) {
   points[0].active = false;
   points[1].active = false;
@@ -229,12 +268,15 @@ uint8_t readTouches(TouchPoint points[2]) {
   // rafale de faux "TOUCH:DOWN" avec x/y a -3616 (= (kScreenSize-1) - 4095,
   // 4095 = 0x0FFF = les 2 registres de coordonnee a 0xFF). On rejette donc
   // tout touchCount hors 0-2 ET toute coordonnee hors ecran.
-  if (touchCount > 2) {
+  // 3 a 5 : plus de doigts que la puce n'en suit (2 maximum) -> on garde
+  // les deux premiers. Au-dela (0x0F...) : octets vides, trame invalide.
+  if (touchCount > 5) {
     reportTouchI2cError("BAD_COUNT");
     touchFrameInvalid();
     return 0xFF;
   }
   touchInvalidFrames = 0;
+  traceTouchCount(touchCount, buf);
 
   // [2026-10-03] Multipoint : chaque doigt garde SON emplacement grace a
   // l'identifiant de contact du FT6336U (4 bits hauts du registre YH, 0 ou
@@ -242,7 +284,8 @@ uint8_t readTouches(TouchPoint points[2]) {
   // doigt faisait "devenir" le second le premier -> relachement + nouvel
   // appui fantome sur les pads (fausses notes dans les accords).
   int8_t usedSlot = -1;
-  for (uint8_t p = 0; p < touchCount && p < 2; ++p) {
+  const uint8_t pointCount = touchCount > 2 ? 2 : touchCount;
+  for (uint8_t p = 0; p < pointCount; ++p) {
     const uint8_t base = static_cast<uint8_t>(1 + p * 6);  // 0x03 / 0x09
     const int16_t rawX = static_cast<int16_t>(((buf[base] & 0x0F) << 8) | buf[base + 1]);
     const int16_t rawY = static_cast<int16_t>(((buf[base + 2] & 0x0F) << 8) | buf[base + 3]);
@@ -274,7 +317,7 @@ uint8_t readTouches(TouchPoint points[2]) {
     }
   }
 
-  return touchCount;
+  return pointCount;
 }
 
 bool inBox(int16_t x, int16_t y, int16_t bx, int16_t by, int16_t bw, int16_t bh) {
@@ -9619,6 +9662,7 @@ void setup() {
   Wire.begin(kTouchSdaPin, kTouchSclPin);
   Wire.setClock(400000);  // I2C fast mode: tactile plus reactif
   Serial.println("TOUCH:FT6336U:READY");
+  reportTouchChipInfo();
 
   // Init SD APRES l'ecran (voir commentaire sur kSdCsPin plus haut) --
   // carte pas forcement presente, echec propre attendu tant qu'elle n'est
@@ -10263,8 +10307,16 @@ void loop() {
   }
 
   TouchPoint touches[2] = {};
-  const uint8_t touchReadCount = !gbGameActive ? readTouches(touches) : 0;
-  const bool touchReadValid = touchReadCount != 0xFF;
+  // [2026-10-04] Lecture a 100 Hz (cadence reelle du FT6336U) au lieu de
+  // chaque tour de boucle : moins de trafic I2C, trames coherentes, et une
+  // base de temps fixe pour le filtre ci-dessous.
+  static uint32_t lastTouchPollMs = 0;
+  const bool touchPollDue = (now - lastTouchPollMs) >= 10;
+  if (touchPollDue) lastTouchPollMs = now;
+  const uint8_t touchReadCount = (!gbGameActive && touchPollDue) ? readTouches(touches) : 0;
+  const bool touchReadValid = touchPollDue && touchReadCount != 0xFF;
+  static uint8_t touchOnPolls[2] = {0, 0};
+  static uint8_t touchOffPolls[2] = {0, 0};
 
   for (uint8_t slot = 0; slot < 2; ++slot) {
     if (gbGameActive) {
@@ -10290,10 +10342,21 @@ void loop() {
     // note change sans raison" -- capture serie a l'appui : NOTE:/STEP:
     // renvoyes en rafale toutes les ~100-200ms pendant un pad tenu sans
     // interruption.
-    bool active = wasActive[slot];
-    if (rawActive != active && rawActive == pendingActive[slot]) {
-      active = rawActive;
+    // [2026-10-04] Filtre en lectures a 100 Hz : appui confirme apres 2
+    // lectures (20 ms), relache apres 3 (30 ms). Trace du 04/10 : a deux
+    // doigts, la puce perd le second point quelques ms (N=2/1/2/1...) ; un
+    // relache confirme en 2 tours de boucle (~2 ms) transformait chaque
+    // micro-coupure en relache + nouvel appui (pads qui se relancent).
+    if (rawActive) {
+      touchOffPolls[slot] = 0;
+      if (touchOnPolls[slot] < 255) ++touchOnPolls[slot];
+    } else {
+      touchOnPolls[slot] = 0;
+      if (touchOffPolls[slot] < 255) ++touchOffPolls[slot];
     }
+    bool active = wasActive[slot];
+    if (!active && touchOnPolls[slot] >= 2) active = true;
+    if (active && touchOffPolls[slot] >= 3) active = false;
     pendingActive[slot] = rawActive;
 
     if (active && !wasActive[slot]) {
