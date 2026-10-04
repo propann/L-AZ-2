@@ -2785,20 +2785,27 @@ int8_t patchKeptIndexOf(uint8_t track, uint8_t logicalRow) {
 // coherente sans etre reecrite en profondeur). Compacte les lignes
 // INACTIVES (2026-09-24) : leur position dans kept[] est ce qui compte,
 // pas leur numero logique brut.
+constexpr uint8_t kPatchCols = 3;  // cases par ligne de la grille PATCH (2026-10-04)
+
 int16_t patchVisualRow(uint8_t track, uint8_t logicalRow) {
   const uint8_t volRow = patchVolRow(track);
   if (logicalRow <= volRow) {
     const int8_t idx = patchKeptIndexOf(track, logicalRow);
-    return static_cast<int16_t>((idx < 0 ? 0 : idx) / 2);
+    return static_cast<int16_t>((idx < 0 ? 0 : idx) / kPatchCols);
   }
   uint8_t kept[kPatchMaxKeptRows];
   const uint8_t count = patchKeptRows(track, kept);
-  return static_cast<int16_t>((count + 1) / 2);  // SLOT juste apres les paires
+  return static_cast<int16_t>((count + kPatchCols - 1) / kPatchCols);  // SLOT juste apres
 }
 uint8_t patchTotalVisualRows(uint8_t track) {
   uint8_t kept[kPatchMaxKeptRows];
   const uint8_t count = patchKeptRows(track, kept);
-  return static_cast<uint8_t>((count + 1) / 2 + 1);
+  return static_cast<uint8_t>((count + kPatchCols - 1) / kPatchCols + 1);
+}
+// Colonne (0..kPatchCols-1) d'une case dans la grille.
+uint8_t patchColOf(uint8_t track, uint8_t logicalRow) {
+  const int8_t idx = patchKeptIndexOf(track, logicalRow);
+  return idx < 0 ? 0 : static_cast<uint8_t>(idx % kPatchCols);
 }
 // true = colonne DROITE (position impaire dans kept[]), false = GAUCHE --
 // sans objet pour la ligne SLOT (toujours pleine largeur, jamais appele
@@ -2820,7 +2827,7 @@ int8_t patchStepVisual(uint8_t track, int8_t row, int8_t dir) {
   const uint8_t volRow = patchVolRow(track);
   const uint8_t slotRow = patchSlotRow(track);
   const int16_t slotVisual = patchVisualRow(track, slotRow);
-  const bool wasRight = (row <= static_cast<int8_t>(volRow)) && patchIsRightCol(track, static_cast<uint8_t>(row));
+  const uint8_t col = row <= static_cast<int8_t>(volRow) ? patchColOf(track, static_cast<uint8_t>(row)) : 0;
   int16_t visualRow = patchVisualRow(track, static_cast<uint8_t>(row));
   visualRow = static_cast<int16_t>(visualRow + dir);
   if (visualRow < 0) {
@@ -2839,10 +2846,9 @@ int8_t patchStepVisual(uint8_t track, int8_t row, int8_t dir) {
   // patchKeptRows()/patchRowActive(), pas ici).
   uint8_t kept[kPatchMaxKeptRows];
   const uint8_t keptCount = patchKeptRows(track, kept);
-  const uint8_t leftIdx = static_cast<uint8_t>(visualRow * 2);
-  const uint8_t rightIdx = static_cast<uint8_t>(leftIdx + 1);
-  const uint8_t idx = (wasRight && rightIdx < keptCount) ? rightIdx : leftIdx;
-  return idx < keptCount ? static_cast<int8_t>(kept[idx]) : row;
+  uint8_t idx = static_cast<uint8_t>(visualRow * kPatchCols + col);
+  if (idx >= keptCount) idx = static_cast<uint8_t>(keptCount - 1);  // derniere ligne incomplete
+  return static_cast<int8_t>(kept[idx]);
 }
 
 // Deplacement GAUCHE/DROITE (2026-09-19, "la droite gauche [doit]
@@ -3082,16 +3088,16 @@ constexpr int16_t kPatchTrackRowY = 66;
 constexpr int16_t kPatchEngineBtnW = 56;
 constexpr int16_t kPatchEngineBtnX = kScreenSize - kMargin - kPatchEngineBtnW;
 constexpr int16_t kPatchScopeTop = 96;
-constexpr int16_t kPatchScopeH = 90;
+constexpr int16_t kPatchScopeH = 118;  // agrandi le 2026-10-04 (vue animee)
 constexpr int16_t kPatchScopeW = 232;
 constexpr int16_t kPatchListGap = 8;
 constexpr int16_t kPatchListX = kMargin + kPatchScopeW + kPatchListGap;
 constexpr int16_t kPatchListW = kScreenSize - kMargin - kPatchListX;
-constexpr uint8_t kPatchListRows = 4;
+constexpr uint8_t kPatchListRows = 5;
 constexpr int16_t kPatchListRowH = 20;
 uint16_t patchListScroll = 0;
 constexpr int16_t kPatchRowTop = kPatchScopeTop + kPatchScopeH + 14;
-constexpr int16_t kPatchRowH = 34;
+constexpr int16_t kPatchRowH = 26;  // cases compactes, 3 par ligne (2026-10-04)
 
 void drawPatchTrackRow() {
   const int16_t w = static_cast<int16_t>(kScreenSize - 2 * kMargin);
@@ -3213,11 +3219,15 @@ float patchVizLevel = 0.0f;  // niveau du son reel, lisse (0-1)
 
 enum class PatchVizMode : uint8_t { Engine, Filter, Envelope };
 
+extern int8_t patchVizFocus;  // reglage de l'encodeur 2, defini avec la grille PATCH
+const char *patchCellLabel(uint8_t t, int8_t row);
+uint8_t patchCellValue(uint8_t t, int8_t row);
+
+// La vue suit le reglage de l'encodeur 2 (cadre du haut).
 PatchVizMode patchVizMode(uint8_t t) {
-  if (patchOnScopeRow) return PatchVizMode::Envelope;
-  if (patchOnTrackRow || isRackTrack(t) || selectedPatchRow >= 6) return PatchVizMode::Engine;
-  if (selectedPatchRow < 2) return PatchVizMode::Filter;
-  if (trackEngine[t] == az2::kEngineDexed) return PatchVizMode::Engine;  // ALGO/FDBK/SUS/REL : vue FM
+  if (isRackTrack(t) || patchVizFocus >= 6) return PatchVizMode::Engine;
+  if (patchVizFocus < 2) return PatchVizMode::Filter;
+  if (trackEngine[t] == az2::kEngineDexed) return PatchVizMode::Engine;  // ALGO/FDBK : vue FM
   return PatchVizMode::Envelope;
 }
 
@@ -3226,10 +3236,12 @@ PatchVizMode patchVizMode(uint8_t t) {
 constexpr uint8_t kDx7Carriers[32] = {2, 2, 2, 2, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1,
                                       1, 1, 3, 3, 4, 4, 4, 5, 5, 3, 3, 3, 4, 4, 5, 6};
 
+// Ligne d'aide (2e ligne du cadre ; la 1re affiche le reglage de l'encodeur 2).
 void patchVizLabel(Arduino_GFX *g, const char *text, uint16_t color) {
+  (void)color;
   g->setTextSize(1);
-  g->setTextColor(color);
-  g->setCursor(4, 3);
+  g->setTextColor(kDim);
+  g->setCursor(4, 14);
   g->print(text);
 }
 
@@ -3238,7 +3250,7 @@ void patchVizFilter(Arduino_GFX *g, uint8_t t, uint16_t accent) {
   const float cut = trackCutoff[t] / 127.0f, res = trackReso[t] / 127.0f;
   const int16_t fcX = static_cast<int16_t>(10 + cut * (W - 20));
   const int16_t base = static_cast<int16_t>(H - 6);
-  const int16_t flat = 34;
+  const int16_t flat = 44;
   auto resp = [&](int16_t x) -> float {  // 0..~1.6 (pic de resonance)
     const float d = static_cast<float>(x - fcX);
     float v = d <= 0 ? 1.0f : expf(-d / 18.0f);
@@ -3256,15 +3268,15 @@ void patchVizFilter(Arduino_GFX *g, uint8_t t, uint16_t accent) {
   // Courbe du filtre, epaisse.
   int16_t px = 0, py = 0;
   for (int16_t x = 0; x < W; x += 2) {
-    const int16_t y = static_cast<int16_t>(constrain(base - resp(x) * (base - flat), 14.0f, static_cast<float>(base)));
+    const int16_t y = static_cast<int16_t>(constrain(base - resp(x) * (base - flat), 26.0f, static_cast<float>(base)));
     if (x > 0) {
       for (int8_t o = -1; o <= 1; ++o) g->drawLine(px, static_cast<int16_t>(py + o), x, static_cast<int16_t>(y + o), RGB565_WHITE);
     }
     px = x;
     py = y;
   }
-  const bool onCut = selectedPatchRow == 0 && !patchOnTrackRow;
-  for (int16_t y = 14; y < base; y += 6) g->drawFastVLine(fcX, y, 3, onCut ? kEnc1Color : kDim);
+  const bool onCut = patchVizFocus == 0;
+  for (int16_t y = 26; y < base; y += 6) g->drawFastVLine(fcX, y, 3, onCut ? kEnc1Color : kDim);
   if (!onCut) {
     const int16_t peakY = static_cast<int16_t>(base - resp(fcX) * (base - flat));
     g->drawCircle(fcX, peakY, static_cast<int16_t>(5 + (patchVizFrame & 3)), kEnc2Color);
@@ -3275,7 +3287,7 @@ void patchVizFilter(Arduino_GFX *g, uint8_t t, uint16_t accent) {
 void patchVizEnvelope(Arduino_GFX *g, uint8_t t) {
   const int16_t W = kPatchVizW, H = kPatchVizH;
   constexpr uint16_t kLine = RGB565(255, 60, 60);
-  const int16_t top = 16, bottom = static_cast<int16_t>(H - 5), h = static_cast<int16_t>(bottom - top);
+  const int16_t top = 30, bottom = static_cast<int16_t>(H - 5), h = static_cast<int16_t>(bottom - top);
   auto segW = [W](uint8_t v) -> int16_t {
     return static_cast<int16_t>((W - 12) / 4.0f * (0.15f + 0.85f * v / 127.0f));
   };
@@ -3297,9 +3309,8 @@ void patchVizEnvelope(Arduino_GFX *g, uint8_t t) {
     return bottom;
   };
   // Remplissage sous la courbe + segment en cours d'edition en clair.
-  const int8_t editSeg = (selectedPatchRow >= 2 && selectedPatchRow < 6 && !patchOnTrackRow)
-                             ? static_cast<int8_t>(selectedPatchRow - 2)
-                             : -1;  // 0=A 1=D 2=S 3=R
+  const int8_t editSeg = (patchVizFocus >= 2 && patchVizFocus < 6) ? static_cast<int8_t>(patchVizFocus - 2)
+                                                                    : -1;  // 0=A 1=D 2=S 3=R
   for (int16_t x = x0; x <= x4; x += 2) {
     uint8_t seg = 0;
     while (seg < 3 && x > xs[seg + 1]) ++seg;
@@ -3421,18 +3432,18 @@ void patchVizEngine(Arduino_GFX *g, uint8_t t, uint16_t accent) {
     case az2::kEngineBraids: {
       // Pave XY COLOR/TIMBRE et onde qui se deforme.
       const float color = ex[0] / 127.0f, timbre = ex[1] / 127.0f;
-      g->drawRect(6, 16, 64, 64, kDim);
-      const int16_t dx = static_cast<int16_t>(6 + color * 63), dy = static_cast<int16_t>(79 - timbre * 63);
-      g->drawFastHLine(6, dy, 64, dimColor(accent, 1));
-      g->drawFastVLine(dx, 16, 64, dimColor(accent, 1));
+      g->drawRect(6, 28, 80, 80, kDim);
+      const int16_t dx = static_cast<int16_t>(6 + color * 79), dy = static_cast<int16_t>(107 - timbre * 79);
+      g->drawFastHLine(6, dy, 80, dimColor(accent, 1));
+      g->drawFastVLine(dx, 28, 80, dimColor(accent, 1));
       g->fillCircle(dx, dy, static_cast<int16_t>(4 + 2 * act), RGB565_WHITE);
-      int16_t px = 80, py = cy;
-      for (int16_t x = 80; x < W - 4; ++x) {
-        const float a = (x - 80) * 0.12f + ph;
+      int16_t px = 96, py = cy;
+      for (int16_t x = 96; x < W - 4; ++x) {
+        const float a = (x - 96) * 0.12f + ph;
         float v = sinf(a) + timbre * 0.8f * sinf(a * (2.0f + color * 5.0f));
         v = v > 1.0f - color * 0.6f ? 2.0f - color * 1.2f - v : v;  // repli de l'onde par COLOR
         const int16_t y = static_cast<int16_t>(cy - act * 18 * v);
-        if (x > 80) for (int8_t o = 0; o < 2; ++o) g->drawLine(px, static_cast<int16_t>(py + o), x, static_cast<int16_t>(y + o), accent);
+        if (x > 96) for (int8_t o = 0; o < 2; ++o) g->drawLine(px, static_cast<int16_t>(py + o), x, static_cast<int16_t>(y + o), accent);
         px = x;
         py = y;
       }
@@ -3480,7 +3491,7 @@ void patchVizEngine(Arduino_GFX *g, uint8_t t, uint16_t accent) {
         g->drawFastVLine(x, static_cast<int16_t>(cy - h), static_cast<int16_t>(2 * h), dimColor(accent, 1));
       }
       const int16_t head = static_cast<int16_t>(6 + (patchVizFrame * 4) % (W - 12));
-      g->fillRect(head, 16, 2, static_cast<int16_t>(H - 20), RGB565_WHITE);
+      g->fillRect(head, 26, 2, static_cast<int16_t>(H - 30), RGB565_WHITE);
       patchVizLabel(g, ex[0] ? "SAMPLE : lecture en boucle" : "SAMPLE : lecture une fois", RGB565_WHITE);
       break;
     }
@@ -3572,14 +3583,26 @@ void drawPatchViz() {
       py = y;
     }
   }
+  // 1re ligne : reglage de l'encodeur 2 (orange, comme sa pastille).
+  {
+    const char *name = patchCellLabel(t, patchVizFocus);
+    char tag[32];
+    snprintf(tag, sizeof(tag), "ENC2 %s %u", name ? name : "?", patchCellValue(t, patchVizFocus));
+    g->fillRect(0, 0, static_cast<int16_t>(strlen(tag) * 6 + 8), 12, kEnc1Color);
+    g->setTextSize(1);
+    g->setTextColor(RGB565_BLACK);
+    g->setCursor(4, 2);
+    g->print(tag);
+  }
   patchVizCanvas->flush();
 }
 
 // Appelee aux evenements (paquet SCOPE, changement de ligne...) : cadre +
 // vue. Le cadre est BLANC quand l'oscilloscope a le focus de la croix.
 void drawPatchScope() {
-  gfx->drawRect(kMargin, kPatchScopeTop, kPatchScopeW, kPatchScopeH,
-                patchOnScopeRow ? RGB565_WHITE : patchAccent(static_cast<uint8_t>(patchTrack)));
+  // Cadre ORANGE : c'est le domaine de l'encodeur 2 (cases du bas = cyan,
+  // encodeur 3).
+  gfx->drawRect(kMargin, kPatchScopeTop, kPatchScopeW, kPatchScopeH, kEnc1Color);
   drawPatchViz();
 }
 
@@ -3617,9 +3640,9 @@ bool patchRowVisible(uint8_t logicalRow, int16_t &y, int16_t &x, int16_t &w) {
     w = static_cast<int16_t>(kScreenSize - 2 * kMargin);
     return true;
   }
-  const int16_t halfW = static_cast<int16_t>((kScreenSize - 2 * kMargin - kPatchColGap) / 2);
-  x = patchIsRightCol(track, logicalRow) ? static_cast<int16_t>(kMargin + halfW + kPatchColGap) : kMargin;
-  w = halfW;
+  const int16_t cellW = static_cast<int16_t>((kScreenSize - 2 * kMargin - (kPatchCols - 1) * kPatchColGap) / kPatchCols);
+  x = static_cast<int16_t>(kMargin + patchColOf(track, logicalRow) * (cellW + kPatchColGap));
+  w = cellW;
   return true;
 }
 
@@ -3653,21 +3676,30 @@ int8_t selectedPatchRow = 0;
 // visuelle selectionnee : fond teinte du moteur, double cadre blanc et une
 // languette de la couleur de l'encodeur qui regle la case (orange =
 // encodeur 2 a gauche, cyan = encodeur 3 a droite). Renvoie true si active.
+extern int8_t patchVizFocus;  // reglage de l'encodeur 2 (cadre du haut)
+
+// [2026-10-04, 3 cases par ligne] Case ACTIVE = celle de l'encodeur 3
+// (selectedPatchRow) : fond teinte, double cadre blanc, languette cyan. La
+// case reglee par l'encodeur 2 (patchVizFocus, cadre anime du haut) porte
+// un coin orange.
 bool drawPatchCellFrame(uint8_t track, uint8_t row, int16_t x, int16_t y, int16_t w, int16_t h,
                         uint16_t accent) {
-  const bool active = !patchOnTrackRow &&
-                      patchVisualRow(track, row) == patchVisualRow(track, static_cast<uint8_t>(selectedPatchRow));
+  const bool active = !patchOnTrackRow && selectedPatchRow == static_cast<int8_t>(row);
+  const bool focus = patchVizFocus == static_cast<int8_t>(row);
   if (!active) {
     gfx->fillRect(x, y, w, h, RGB565_BLACK);
-    gfx->drawRect(x, y, w, h, kFaint);
+    gfx->drawRect(x, y, w, h, focus ? kEnc1Color : kFaint);
+    if (focus) gfx->fillTriangle(static_cast<int16_t>(x + w - 9), y, static_cast<int16_t>(x + w - 1), y,
+                                 static_cast<int16_t>(x + w - 1), static_cast<int16_t>(y + 8), kEnc1Color);
     return false;
   }
   gfx->fillRect(x, y, w, h, dimColor(accent, 2));
   gfx->drawRect(x, y, w, h, RGB565_WHITE);
   gfx->drawRect(static_cast<int16_t>(x + 1), static_cast<int16_t>(y + 1), static_cast<int16_t>(w - 2),
                 static_cast<int16_t>(h - 2), RGB565_WHITE);
-  gfx->fillRect(static_cast<int16_t>(x + 3), static_cast<int16_t>(y + 3), 5, static_cast<int16_t>(h - 6),
-                patchIsRightCol(track, row) ? kEnc2Color : kEnc1Color);
+  gfx->fillRect(static_cast<int16_t>(x + 3), static_cast<int16_t>(y + 3), 5, static_cast<int16_t>(h - 6), kEnc2Color);
+  if (focus) gfx->fillTriangle(static_cast<int16_t>(x + w - 9), y, static_cast<int16_t>(x + w - 1), y,
+                               static_cast<int16_t>(x + w - 1), static_cast<int16_t>(y + 8), kEnc1Color);
   return true;
 }
 
@@ -3699,7 +3731,7 @@ void drawPatchRow(uint8_t i) {
   (void)rowSelected;
 
   gfx->setTextSize(1);
-  gfx->setTextColor(active ? (patchIsRightCol(track, i) ? kEnc2Color : kEnc1Color) : kDim);
+  gfx->setTextColor(active ? kEnc2Color : (patchVizFocus == static_cast<int8_t>(i) ? kEnc1Color : kDim));
   gfx->setCursor(static_cast<int16_t>(x + (active ? 12 : 4)), static_cast<int16_t>(y + 3));
   gfx->print(patchRowLabel(track, i));
 
@@ -3737,7 +3769,8 @@ void drawPatchExtraRow(uint8_t logicalRow) {
   gfx->setTextSize(1);
   // Section EFFETS : libelle en couleur d'accent pour la distinguer des
   // reglages propres au moteur.
-  gfx->setTextColor(active ? (patchIsRightCol(track, logicalRow) ? kEnc2Color : kEnc1Color)
+  gfx->setTextColor(active ? kEnc2Color
+                           : patchVizFocus == static_cast<int8_t>(logicalRow) ? kEnc1Color
                            : (patchExtraIsFx(track, extraIdx) ? accent : kDim));
   gfx->setCursor(static_cast<int16_t>(x + (active ? 12 : 4)), static_cast<int16_t>(y + 3));
   gfx->print(patchExtraLabel(track, extraIdx));
@@ -3824,7 +3857,7 @@ void drawVolRow() {
   (void)rowSelected;
 
   gfx->setTextSize(1);
-  gfx->setTextColor(active ? (patchIsRightCol(t, patchVolRow(t)) ? kEnc2Color : kEnc1Color) : kDim);
+  gfx->setTextColor(active ? kEnc2Color : kDim);
   gfx->setCursor(static_cast<int16_t>(x + (active ? 12 : 4)), static_cast<int16_t>(y + 3));
   gfx->print("VOLUME");
 
@@ -3850,7 +3883,7 @@ void sendPatchVol() {
 // 8 emplacements numerotes, comme les patterns.
 constexpr uint8_t kPatchSlotCount = 8;
 uint8_t patchSlot = 0;
-constexpr int16_t kPatchSlotH = 32;
+constexpr int16_t kPatchSlotH = kPatchRowH - 4;
 constexpr int16_t kPatchSlotBtnW = (kScreenSize - 2 * kMargin) / 3;
 
 void drawPatchSlotRow() {
@@ -3872,15 +3905,15 @@ void drawPatchSlotRow() {
   gfx->setTextColor(RGB565_WHITE);
   char buf[12];
   snprintf(buf, sizeof(buf), "SLOT %d", patchSlot);
-  gfx->setCursor(static_cast<int16_t>(kMargin + 6), static_cast<int16_t>(y + 8));
+  gfx->setCursor(static_cast<int16_t>(kMargin + 6), static_cast<int16_t>(y + 3));
   gfx->print(buf);
 
   gfx->setTextColor(kPalette[1 % kPaletteCount]);
-  gfx->setCursor(static_cast<int16_t>(saveX + 14), static_cast<int16_t>(y + 8));
+  gfx->setCursor(static_cast<int16_t>(saveX + 14), static_cast<int16_t>(y + 3));
   gfx->print("SAVE");
 
   gfx->setTextColor(kPalette[2 % kPaletteCount]);
-  gfx->setCursor(static_cast<int16_t>(loadX + 14), static_cast<int16_t>(y + 8));
+  gfx->setCursor(static_cast<int16_t>(loadX + 14), static_cast<int16_t>(y + 3));
   gfx->print("LOAD");
 }
 
@@ -4291,11 +4324,9 @@ void drawPatchWindow() {
       drawPatchSlotRow();
       continue;
     }
-    const uint8_t leftIdx = static_cast<uint8_t>(visualRow * 2U);
-    const uint8_t rightIdx = static_cast<uint8_t>(leftIdx + 1U);
-    const int16_t rows[2] = {leftIdx < keptCount ? static_cast<int16_t>(kept[leftIdx]) : static_cast<int16_t>(-1),
-                             rightIdx < keptCount ? static_cast<int16_t>(kept[rightIdx]) : static_cast<int16_t>(-1)};
-    for (const int16_t logicalRow : rows) {
+    for (uint8_t c = 0; c < kPatchCols; ++c) {
+      const uint8_t idx = static_cast<uint8_t>(visualRow * kPatchCols + c);
+      const int16_t logicalRow = idx < keptCount ? static_cast<int16_t>(kept[idx]) : static_cast<int16_t>(-1);
       if (logicalRow < 0 || logicalRow > volRow) continue;
       if (logicalRow < 6) drawPatchRow(static_cast<uint8_t>(logicalRow));
       else if (logicalRow == volRow) drawVolRow();
@@ -4338,24 +4369,10 @@ void redrawPatchLogicalRow(uint8_t track, uint8_t row) {
 void updatePatchEncoderHints();          // definies plus bas
 void patchApplyDelta(uint8_t t, int delta);
 
-// Redessine les cases d'une ligne visuelle (surlignage par ligne entiere).
-void redrawPatchVisualRow(uint8_t track, int16_t visual) {
-  uint8_t kept[kPatchMaxKeptRows];
-  const uint8_t count = patchKeptRows(track, kept);
-  const int16_t slotVisual = patchVisualRow(track, patchSlotRow(track));
-  if (visual == slotVisual) {
-    drawPatchSlotRow();
-    return;
-  }
-  for (uint8_t c = 0; c < 2; ++c) {
-    const int16_t idx = static_cast<int16_t>(visual * 2 + c);
-    if (idx >= 0 && idx < count) redrawPatchLogicalRow(track, kept[idx]);
-  }
-}
-
-// Selectionne une ligne logique, fait suivre le defilement, redessine.
+// Selectionne une case (encodeur 3 / croix), fait suivre le defilement.
 void patchSelectRow(uint8_t track, int8_t row) {
-  const int16_t prevVisual = patchVisualRow(track, static_cast<uint8_t>(selectedPatchRow));
+  const int8_t prev = selectedPatchRow;
+  const bool wasOnTrack = patchOnTrackRow;
   selectedPatchRow = row;
   patchOnTrackRow = false;
   const int16_t nextVisual = patchVisualRow(track, static_cast<uint8_t>(row));
@@ -4366,45 +4383,119 @@ void patchSelectRow(uint8_t track, int8_t row) {
     patchScroll = static_cast<uint8_t>(nextVisual - kPatchVisibleRows + 1);
     drawPatchWindow();
   } else {
-    redrawPatchVisualRow(track, prevVisual);
-    redrawPatchVisualRow(track, nextVisual);
+    if (!wasOnTrack) redrawPatchLogicalRow(track, static_cast<uint8_t>(prev));
+    redrawPatchLogicalRow(track, static_cast<uint8_t>(row));
   }
-  drawPatchTrackRow();
+  if (wasOnTrack) drawPatchTrackRow();
   updatePatchEncoderHints();
 }
 
-// Clic d'encodeur : ligne visuelle precedente (dir -1) ou suivante (+1).
+// Clic encodeur 3 : case suivante (ordre de lecture, SLOT en dernier).
 void patchEncoderStepRow(uint8_t track, int8_t dir) {
   uint8_t kept[kPatchMaxKeptRows];
   const uint8_t count = patchKeptRows(track, kept);
-  const int16_t visualCount = static_cast<int16_t>((count + 1) / 2 + 1);  // + SLOT
-  int16_t v = patchOnTrackRow ? -1 : patchVisualRow(track, static_cast<uint8_t>(selectedPatchRow));
-  v = static_cast<int16_t>(((v + dir) % visualCount + visualCount) % visualCount);
-  const int16_t slotVisual = patchVisualRow(track, patchSlotRow(track));
-  const int8_t row = v == slotVisual ? static_cast<int8_t>(patchSlotRow(track)) : static_cast<int8_t>(kept[v * 2]);
-  patchSelectRow(track, row);
+  const int16_t total = static_cast<int16_t>(count + 1);  // + SLOT
+  int16_t idx = -1;
+  if (!patchOnTrackRow) {
+    idx = selectedPatchRow == static_cast<int8_t>(patchSlotRow(track))
+              ? count
+              : patchKeptIndexOf(track, static_cast<uint8_t>(selectedPatchRow));
+  }
+  idx = static_cast<int16_t>(((idx + dir) % total + total) % total);
+  patchSelectRow(track, idx == count ? static_cast<int8_t>(patchSlotRow(track)) : static_cast<int8_t>(kept[idx]));
 }
 
-// Rotation : reglage de gauche (side 0) ou de droite (side 1) de la ligne.
-void patchEncoderAdjust(uint8_t track, uint8_t side, int dir) {
-  if (patchOnTrackRow) patchSelectRow(track, 0);
-  uint8_t kept[kPatchMaxKeptRows];
-  const uint8_t count = patchKeptRows(track, kept);
-  const int16_t v = patchVisualRow(track, static_cast<uint8_t>(selectedPatchRow));
-  int8_t target;
-  if (selectedPatchRow == static_cast<int8_t>(patchSlotRow(track))) {
-    target = selectedPatchRow;  // SLOT : une seule case
-  } else {
-    const int16_t idx = static_cast<int16_t>(v * 2 + side);
-    if (idx >= count) return;  // pas de reglage a droite sur cette ligne
-    target = static_cast<int8_t>(kept[idx]);
-  }
-  selectedPatchRow = target;
-  // Petites plages (ALGO, FEEDBACK, choix) : cran de 1 ; sinon 2.
+// Cran adapte a la plage du reglage (ALGO, FEEDBACK, choix : 1 ; sinon 2).
+int patchStepFor(uint8_t track, int8_t row) {
   uint8_t maxValue = 127;
-  if (target < 6) maxValue = patchRowMax(track, static_cast<uint8_t>(target));
-  else if (target < static_cast<int8_t>(patchVolRow(track))) maxValue = patchExtraMax(track, static_cast<uint8_t>(target - 6));
-  patchApplyDelta(track, dir * (maxValue < 32 ? 1 : 2));
+  if (row < 6) maxValue = patchRowMax(track, static_cast<uint8_t>(row));
+  else if (row < static_cast<int8_t>(patchVolRow(track))) maxValue = patchExtraMax(track, static_cast<uint8_t>(row - 6));
+  return maxValue < 32 ? 1 : 2;
+}
+
+// Rotation encodeur 3 : regle la case selectionnee.
+void patchEncoderAdjust(uint8_t track, int dir) {
+  if (patchOnTrackRow) patchSelectRow(track, 0);
+  patchApplyDelta(track, dir * patchStepFor(track, selectedPatchRow));
+}
+
+// ---- Encodeur 2 : reglages du cadre anime (haut de page) ----
+// Liste des reglages "visuels" de la piste : filtre, enveloppe, puis les
+// reglages propres au moteur que l'animation montre.
+int8_t patchVizFocus = 0;
+
+uint8_t patchVizFocusList(uint8_t t, int8_t *out) {
+  uint8_t n = 0;
+  if (isRackTrack(t)) {
+    for (int8_t r = 0; r < 6; ++r) out[n++] = r;
+    return n;
+  }
+  out[n++] = 0;
+  out[n++] = 1;
+  out[n++] = 2;
+  out[n++] = 3;
+  if (trackEngine[t] != az2::kEngineDexed) {
+    out[n++] = 4;
+    out[n++] = 5;
+  }
+  if (trackEngine[t] == az2::kEngineBraids) {
+    out[n++] = 6;   // COLOR
+    out[n++] = 7;   // TIMBRE
+  } else if (trackEngine[t] == az2::kEngineEPiano) {
+    out[n++] = 8;   // HARDNESS
+    out[n++] = 10;  // TREMOLO
+    out[n++] = 11;  // LFO RATE
+  }
+  return n;
+}
+
+const char *patchCellLabel(uint8_t t, int8_t row) {
+  if (row < 0) return nullptr;
+  if (row == static_cast<int8_t>(patchVolRow(t))) return "VOLUME";
+  if (row == static_cast<int8_t>(patchSlotRow(t))) return "SLOT";
+  if (row < 6) return patchRowLabel(t, static_cast<uint8_t>(row));
+  return patchExtraLabel(t, static_cast<uint8_t>(row - 6));
+}
+
+uint8_t patchCellValue(uint8_t t, int8_t row) {
+  if (row == static_cast<int8_t>(patchVolRow(t))) return trackVolume[t];
+  if (row < 6) return patchParamRef(t, static_cast<uint8_t>(row));
+  return patchExtraValRef(t, static_cast<uint8_t>(row - 6));
+}
+
+void patchVizClampFocus(uint8_t t) {
+  int8_t list[12];
+  const uint8_t n = patchVizFocusList(t, list);
+  for (uint8_t i = 0; i < n; ++i) {
+    if (list[i] == patchVizFocus) return;
+  }
+  patchVizFocus = list[0];
+}
+
+// Clic encodeur 2 : reglage visuel suivant.
+void patchVizNextFocus(uint8_t t) {
+  int8_t list[12];
+  const uint8_t n = patchVizFocusList(t, list);
+  uint8_t i = 0;
+  while (i < n && list[i] != patchVizFocus) ++i;
+  const int8_t prev = patchVizFocus;
+  patchVizFocus = list[(i + 1) % n];
+  redrawPatchLogicalRow(t, static_cast<uint8_t>(prev));
+  redrawPatchLogicalRow(t, static_cast<uint8_t>(patchVizFocus));
+  updatePatchEncoderHints();
+}
+
+// Rotation encodeur 2 : regle le reglage visuel (meme envoi que la grille).
+void patchVizAdjust(uint8_t t, int dir) {
+  patchVizClampFocus(t);
+  const int8_t keepSel = selectedPatchRow;
+  const bool keepTrack = patchOnTrackRow;
+  selectedPatchRow = patchVizFocus;
+  patchOnTrackRow = true;  // dessin de la case sans le surlignage encodeur 3
+  patchApplyDelta(t, dir * patchStepFor(t, patchVizFocus));
+  selectedPatchRow = keepSel;
+  patchOnTrackRow = keepTrack;
+  redrawPatchLogicalRow(t, static_cast<uint8_t>(patchVizFocus));
 }
 
 // Ligne LOGIQUE controlee par l'encodeur `slot` (0=encodeur1, 1=
@@ -4430,7 +4521,7 @@ int8_t patchEncoderLogicalRow(uint8_t t, uint8_t slot) {
   // (2026-09-24).
   uint8_t kept[kPatchMaxKeptRows];
   const uint8_t keptCount = patchKeptRows(t, kept);
-  const uint8_t leftIdx = static_cast<uint8_t>(visualRow * 2);
+  const uint8_t leftIdx = static_cast<uint8_t>(visualRow * kPatchCols);
   const uint8_t rightIdx = static_cast<uint8_t>(leftIdx + 1);
   if (slot == 0) {
     return leftIdx < keptCount ? static_cast<int8_t>(kept[leftIdx]) : -1;
@@ -4462,10 +4553,11 @@ void updatePatchEncoderHints() {
   // le gestionnaire POT:) -- CUTOFF/RESONANCE et ADSR, independamment de
   // la ligne selectionnee par la croix. Pistes rack exclues pour
   // l'encodeur 2 (garde l'ancien systeme par ligne, voir isRackTrack()).
-  // [2026-10-04] Encodeur 2 = reglage de GAUCHE, encodeur 3 = reglage de
-  // DROITE de la ligne active (voir patchEncoderAdjust()).
+  // [2026-10-04] Encodeur 2 = reglage du cadre anime (haut), encodeur 3 =
+  // case selectionnee de la grille (bas).
   const uint8_t t = static_cast<uint8_t>(patchTrack);
-  drawEncoderHints(patchEncoderLabel(t, 0), patchEncoderLabel(t, 1));
+  patchVizClampFocus(t);
+  drawEncoderHints(patchCellLabel(t, patchVizFocus), patchOnTrackRow ? nullptr : patchCellLabel(t, selectedPatchRow));
 }
 
 void drawPatchPage() {
@@ -7898,8 +7990,8 @@ void handleTeensyLine(const String &line) {
                 drawPatchWindow();
               } else {
                 // Surlignage par ligne VISUELLE entiere (2 cases).
-                redrawPatchVisualRow(t, patchVisualRow(t, static_cast<uint8_t>(prevRow)));
-                redrawPatchVisualRow(t, patchVisualRow(t, static_cast<uint8_t>(selectedPatchRow)));
+                redrawPatchLogicalRow(t, static_cast<uint8_t>(prevRow));
+                redrawPatchLogicalRow(t, static_cast<uint8_t>(selectedPatchRow));
               }
               updatePatchEncoderHints();
             }
@@ -8326,8 +8418,9 @@ void handleTeensyLine(const String &line) {
       const int direction = line.substring(i2 + 1).toInt();
       if (currentScreen == Screen::Patch && (index == 1 || index == 2)) {
         if (direction != 0 && !screensaverActive) {
-          patchEncoderAdjust(static_cast<uint8_t>(patchTrack), static_cast<uint8_t>(index - 1),
-                             direction > 0 ? 1 : -1);
+          const uint8_t pt = static_cast<uint8_t>(patchTrack);
+          if (index == 1) patchVizAdjust(pt, direction > 0 ? 1 : -1);  // encodeur 2 : cadre du haut
+          else patchEncoderAdjust(pt, direction > 0 ? 1 : -1);         // encodeur 3 : grille du bas
         }
         return;
       }
@@ -8668,7 +8761,8 @@ void handleTeensyLine(const String &line) {
         if (currentScreen == Screen::Patch && (index == 1 || index == 2) && pressed) {
           // [2026-10-04] Clic encodeur 2 = ligne precedente, clic encodeur 3 =
           // ligne suivante (remplace CUTOFF/RESO et point ADSR figes).
-          patchEncoderStepRow(static_cast<uint8_t>(patchTrack), index == 1 ? -1 : 1);
+          if (index == 1) patchVizNextFocus(static_cast<uint8_t>(patchTrack));  // reglage visuel suivant
+          else patchEncoderStepRow(static_cast<uint8_t>(patchTrack), 1);       // case suivante
         }
       }
     }
