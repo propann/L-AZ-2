@@ -59,7 +59,8 @@ Naviguez à la croix jusqu'à une catégorie, **A** pour l'ouvrir, puis à nouve
 Exemples :
 
 - **MIXER** : encodeur 2 = choisir la piste, encodeur 3 = régler son volume.
-- **PATCH** : encodeur 2 = coupure/résonance du filtre, encodeur 3 = point de l'ADSR ; le clic de l'encodeur 3 passe au point suivant (A → D → S → R).
+- **PATCH** : encodeur 2 = le **cadre animé du haut** (clic = réglage visuel suivant, rotation = valeur), encodeur 3 = la **grille du bas** (clic = case suivante, rotation = valeur). Voir §7.
+- **AUDIO (pads)** : clic de l'encodeur 2 = menu des pads ; clic de l'encodeur 1 (volume) = enregistrement ON/OFF.
 - **SEQ. PAS** : encodeur 2 = piste, encodeur 3 = note du pas au curseur.
 - **Encodeur 2** garde aussi ses fonctions du pad virtuel et de l'arpégiateur.
 
@@ -102,15 +103,19 @@ Le cœur de la composition : un tracker 8 pistes, 16 pas par pattern, inspiré d
   - **COND** : condition de déclenchement (ex. uniquement 1 fois sur 2, ou en "fill").
 - Toucher directement une ligne fait la même chose qu'y naviguer à la croix.
 
+### En-tête
+
+Deux boutons en haut du tracker : **MENU** (retour au menu principal) et **PATTERN** (A + GAUCHE/DROITE, ou toucher la moitié gauche/droite, pour changer de pattern). On y monte avec HAUT depuis le premier pas.
+
 ### Transport
 
-Barre du bas : PLAY/STOP, BPM (+/- 5 par tap gauche/droite de la case), division rythmique. Les flèches peuvent entrer dans les boutons latéraux : depuis la dernière colonne, DROITE ouvre le focus du panneau, HAUT/BAS choisit MOTEUR/PATCH/EFFET/CLAVIER/METRO/SAUVER, puis A confirme. Bouton **D** déclenche un "fill" temporaire pendant qu'il est maintenu (variation de motif). C reste le retour.
+Barre du bas : PLAY/STOP, BPM (+/- 5 par tap gauche/droite de la case), division rythmique. Les flèches peuvent entrer dans les boutons latéraux : depuis la dernière colonne, DROITE ouvre le focus du panneau, HAUT/BAS choisit MOTEUR/PATCH/EFFET/CLAVIER/METRO/SAUVER, puis A confirme. Bouton **D** déclenche un "fill" temporaire pendant qu'il est maintenu (variation de motif). **C court** = PLAY/STOP, **C maintenu** (0,7 s) = retour au menu.
 
 ### SEQ. PAS (vue pas à pas, style OP-1)
 
 - GAUCHE/DROITE : déplace le curseur de pas ; HAUT/BAS : change de piste.
 - **A tapé** : allume/éteint le pas. **A maintenu + HAUT/BAS** : monte/descend la note du pas dans la gamme (et l'allume).
-- Encodeur 2 : piste ; encodeur 3 : note ; **C** : PLAY/STOP.
+- Encodeur 2 : piste ; encodeur 3 : note ; **C court** : PLAY/STOP, **C maintenu** : retour au menu.
 
 ## 6. Page MOTEURS
 
@@ -124,17 +129,19 @@ Assigner un moteur de synthèse et un patch à chaque piste.
 
 ## 7. Page PATCH
 
-Le réglage fin du son de la piste affichée : filtre, enveloppe, effets propres à la piste, et un oscilloscope qui trace en direct ce qui est réellement entendu.
+Le réglage fin du son de la piste affichée : filtre, enveloppe, réglages propres au moteur, effets de la piste et volume.
 
-- Ligne **PISTE** en haut (même convention qu'ailleurs).
-- Cadre de presets à côté de l'onde : **A** entre en édition, HAUT/BAS choisit le preset, puis **A** ressort ; hors édition, BAS/DROITE descend dans les réglages.
-- Grille de réglages, **2 par ligne** pour gagner de la place — GAUCHE/DROITE choisit le réglage, HAUT/BAS monte/descend d'une ligne en gardant la colonne.
-- **A maintenu + HAUT/BAS *ou* A maintenu + GAUCHE/DROITE** éditent tous les deux la valeur sélectionnée (au choix, selon ce qui est le plus confortable à tenir).
-- Réglages disponibles selon le moteur : coupure/résonance du filtre, ADSR (attaque/chute/maintien/relâchement) — remplacé par ALGO/FEEDBACK pour Dexed — puis des réglages spécifiques au moteur (voir §9), la **section EFFETS** de la piste (voir §7 bis), VOLUME, puis la ligne **SLOT** (sauvegarde/chargement de patch, voir §10).
-- Bouton **MOT>** au bout de la ligne PISTE : un toucher passe la piste au moteur suivant sans quitter la page ; la section EFFETS de la piste est conservée.
-- **Bouton B** joue/coupe une note de test directement sur la piste affichée — pratique pour entendre l'effet de chaque réglage en le modifiant.
-- L'**oscilloscope** en haut de la page trace la forme d'onde réellement jouée (après filtre et effets).
-- **Encodeurs contextuels** : voir §4.
+- Ligne **PISTE** en haut (même convention qu'ailleurs). Bouton **MOT>** au bout : un toucher passe la piste au moteur suivant sans quitter la page (la section EFFETS est conservée).
+- **Cadre animé** (en haut à gauche, bordure orange) — domaine de l'**encodeur 2**. Il montre ce que fait le réglage choisi :
+  - CUTOFF / RESO : la courbe du filtre et les harmoniques coupées au-delà ;
+  - ATTACK, DECAY, SUSTAIN, RELEASE : l'enveloppe, parcourue par un point, segment réglé en blanc ;
+  - réglages du moteur : une animation propre à chaque moteur, pilotée par ses vrais réglages (opérateurs FM de DEXED selon l'algorithme, lame et marteau d'EPIANO, pavé COLOR/TIMBRE de BRAIDS, corde de KARPLUS, onde d'ANALOG, pads de DRUM, tête de lecture du SAMPLER, grains, spectre).
+  - Clic encodeur 2 = réglage visuel suivant (CUTOFF → RESO → ADSR ou ALGO/FDBK → COLOR/TIMBRE ou HARDNESS/TREMOLO/LFO RATE), rotation = valeur. L'étiquette orange « ENC2 … » rappelle le réglage et sa valeur. Le son réel (bouton **B**) anime l'intensité et s'affiche en filigrane.
+- **Cadre des presets** (en haut à droite) : **A** entre en édition, HAUT/BAS choisit le preset, **A** ressort. Choisir un patch le fait repartir de **ses propres réglages** (filtre ouvert, enveloppe par défaut, valeurs du preset relues) ; un projet ou un SLOT rechargé garde les siens.
+- **Grille de réglages** (en bas, **3 cases par ligne**) — domaine de l'**encodeur 3** : clic = case suivante, rotation = valeur. La case active a un fond coloré, un double cadre blanc et une languette cyan ; la case réglée par l'encodeur 2 porte un coin orange.
+  - À la croix : GAUCHE/DROITE choisit la case, HAUT/BAS change de ligne en gardant la colonne ; **A maintenu + une direction** édite la valeur. Le toucher sélectionne une case.
+  - Contenu : filtre et ADSR (ALGO/FEEDBACK pour Dexed), réglages spécifiques au moteur (voir §9), **section EFFETS** (voir §7 bis), VOLUME, puis la ligne **SLOT / SAVE / LOAD** (voir §10).
+- **Bouton B** joue/coupe une note de test sur la piste affichée.
 
 ## 7 bis. Les effets
 
@@ -189,6 +196,7 @@ Vue d'ensemble du volume de toutes les pistes à la fois.
 - Boutons **MUTE** et **SOLO** (tactiles, ou boutons physiques B/D) pour la piste sélectionnée — indicateur M/S affiché sous sa barre.
 - Encodeur 2 = choisir la piste, encodeur 3 = son volume (mêmes actions qu'à la croix, en plus rapide).
 - Ligne **MASTER** tout en bas : reverb, delay et chorus du bus général (voir §7 bis).
+- **VU-mètres** : chaque barre affiche en direct le niveau réel de sa piste (après effets), plus un VU du bus MASTER.
 
 ## 9. Les 9 moteurs audio
 
@@ -231,6 +239,12 @@ Deux façons d'y arriver, avec un comportement différent :
 
 - **Depuis le menu (Musique → Audio)** : pads génériques, jouent une voix de synthèse fixe — pour noodler sans dépendre d'une piste précise.
 - **Depuis le bouton CLAVIER du panneau latéral du tracker** : les pads jouent le **vrai moteur/patch de la piste** actuellement sélectionnée (n'importe quel pattern, n'importe quelle piste) — si cette piste utilise le SAMPLER, ce sont ses échantillons qui sonnent.
+
+**Menu des pads** (clic de l'encodeur 2, ou bouton tactile) : tout est dedans pour laisser la place au jeu — MODE (jeu libre / pose sur le pas), PISTE jouée (ou VOIX LIVE), **ARPÉGIATEUR** (mode, vitesse, octaves), **MÉTRONOME**, **ENREGISTREMENT**, raccourcis SAMPLER / MOTEURS / SÉQUENCEUR / MENU PRINCIPAL. Les réglages gardent le menu ouvert.
+
+- **Enregistrement live** : clic de l'encodeur 1 (volume) ou menu ; pendant la lecture, chaque pad joué s'écrit sur le pas en cours de la piste.
+- **Multipoint** : deux doigts à la fois. Sur un moteur polyphonique (DEXED, EPIANO, VOIX LIVE) ça joue un accord ; sur un moteur monophonique (ANALOG, BRAIDS, KARPLUS) la dernière note tenue sonne et la précédente reprend quand on la relâche — le son tient tant qu'un doigt appuie.
+- **Arpégiateur** : les pads tenus sont joués en motif (haut, bas, aller-retour, aléatoire…) au tempo, sur 1 à 4 octaves.
 
 **Kit de batterie** : indépendamment de tout ça, chaque pad peut avoir son **propre échantillon dédié** assigné directement (jusqu'à 2 secondes chacun, les 16 pads sonnent en même temps si besoin) — un pad avec un échantillon assigné sonne toujours ce son-là en priorité, quel que soit le mode. Un premier kit de 8 sons (grosse caisse, caisse claire, charley fermé/ouvert, clap, rim, cowbell, ride) est déjà prêt sur les pads 1 à 8 dès que la bibliothèque de samples est présente sur la carte SD du Teensy. Ces assignations se sauvegardent avec le reste du morceau (page PROJET).
 
