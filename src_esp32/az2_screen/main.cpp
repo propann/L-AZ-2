@@ -847,7 +847,7 @@ uint8_t padMenuIndex = 0;
 // Menu de l'encodeur 2 sur la page AUDIO (2026-10-03) : TOUS les reglages du
 // pad 4x4 sont ici pour laisser l'ecran entier aux pads. Lignes 0-6 =
 // reglages (un clic change la valeur, le menu reste ouvert), 7-10 = pages.
-constexpr uint8_t kPadMenuCount = 11;
+constexpr uint8_t kPadMenuCount = 12;
 // Etat de l'arpegiateur (miroir de ARP: cote Teensy).
 uint8_t padArpMode = 0;    // 0 OFF, 1 montant, 2 descendant, 3 aller-retour, 4 aleatoire
 uint8_t padArpRate = 1;    // 0 1/8, 1 1/16, 2 1/32, 3 1/8T, 4 1/16T
@@ -941,6 +941,7 @@ void padMenuLabel(uint8_t i, char *out, size_t size) {
     case 7: snprintf(out, size, "SAMPLER (kit des pads) >"); break;
     case 8: snprintf(out, size, "MOTEURS >"); break;
     case 9: snprintf(out, size, "SEQUENCEUR >"); break;
+    case 10: snprintf(out, size, "< MENU PRINCIPAL"); break;
     default: snprintf(out, size, "FERMER"); break;
   }
 }
@@ -950,7 +951,7 @@ void drawPadMenu() {
   constexpr int16_t y = 40;
   constexpr int16_t w = 400;
   constexpr int16_t h = 400;
-  constexpr int16_t rowH = 30;
+  constexpr int16_t rowH = 28;
   gfx->fillRect(x, y, w, h, RGB565_BLACK);
   gfx->drawRect(x, y, w, h, kPalette[2]);
   gfx->setTextSize(2);
@@ -1011,6 +1012,7 @@ void activatePadMenuItem() {
       goTo(Screen::Engines);
       return;
     case 9: padMenuOpen = false; goTo(Screen::Sequencer); return;
+    case 10: padMenuOpen = false; goTo(Screen::Menu); return;
     default:
       padMenuOpen = false;
       drawAudioPage();
@@ -6555,6 +6557,12 @@ void goTo(Screen s) {
   // MOTEURS doit permettre PATCH -> MOTEURS -> page d'origine, sans que
   // le premier retour ecrase la destination du second.
   if (s == Screen::Engines && currentScreen != Screen::Patch) enginesReturnScreen = currentScreen;
+#ifdef AZ2_NES_ENABLED
+  // [2026-10-04] Quitter la page NES par n'importe quel chemin (toucher
+  // retour, menu...) decharge la ROM et sauvegarde la SRAM ; seul C le
+  // faisait, les autres sorties laissaient la partie en memoire non sauvee.
+  if (s != Screen::NesRetro && currentScreen == Screen::NesRetro && nesIsLoaded()) nesUnload();
+#endif
   if (s == Screen::Patch) patchReturnScreen = currentScreen;
 
   // Memorise d'ou on vient (voir navPrevious plus haut) -- AVANT tout
@@ -7805,15 +7813,18 @@ void handleTeensyLine(const String &line) {
       }
       if (pressed && letter == 'C' && currentScreen == Screen::Sampler) {
         samplerGoUp();
-      } else if (pressed && letter == 'C' &&
-                 (currentScreen == Screen::Sequencer || currentScreen == Screen::StepSeq)) {
-        // [2026-09-25] PLAY/STOP du tracker n'etait accessible qu'au toucher
-        // (hitTestTrkPlay()) malgre le commentaire plus haut annoncant C
-        // pour PLAY/STOP sur cette page -- jamais reellement cable, C
-        // tombait dans le "retour" generique ci-dessous et faisait quitter
-        // la page. Meme commande que le toucher. Partagee avec SEQ. PAS
-        // (2026-09-26), meme transport.
-        sendToTeensy(seqPlaying ? az2::kStop : az2::kPlay);
+      } else if (letter == 'C' && (currentScreen == Screen::Sequencer || currentScreen == Screen::StepSeq)) {
+        // [2026-10-04] C COURT = PLAY/STOP, C MAINTENU (>= 0,7 s) = retour au
+        // menu : decide au relachement. SEQ. PAS n'avait aucune sortie a la
+        // croix (C y faisait seulement PLAY/STOP).
+        static uint32_t cDownMs = 0;
+        if (pressed) {
+          cDownMs = millis();
+        } else if (millis() - cDownMs >= kEncoderLongPressMs) {
+          goTo(Screen::Menu);
+        } else {
+          sendToTeensy(seqPlaying ? az2::kStop : az2::kPlay);
+        }
       } else if (pressed && letter == 'A' && currentScreen == Screen::Sequencer && seqVerticalFocus == 2 &&
                  seqHeaderBtn == 0) {
         goTo(Screen::Menu);  // bouton MENU de l'en-tete du tracker
@@ -9730,8 +9741,8 @@ void handleTouchDown(uint8_t slot, int16_t x, int16_t y) {
     if (padMenuOpen) {
       // Menu tactile : toucher une ligne = la choisir et l'activer ;
       // toucher hors du cadre = fermer (memes zones que drawPadMenu()).
-      if (x >= 40 && x < 440 && y >= 80 && y < 80 + kPadMenuCount * 30) {
-        padMenuIndex = static_cast<uint8_t>((y - 80) / 30);
+      if (x >= 40 && x < 440 && y >= 80 && y < 80 + kPadMenuCount * 28) {
+        padMenuIndex = static_cast<uint8_t>((y - 80) / 28);
         activatePadMenuItem();
       } else if (x < 40 || x >= 440 || y < 40 || y >= 440) {
         padMenuOpen = false;
